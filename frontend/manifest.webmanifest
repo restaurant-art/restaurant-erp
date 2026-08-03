@@ -1,0 +1,17 @@
+{
+  "name": "VESTORA",
+  "short_name": "VESTORA",
+  "description": "Restaurant ERP and POS platform",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f8f5",
+  "theme_color": "#10231f",
+  "icons": [
+    {
+      "src": "/vestora-mark.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

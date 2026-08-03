@@ -1,0 +1,16 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+db.sqlite3
+node_modules/
+.pnpm-store/
+dist/
+build/
+.DS_Store
+coverage/
+*.log
+media/
+staticfiles/
