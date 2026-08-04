@@ -378,10 +378,10 @@ const settingsSectionConfig = {
     defaults: { frequency: "Daily", time: "12:30 AM", retention: "90 days", destination: "Local + Cloudflare R2" },
   },
   "Theme and language": {
-    description: "Display mode, default language, and currency preferences.",
+    description: "Display mode, custom website colors, default language, and currency preferences.",
     action: "Apply theme",
-    fields: [["theme", "Theme"], ["language", "Language"], ["currency", "Currency"], ["timezone", "Timezone"]],
-    defaults: { theme: "Light", language: "English", currency: "INR", timezone: "Asia/Kolkata" },
+    fields: [["theme", "Display mode"], ["themePreset", "Theme preset"], ["primaryColor", "Primary color"], ["accentColor", "Accent color"], ["sidebarColor", "Sidebar color"], ["backgroundColor", "Page background"], ["surfaceColor", "Card surface"], ["textColor", "Text color"], ["mutedColor", "Muted text"], ["language", "Language"], ["currency", "Currency"], ["timezone", "Timezone"]],
+    defaults: { theme: "Light", themePreset: "Emerald", primaryColor: "#17604b", accentColor: "#c28a3a", sidebarColor: "#10231f", backgroundColor: "#f7f8f5", surfaceColor: "#ffffff", textColor: "#10231f", mutedColor: "#60736a", language: "English", currency: "INR", timezone: "Asia/Kolkata" },
   },
 };
 
@@ -584,6 +584,61 @@ function loadStoredObject(key) {
   } catch {
     return null;
   }
+}
+
+const themePresets = {
+  Emerald: { primaryColor: "#17604b", accentColor: "#c28a3a", sidebarColor: "#10231f", backgroundColor: "#f7f8f5", surfaceColor: "#ffffff", textColor: "#10231f", mutedColor: "#60736a" },
+  Indigo: { primaryColor: "#3657b3", accentColor: "#d48a27", sidebarColor: "#172142", backgroundColor: "#f5f7fd", surfaceColor: "#ffffff", textColor: "#111d3a", mutedColor: "#64708b" },
+  Rose: { primaryColor: "#b33d5c", accentColor: "#2f8f7b", sidebarColor: "#301623", backgroundColor: "#fff7f8", surfaceColor: "#ffffff", textColor: "#27151c", mutedColor: "#746068" },
+  Slate: { primaryColor: "#405163", accentColor: "#b47a30", sidebarColor: "#18212a", backgroundColor: "#f5f7f8", surfaceColor: "#ffffff", textColor: "#17212b", mutedColor: "#65727b" },
+  Ocean: { primaryColor: "#087c8f", accentColor: "#f0a22e", sidebarColor: "#082f3d", backgroundColor: "#f1f9fb", surfaceColor: "#ffffff", textColor: "#0e2630", mutedColor: "#5f7480" },
+  Graphite: { primaryColor: "#5f6f82", accentColor: "#9f7aea", sidebarColor: "#111827", backgroundColor: "#f3f4f6", surfaceColor: "#ffffff", textColor: "#111827", mutedColor: "#6b7280" },
+};
+
+const themeColorFields = [
+  ["sidebarColor", "Sidebar", "Navigation background"],
+  ["primaryColor", "Primary", "Buttons, active states"],
+  ["accentColor", "Accent", "Highlights and focus"],
+  ["backgroundColor", "Background", "Page canvas"],
+  ["surfaceColor", "Surface", "Cards and panels"],
+  ["textColor", "Text", "Headings and main copy"],
+  ["mutedColor", "Muted", "Secondary labels"],
+];
+
+function safeColorValue(value, fallback = "#17604b") {
+  return /^#[0-9a-f]{6}$/i.test(String(value || "")) ? value : fallback;
+}
+
+const defaultThemeConfig = {
+  mode: "Light",
+  preset: "Emerald",
+  ...themePresets.Emerald,
+};
+
+function normalizeThemeConfig(config) {
+  const saved = config || {};
+  const preset = themePresets[saved.preset] ? saved.preset : "Emerald";
+  const base = saved.preset === "Custom" ? defaultThemeConfig : themePresets[preset];
+  return {
+    ...defaultThemeConfig,
+    ...base,
+    ...saved,
+    mode: saved.mode === "Dark" ? "Dark" : "Light",
+    preset: saved.preset === "Custom" ? "Custom" : preset,
+  };
+}
+
+function themeStyleVariables(config) {
+  const theme = normalizeThemeConfig(config);
+  return {
+    "--theme-primary": theme.primaryColor,
+    "--theme-accent": theme.accentColor,
+    "--theme-sidebar": theme.sidebarColor,
+    "--theme-bg": theme.backgroundColor,
+    "--theme-surface": theme.surfaceColor,
+    "--theme-text": theme.textColor,
+    "--theme-muted": theme.mutedColor,
+  };
 }
 
 function normalizeProductionUnit(unit) {
@@ -854,7 +909,8 @@ function App() {
   const [financeView, setFinanceView] = useState("Expenses");
   const [reportNavOpen, setReportNavOpen] = useState(false);
   const [reportView, setReportView] = useState("Daily sales");
-  const [dark, setDark] = useState(false);
+  const [themeConfig, setThemeConfig] = useState(() => normalizeThemeConfig(loadStoredObject("vestora-theme-config")));
+  const [dark, setDark] = useState(() => themeConfig.mode === "Dark");
   const [cart, setCart] = useState([]);
   const [posCashier, setPosCashier] = useState(() => loadStoredObject("vestora-pos-cashier"));
   const [orderType, setOrderType] = useState("Dine-in");
@@ -919,6 +975,11 @@ function App() {
   const allowedModuleIds = roleModuleAccess[currentRoleLabel] || roleModuleAccess.Cashier;
   const visibleModules = modules.filter((module) => allowedModuleIds.includes(module.id));
   const activeModule = visibleModules.some((module) => module.id === active) ? active : visibleModules[0]?.id || "dashboard";
+  const themeVariables = themeStyleVariables(themeConfig);
+
+  useEffect(() => {
+    localStorage.setItem("vestora-theme-config", JSON.stringify({ ...themeConfig, mode: dark ? "Dark" : "Light" }));
+  }, [themeConfig, dark]);
 
   function notify(message) {
     setToast(message);
@@ -1385,12 +1446,12 @@ function App() {
   finance: <Finance notify={notify} canManageAll={canManage} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} storeId={activeStore.id} view={financeView} />,
     reports: <Reports notify={notify} storeId={activeStore.id} salesLedger={scopedSalesLedger} voidLedger={scopedVoidLedger} refundLedger={scopedRefundLedger} onRefund={recordRefund} lastShiftClose={lastShiftClose} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} activeView={reportView} onReportChange={setReportView} />,
     admin: <Admin notify={notify} users={users} setUsers={setUsers} currentUser={currentUser} canManageAll={canManageAll} canManageStore={canManage} stores={stores} activeStore={activeStore} activeView={adminView} onViewChange={openAdminView} />,
-    settings: <SettingsView notify={notify} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} canManage={canManage} canManageAll={canManageAll} activeStore={activeStore} setStores={setStores} />,
+    settings: <SettingsView notify={notify} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} canManage={canManage} canManageAll={canManageAll} activeStore={activeStore} setStores={setStores} themeConfig={{ ...themeConfig, mode: dark ? "Dark" : "Light" }} setThemeConfig={setThemeConfig} setDark={setDark} />,
   }[activeModule];
 
   if (activeModule === "pos") {
     return (
-      <div className={dark ? "pos-page dark" : "pos-page"}>
+      <div className={dark ? "pos-page dark" : "pos-page"} style={themeVariables}>
         {content}
         {toast && <div className="toast">{toast}</div>}
       </div>
@@ -1398,7 +1459,7 @@ function App() {
   }
 
   return (
-    <div className={`${dark ? "app dark" : "app"} ${sidebarOpen ? "sidebar-expanded" : "sidebar-collapsed"}`}>
+    <div className={`${dark ? "app dark" : "app"} ${sidebarOpen ? "sidebar-expanded" : "sidebar-collapsed"}`} style={themeVariables}>
       <aside className={sidebarOpen ? "sidebar" : "sidebar collapsed"}>
         <div className="brand">
           <img src="/vestora-mark.png" alt="" />
@@ -6236,7 +6297,7 @@ function buildSettingsDefaults(activeStore, billTemplate) {
   };
 }
 
-function SettingsManagement({ notify, canManage, activeStore, setStores, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, activeSection, onBack }) {
+function SettingsManagement({ notify, canManage, activeStore, setStores, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, themeConfig, setThemeConfig, setDark, activeSection, onBack }) {
   const defaultSettings = buildSettingsDefaults(activeStore, billTemplate);
   const settingsStorageKey = `vestora-active-settings-${activeStore?.id || "global"}`;
   const [settings, setSettings] = useState(() => {
@@ -6244,7 +6305,9 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
     return saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings;
   });
   const config = settingsSectionConfig[activeSection];
-  const draft = settings[activeSection] || config.defaults;
+  const draft = activeSection === "Theme and language"
+    ? { ...(settings[activeSection] || config.defaults), theme: themeConfig.mode, themePreset: themeConfig.preset, primaryColor: themeConfig.primaryColor, accentColor: themeConfig.accentColor, sidebarColor: themeConfig.sidebarColor, backgroundColor: themeConfig.backgroundColor, surfaceColor: themeConfig.surfaceColor, textColor: themeConfig.textColor, mutedColor: themeConfig.mutedColor }
+    : settings[activeSection] || config.defaults;
 
   useEffect(() => {
     const saved = localStorage.getItem(settingsStorageKey);
@@ -6258,6 +6321,29 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
   function update(field, value) {
     if (!canManage) {
       notify("Admin permission required");
+      return;
+    }
+    if (activeSection === "Theme and language") {
+      const nextTheme = { ...draft, [field]: value };
+      if (field === "themePreset" && themePresets[value]) {
+        Object.assign(nextTheme, themePresets[value], { themePreset: value });
+      }
+      if (themeColorFields.some(([key]) => key === field)) {
+        nextTheme.themePreset = "Custom";
+      }
+      setThemeConfig(normalizeThemeConfig({
+        mode: nextTheme.theme,
+        preset: nextTheme.themePreset,
+        primaryColor: nextTheme.primaryColor,
+        accentColor: nextTheme.accentColor,
+        sidebarColor: nextTheme.sidebarColor,
+        backgroundColor: nextTheme.backgroundColor,
+        surfaceColor: nextTheme.surfaceColor,
+        textColor: nextTheme.textColor,
+        mutedColor: nextTheme.mutedColor,
+      }));
+      setDark(nextTheme.theme === "Dark");
+      setSettings((current) => ({ ...current, [activeSection]: { ...(current[activeSection] || config.defaults), ...nextTheme } }));
       return;
     }
     setSettings((current) => ({ ...current, [activeSection]: { ...(current[activeSection] || config.defaults), [field]: value } }));
@@ -6276,6 +6362,10 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
     if (!canManage) {
       notify("Admin permission required");
       return;
+    }
+    if (activeSection === "Theme and language") {
+      setThemeConfig(defaultThemeConfig);
+      setDark(false);
     }
     setSettings((current) => ({ ...current, [activeSection]: settingsSectionConfig[activeSection].defaults }));
     notify(`${activeSection} reset`);
@@ -6309,6 +6399,20 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
   }
 
   function applySettingsToStore(section, values) {
+    if (section === "Theme and language") {
+      setThemeConfig(normalizeThemeConfig({
+        mode: values.theme,
+        preset: values.themePreset,
+        primaryColor: values.primaryColor,
+        accentColor: values.accentColor,
+        sidebarColor: values.sidebarColor,
+        backgroundColor: values.backgroundColor,
+        surfaceColor: values.surfaceColor,
+        textColor: values.textColor,
+        mutedColor: values.mutedColor,
+      }));
+      setDark(values.theme === "Dark");
+    }
     if (section === "Restaurant profile") {
       const nextName = values.restaurantName?.trim();
       if (nextName) {
@@ -6364,15 +6468,98 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
               }} />
               <p className="settings-description">{config.description}</p>
               {activeSection === "Printer setup" && <div className={`settings-printer-status ${draft.connectionStatus === "Connected" ? "connected" : ""}`}><span className={draft.connectionStatus === "Connected" ? "active-chip" : "pill offline"}>{draft.connectionStatus || "Not connected"}</span><div><strong>{draft.connectionStatus === "Connected" ? "Printer routing is active" : "Test the KOT printer to activate routing"}</strong><small>{draft.connectionStatus === "Connected" ? `${draft.kotPrinter} receives new kitchen tickets.` : "The KOT printer will display as connected only after a successful test."}</small></div></div>}
-              <div className="menu-form-grid">
-                {config.fields.map(([field, label]) => (
-                  <label key={field}>{label}
-                    {activeSection === "Printer setup" && ["billPrinter", "kotPrinter", "counterPrinter"].includes(field) ? (
-                      <input list="vestora-printer-choices" value={draft[field] || ""} onChange={(event) => update(field, event.target.value)} disabled={!canManage} placeholder="Select or enter printer name" />
-                    ) : <input value={draft[field] || ""} onChange={(event) => update(field, event.target.value)} disabled={!canManage} />}
-                  </label>
-                ))}
-              </div>
+              {activeSection === "Theme and language" ? (
+                <div className="theme-studio">
+                  <div className="theme-studio-hero" style={{ background: `linear-gradient(135deg, ${draft.sidebarColor}, ${draft.primaryColor})` }}>
+                    <div>
+                      <span>Website appearance</span>
+                      <h3>{draft.themePreset || "Custom"} / {draft.theme}</h3>
+                      <p>Choose a preset, then tune every important website color for this browser.</p>
+                    </div>
+                    <Sparkles size={34} />
+                  </div>
+
+                  <div className="theme-control-row">
+                    <div>
+                      <span className="theme-control-label">Display mode</span>
+                      <div className="theme-segment">
+                        {["Light", "Dark"].map((mode) => (
+                          <button key={mode} className={draft.theme === mode ? "active" : ""} onClick={() => update("theme", mode)} disabled={!canManage}>
+                            {mode === "Light" ? <Sun size={16} /> : <Moon size={16} />}
+                            {mode}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="theme-control-label">Language / currency</span>
+                      <div className="theme-local-grid">
+                        <input value={draft.language || ""} onChange={(event) => update("language", event.target.value)} disabled={!canManage} placeholder="Language" />
+                        <input value={draft.currency || ""} onChange={(event) => update("currency", event.target.value)} disabled={!canManage} placeholder="Currency" />
+                        <input value={draft.timezone || ""} onChange={(event) => update("timezone", event.target.value)} disabled={!canManage} placeholder="Timezone" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="theme-preset-grid">
+                    {[...Object.keys(themePresets), "Custom"].map((preset) => {
+                      const colors = preset === "Custom" ? draft : themePresets[preset];
+                      return (
+                        <button key={preset} className={draft.themePreset === preset ? "theme-preset-card active" : "theme-preset-card"} onClick={() => update("themePreset", preset)} disabled={!canManage}>
+                          <span className="theme-preset-swatches">
+                            {["sidebarColor", "primaryColor", "accentColor"].map((key) => <i key={key} style={{ background: colors[key] }} />)}
+                          </span>
+                          <strong>{preset}</strong>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="theme-color-grid">
+                    {themeColorFields.map(([field, label, helper]) => (
+                      <label key={field} className="theme-color-card">
+                        <span>
+                          <strong>{label}</strong>
+                          <small>{helper}</small>
+                        </span>
+                        <span className="theme-color-input">
+                          <input type="color" value={safeColorValue(draft[field], config.defaults[field])} onChange={(event) => update(field, event.target.value)} disabled={!canManage} />
+                          <input value={draft[field] || ""} onChange={(event) => update(field, event.target.value)} disabled={!canManage} />
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+
+                  <div className="theme-live-preview" style={themeStyleVariables({ ...draft, mode: draft.theme, preset: draft.themePreset })}>
+                    <aside>
+                      <strong>VESTORA</strong>
+                      <span className="active">Dashboard</span>
+                      <span>POS Billing</span>
+                      <span>Settings</span>
+                    </aside>
+                    <section>
+                      <div className="theme-preview-top">
+                        <span>Live preview</span>
+                        <button>Primary action</button>
+                      </div>
+                      <div className="theme-preview-cards">
+                        <article><small>Sales</small><strong>₹42,800</strong><em>+12%</em></article>
+                        <article><small>Orders</small><strong>126</strong><em>Today</em></article>
+                      </div>
+                    </section>
+                  </div>
+                </div>
+              ) : (
+                <div className="menu-form-grid">
+                  {config.fields.map(([field, label]) => (
+                    <label key={field}>{label}
+                      {activeSection === "Printer setup" && ["billPrinter", "kotPrinter", "counterPrinter"].includes(field) ? (
+                        <input list="vestora-printer-choices" value={draft[field] || ""} onChange={(event) => update(field, event.target.value)} disabled={!canManage} placeholder="Select or enter printer name" />
+                      ) : <input value={draft[field] || ""} onChange={(event) => update(field, event.target.value)} disabled={!canManage} />}
+                    </label>
+                  ))}
+                </div>
+              )}
               {activeSection === "Printer setup" && <datalist id="vestora-printer-choices">{printerChoices.map((printer) => <option key={printer} value={printer} />)}</datalist>}
               {!canManage && <p className="permission-note">Admin permission required to edit settings.</p>}
               <div className="row-actions menu-admin-actions">
@@ -7071,14 +7258,16 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
               <strong>{kioskNow.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</strong>
               <span>{kioskNow.toLocaleDateString([], { weekday: "long", day: "2-digit", month: "short", year: "numeric" })}</span>
             </div>
-            <button className={streamRef.current ? "attendance-camera-toggle active" : "attendance-camera-toggle"} onClick={() => streamRef.current ? stopCamera() : startCamera()}>
-              <Camera size={20} />
-              {streamRef.current ? "Stop scanner" : "Start face scanner"}
-            </button>
-            <button className="attendance-kiosk-exit" onClick={() => { stopCamera(); onViewChange?.("Add Face ID"); }}>
-              <X size={20} />
-              Exit kiosk
-            </button>
+            <div className="attendance-kiosk-actions">
+              <button className={streamRef.current ? "attendance-camera-toggle active" : "attendance-camera-toggle"} onClick={() => streamRef.current ? stopCamera() : startCamera()}>
+                <Camera size={20} />
+                {streamRef.current ? "Stop scanner" : "Start face scanner"}
+              </button>
+              <button className="attendance-kiosk-exit" onClick={() => { stopCamera(); onViewChange?.("Add Face ID"); }}>
+                <X size={20} />
+                Exit kiosk
+              </button>
+            </div>
           </div>
           {attendanceResult && (
             <div className={`attendance-punch-result ${attendanceResult.type}`} role="status">
@@ -7089,6 +7278,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
               </div>
             </div>
           )}
+          <div className="attendance-kiosk-body">
           <div className="panel attendance-camera-panel">
             <PanelHead title="Face scanner" icon={Camera} />
             <div className="camera-frame">
@@ -7121,7 +7311,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
                   <div>
                     <span>Current attendance</span>
                     <strong aria-live="polite">{matchedEmployeeOpenLog
-                      ? `Checked in at ${formatAttendanceTime(matchedEmployeeOpenLog.checkIn)} · Working ${formatAttendanceDuration(matchedEmployeeOpenLog.checkIn, "", attendanceNow)}`
+                      ? `Checked in at ${formatAttendanceTime(matchedEmployeeOpenLog.checkIn)} - Working ${formatAttendanceDuration(matchedEmployeeOpenLog.checkIn, "", attendanceNow)}`
                       : "Not checked in today"}</strong>
                   </div>
                 </div>
@@ -7192,6 +7382,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
               {!todayLogs.length && <p className="permission-note">No attendance marked today.</p>}
             </div>
           </div>
+          </div>
         </div>
       )}
 
@@ -7244,10 +7435,6 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
           </div>
           <div className="panel">
             <PanelHead title="User source" icon={Users} actions={["Open Admin"]} onAction={() => onOpenAdmin?.()} />
-            <div className="attendance-setup-note">
-              <strong>Only Admin-created active users appear here</strong>
-              <span>Create staff in Admin user creation first. Super Admin, Restaurant Admin, supplier, and demo starter accounts are hidden from Face ID enrollment.</span>
-            </div>
             <div className="attendance-summary-list">
               <div><span>Eligible users</span><strong>{employees.length}</strong></div>
               <div><span>Face ID added</span><strong>{enrolledCount}</strong></div>
@@ -7458,7 +7645,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
   );
 }
 
-function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, canManage, canManageAll, activeStore, setStores }) {
+function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, canManage, canManageAll, activeStore, setStores, themeConfig, setThemeConfig, setDark }) {
   const sectionNames = canManageAll ? Object.keys(settingsSectionConfig) : storeSettingsSections;
   const [selectedSetting, setSelectedSetting] = useState(null);
   const settingMeta = {
@@ -7488,7 +7675,7 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
   }
 
   if (selectedSetting) {
-    return <SettingsManagement notify={notify} canManage={canManage} activeStore={activeStore} setStores={setStores} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} activeSection={selectedSetting} onBack={() => setSelectedSetting(null)} />;
+    return <SettingsManagement notify={notify} canManage={canManage} activeStore={activeStore} setStores={setStores} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} themeConfig={themeConfig} setThemeConfig={setThemeConfig} setDark={setDark} activeSection={selectedSetting} onBack={() => setSelectedSetting(null)} />;
   }
 
   return (
