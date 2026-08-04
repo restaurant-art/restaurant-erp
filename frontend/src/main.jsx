@@ -73,6 +73,14 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
+const appBaseUrl = import.meta.env.BASE_URL || "/";
+
+function publicAssetPath(path) {
+  const cleanBase = appBaseUrl.endsWith("/") ? appBaseUrl : `${appBaseUrl}/`;
+  const cleanPath = String(path).replace(/^\/+/, "");
+  return `${cleanBase}${cleanPath}`;
+}
+
 const modules = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "pos", label: "POS Billing", icon: ShoppingCart },
@@ -99,12 +107,12 @@ const menuItems = [
 ];
 
 const menuItemPhotos = {
-  "paneer tikka bowl": "/menu/paneer-tikka-bowl.jpg",
-  "hyderabadi biryani": "/menu/hyderabadi-biryani.jpg",
-  "tandoori platter": "/menu/tandoori-platter.jpg",
-  "masala chaas": "/menu/masala-chaas.jpg",
-  "filter coffee": "/menu/filter-coffee.jpg",
-  "gulab jamun": "/menu/gulab-jamun.jpg",
+  "paneer tikka bowl": publicAssetPath("menu/paneer-tikka-bowl.jpg"),
+  "hyderabadi biryani": publicAssetPath("menu/hyderabadi-biryani.jpg"),
+  "tandoori platter": publicAssetPath("menu/tandoori-platter.jpg"),
+  "masala chaas": publicAssetPath("menu/masala-chaas.jpg"),
+  "filter coffee": publicAssetPath("menu/filter-coffee.jpg"),
+  "gulab jamun": publicAssetPath("menu/gulab-jamun.jpg"),
 };
 
 function getMenuItemPhoto(item) {
@@ -1070,7 +1078,7 @@ function App() {
   }
 
   useEffect(() => {
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/service-worker.js");
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register(publicAssetPath("service-worker.js"));
   }, []);
 
   useEffect(() => {
@@ -6495,16 +6503,40 @@ function euclideanDistance(a, b) {
   return Math.sqrt(a.reduce((sum, value, index) => sum + ((Number(value) - Number(b[index])) ** 2), 0));
 }
 
+const faceMatchDistance = {
+  strict: 0.42,
+  loose: 0.68,
+};
+
+function maxFaceDistanceForThreshold(confidenceThreshold) {
+  const threshold = Math.max(30, Math.min(95, Number(confidenceThreshold || 56)));
+  if (threshold <= 56) {
+    const relaxedRange = faceMatchDistance.loose - 0.6;
+    return faceMatchDistance.loose - ((threshold - 30) / 26) * relaxedRange;
+  }
+  const strictRange = 0.6 - faceMatchDistance.strict;
+  return 0.6 - ((threshold - 56) / 39) * strictRange;
+}
+
+function faceDistanceToConfidence(distance) {
+  if (!Number.isFinite(distance)) return 0;
+  if (distance <= faceMatchDistance.strict) {
+    return Math.max(88, Math.min(100, Math.round(100 - (distance / faceMatchDistance.strict) * 12)));
+  }
+  const range = faceMatchDistance.loose - faceMatchDistance.strict;
+  return Math.max(0, Math.min(88, Math.round(88 - ((distance - faceMatchDistance.strict) / range) * 58)));
+}
+
 function bestFaceMatch(descriptor, employees, confidenceThreshold) {
   const enrolled = employees.filter((employee) => employee.active && employee.faceConsent && employee.faceDescriptor?.length);
   if (!descriptor?.length || !enrolled.length) return null;
   const matches = enrolled.map((employee) => {
     const distance = euclideanDistance(descriptor, employee.faceDescriptor);
-    const confidence = Math.max(0, Math.min(100, Math.round((1 - distance / 0.6) * 100)));
+    const confidence = faceDistanceToConfidence(distance);
     return { employee, distance, confidence };
   }).sort((a, b) => a.distance - b.distance);
   const best = matches[0];
-  return best && best.confidence >= Number(confidenceThreshold || 56) ? best : null;
+  return best && best.distance <= maxFaceDistanceForThreshold(confidenceThreshold) ? best : null;
 }
 
 function downloadCsv(filename, columns, rows) {
@@ -6557,6 +6589,8 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
   const streamRef = useRef(null);
   const faceApiRef = useRef(null);
   const scanTimerRef = useRef(null);
+  const employeesRef = useRef(employees);
+  const settingsRef = useRef(settings);
   const canManageAttendance = canManage || canManageAll;
   const selectedEmployee = employees.find((employee) => employee.id === selectedEmployeeId) || employees[0];
   const manualEmployee = employees.find((employee) => employee.id === manualEmployeeId);
@@ -6581,6 +6615,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
 
   useEffect(() => {
     localStorage.setItem(employeesKey, JSON.stringify(employees));
+    employeesRef.current = employees;
   }, [employees, employeesKey]);
 
   useEffect(() => {
@@ -6593,6 +6628,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
 
   useEffect(() => {
     localStorage.setItem(settingsKey, JSON.stringify(settings));
+    settingsRef.current = settings;
   }, [settings, settingsKey]);
 
   useEffect(() => {
@@ -6627,19 +6663,19 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
     if (faceApiRef.current) return faceApiRef.current;
     setFaceApiStatus("Loading local face-api models");
     try {
-      const faceApiBundle = "/models/face-api/face-api.esm.js";
-      const faceapi = await import(/* @vite-ignore */ faceApiBundle);
+      const faceApiModelsPath = publicAssetPath("models/face-api");
+      const faceapi = await import("@vladmandic/face-api");
       await Promise.all([
-        faceapi.nets.tinyFaceDetector.loadFromUri("/models/face-api"),
-        faceapi.nets.faceLandmark68Net.loadFromUri("/models/face-api"),
-        faceapi.nets.faceRecognitionNet.loadFromUri("/models/face-api"),
+        faceapi.nets.tinyFaceDetector.loadFromUri(faceApiModelsPath),
+        faceapi.nets.faceLandmark68Net.loadFromUri(faceApiModelsPath),
+        faceapi.nets.faceRecognitionNet.loadFromUri(faceApiModelsPath),
       ]);
       faceApiRef.current = faceapi;
       setFaceApiStatus("Local face recognition ready");
       return faceapi;
     } catch {
-      setFaceApiStatus("Add face-api bundle and models in public/models/face-api");
-      throw new Error("Face recognition files are missing");
+      setFaceApiStatus("Face recognition models are missing");
+      throw new Error("Face recognition model files are missing");
     }
   }
 
@@ -6653,11 +6689,18 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
         await videoRef.current.play();
       }
       setScanStatus("Camera ready");
+    } catch (error) {
+      setCameraError("Camera permission denied or no camera found");
+      setScanStatus("Camera unavailable");
+      return;
+    }
+    try {
       await loadFaceApi();
+      setCameraError("");
       startScanning();
     } catch (error) {
-      setCameraError(error.message.includes("missing") ? error.message : "Camera permission denied or no camera found");
-      setScanStatus("Camera unavailable");
+      setCameraError(error.message);
+      setScanStatus("Face model unavailable");
     }
   }
 
@@ -6677,7 +6720,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
       try {
         const faceapi = faceApiRef.current;
         const detection = await faceapi
-          .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 }))
+          .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.35 }))
           .withFaceLandmarks()
           .withFaceDescriptor();
         if (!detection) {
@@ -6687,7 +6730,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
           return;
         }
         const descriptor = Array.from(detection.descriptor || []);
-        const match = bestFaceMatch(descriptor, employees, settings.confidenceThreshold);
+        const match = bestFaceMatch(descriptor, employeesRef.current, settingsRef.current.confidenceThreshold);
         setCurrentDescriptor(descriptor);
         setMatchedFace(match);
         setScanStatus(match ? `${match.employee.name} matched` : "Unknown face");
@@ -6752,6 +6795,12 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
       notify("Admin or HR permission required");
       return;
     }
+    const employee = employees.find((item) => item.id === employeeId);
+    if (!employee?.faceDescriptor?.length) {
+      notify("No Face ID saved for this employee");
+      return;
+    }
+    if (!window.confirm(`Delete entered Face ID data for ${employee.name}?`)) return;
     setEmployees((current) => current.map((employee) => employee.id === employeeId ? {
       ...employee,
       faceDescriptor: [],
@@ -6760,6 +6809,11 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
       faceSamples: 0,
       faceStoreImages: false,
     } : employee));
+    setMatchedFace((current) => current?.employee.id === employeeId ? null : current);
+    if (selectedEmployee?.id === employeeId) {
+      setSamples([]);
+      setConsentAccepted(false);
+    }
     notify("Face data deleted");
   }
 
@@ -7179,6 +7233,25 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
               </select></label>
               <label>Samples captured<input value={`${samples.length}/5`} readOnly /></label>
             </div>
+            {selectedEmployee?.faceDescriptor?.length ? (
+              <div className="selected-face-id-panel">
+                <div>
+                  <span>Enrolled Face ID</span>
+                  <strong>{selectedEmployee.name} / {selectedEmployee.faceSamples || 1} samples</strong>
+                </div>
+                <button className="danger-action" onClick={() => deleteFaceData(selectedEmployee.id)} disabled={!canManageAttendance}>
+                  <Trash2 size={17} />
+                  Delete entered data
+                </button>
+              </div>
+            ) : (
+              <div className="selected-face-id-panel muted">
+                <div>
+                  <span>No Face ID saved</span>
+                  <strong>{selectedEmployee?.name || "Select employee"}</strong>
+                </div>
+              </div>
+            )}
             <label className="attendance-consent"><input type="checkbox" checked={consentAccepted} onChange={(event) => setConsentAccepted(event.target.checked)} disabled={!canManageAttendance} /> Employee has agreed to biometric attendance enrollment.</label>
             <div className="sample-meter">{Array.from({ length: 5 }, (_, index) => <span key={index} className={samples[index] ? "filled" : ""} />)}</div>
             <p className="settings-description">Capture 3 to 5 clear samples from the fixed camera. VESTORA saves only the averaged face descriptor unless image storage is enabled in settings.</p>
@@ -7204,7 +7277,12 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
                   <span className={employee.faceConsent && employee.faceDescriptor?.length ? "face-dot enrolled" : "face-dot"} />
                   <div><strong>{employee.name}</strong><small>{employee.code} / {employee.designation}</small></div>
                   <em>{employee.faceConsent && employee.faceDescriptor?.length ? `${employee.faceSamples} samples` : "Not enrolled"}</em>
-                  <button onClick={() => deleteFaceData(employee.id)} disabled={!canManageAttendance || !employee.faceDescriptor?.length}>Delete face data</button>
+                  {employee.faceConsent && employee.faceDescriptor?.length ? (
+                    <button onClick={() => deleteFaceData(employee.id)} disabled={!canManageAttendance}>
+                      <Trash2 size={16} />
+                      Delete entered data
+                    </button>
+                  ) : <span className="face-id-empty-action">No Face ID</span>}
                 </div>
               ))}
               {!filteredEmployees.length && <div className="attendance-empty"><Users size={22} /><strong>No Admin-created users</strong><span>Create staff in Admin user creation to add Face ID here.</span></div>}
@@ -7386,7 +7464,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
           <label className="attendance-consent"><input type="checkbox" checked={settings.storeFaceImages} onChange={(event) => updateSetting("storeFaceImages", event.target.checked)} disabled={!canManageAttendance} /> Allow storing raw face images for this store.</label>
           <div className="attendance-setup-note">
             <strong>Local face-api setup</strong>
-            <span>Place face-api.esm.js plus tiny face detector, landmark, and recognition model files inside frontend/public/models/face-api. The app loads them locally and never sends camera frames to any paid or third-party API.</span>
+            <span>Place the tiny face detector, landmark, and recognition model files inside frontend/public/models/face-api. The app loads them locally and never sends camera frames to any paid or third-party API.</span>
           </div>
         </div>
       )}

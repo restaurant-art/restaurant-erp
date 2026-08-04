@@ -1,16 +1,17 @@
-const CACHE_NAME = "vestora-v203";
+const CACHE_NAME = "vestora-v204";
+const assetUrl = (path) => new URL(path, self.registration.scope).toString();
 const SHELL = [
-  "/",
-  "/index.html",
-  "/manifest.webmanifest",
-  "/vestora-mark.png",
-  "/menu/paneer-tikka-bowl.jpg",
-  "/menu/hyderabadi-biryani.jpg",
-  "/menu/tandoori-platter.jpg",
-  "/menu/masala-chaas.jpg",
-  "/menu/filter-coffee.jpg",
-  "/menu/gulab-jamun.jpg",
-];
+  "",
+  "index.html",
+  "manifest.webmanifest",
+  "vestora-mark.png",
+  "menu/paneer-tikka-bowl.jpg",
+  "menu/hyderabadi-biryani.jpg",
+  "menu/tandoori-platter.jpg",
+  "menu/masala-chaas.jpg",
+  "menu/filter-coffee.jpg",
+  "menu/gulab-jamun.jpg",
+].map(assetUrl);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL)));
@@ -33,6 +34,6 @@ self.addEventListener("fetch", (event) => {
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
         return response;
       })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match("/")))
+      .catch(() => caches.match(event.request).then((cached) => cached || caches.match(assetUrl(""))))
   );
 });

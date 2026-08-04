@@ -31,6 +31,21 @@ Set these values for production:
 
 Cloudflare R2 is configured through `django-storages` using the S3-compatible API. Uploaded menu images, restaurant logos, employee photos, customer images, bill PDFs, reports, purchase bills, backups, and QR images use the configured storage backend when R2 credentials are present.
 
+## Supabase Postgres
+
+The backend can use Supabase as its Postgres database through `DATABASE_URL`.
+
+1. Copy `backend/.env.supabase.example` to `backend/.env.supabase`.
+2. In Supabase Dashboard, open your project and click **Connect**.
+3. Copy the session pooler connection string, replace `[YOUR-PASSWORD]`, and paste it into `DATABASE_URL`.
+4. Run the stack with:
+
+```bash
+docker compose --env-file backend/.env.supabase up --build
+```
+
+The example is prefilled for project `vqinmequtjkuzrtzkzsk` in Tokyo (`ap-northeast-1`) and sets `DATABASE_SSL_REQUIRE=True`.
+
 ## Production Deployment
 
 1. Point Cloudflare DNS to the server.

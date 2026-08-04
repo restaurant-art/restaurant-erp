@@ -18,10 +18,11 @@ services:
   backend:
     build: ./backend
     env_file:
-      - ./backend/.env.example
+      - ${BACKEND_ENV_FILE:-./backend/.env.example}
     environment:
-      DATABASE_URL: postgres://vestora:vestora@postgres:5432/vestora
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: ${DATABASE_URL:-postgres://vestora:vestora@postgres:5432/vestora}
+      DATABASE_SSL_REQUIRE: ${DATABASE_SSL_REQUIRE:-False}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       - postgres
       - redis
@@ -36,10 +37,11 @@ services:
   celery:
     build: ./backend
     env_file:
-      - ./backend/.env.example
+      - ${BACKEND_ENV_FILE:-./backend/.env.example}
     environment:
-      DATABASE_URL: postgres://vestora:vestora@postgres:5432/vestora
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: ${DATABASE_URL:-postgres://vestora:vestora@postgres:5432/vestora}
+      DATABASE_SSL_REQUIRE: ${DATABASE_SSL_REQUIRE:-False}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       - backend
       - redis
