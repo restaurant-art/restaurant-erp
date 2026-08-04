@@ -6584,7 +6584,6 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
   const [attendanceNow, setAttendanceNow] = useState(() => new Date());
   const [currentDescriptor, setCurrentDescriptor] = useState([]);
   const [samples, setSamples] = useState([]);
-  const [consentAccepted, setConsentAccepted] = useState(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const faceApiRef = useRef(null);
@@ -6749,10 +6748,6 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
       notify("Select an employee first");
       return;
     }
-    if (!consentAccepted) {
-      notify("Employee consent is required");
-      return;
-    }
     if (!streamRef.current) {
       notify("Starting camera for face enrollment");
       await startCamera();
@@ -6785,7 +6780,6 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
       faceStoreImages: Boolean(settings.storeFaceImages),
     } : employee));
     setSamples([]);
-    setConsentAccepted(false);
     onViewChange?.("Face Check In/Out");
     notify(`${selectedEmployee.name} face enrolled`);
   }
@@ -6812,7 +6806,6 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
     setMatchedFace((current) => current?.employee.id === employeeId ? null : current);
     if (selectedEmployee?.id === employeeId) {
       setSamples([]);
-      setConsentAccepted(false);
     }
     notify("Face data deleted");
   }
@@ -7206,11 +7199,6 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
         <div className="attendance-employee-grid">
           <div className="panel">
             <PanelHead title="Add Face ID" icon={UserPlus} actions={["Capture sample", "Save face"]} onAction={(action) => action === "Capture sample" ? captureEnrollmentSample() : saveEnrollment()} />
-            <div className="attendance-step-header">
-              <span>Step 1</span>
-              <strong>Enroll an admin-created employee</strong>
-              <p>Select an active staff user, confirm consent, capture at least 3 clear samples, then save Face ID.</p>
-            </div>
             <div className="enrollment-camera-card">
               <div className="camera-frame enrollment-camera-frame">
                 <video ref={videoRef} muted playsInline />
@@ -7252,7 +7240,6 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
                 </div>
               </div>
             )}
-            <label className="attendance-consent"><input type="checkbox" checked={consentAccepted} onChange={(event) => setConsentAccepted(event.target.checked)} disabled={!canManageAttendance} /> Employee has agreed to biometric attendance enrollment.</label>
             <div className="sample-meter">{Array.from({ length: 5 }, (_, index) => <span key={index} className={samples[index] ? "filled" : ""} />)}</div>
             <p className="settings-description">Capture 3 to 5 clear samples from the fixed camera. VESTORA saves only the averaged face descriptor unless image storage is enabled in settings.</p>
           </div>
