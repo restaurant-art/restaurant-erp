@@ -507,7 +507,7 @@ const roleModuleAccess = {
   "Branch Manager": ["dashboard", "pos", "kds", "tables", "menu", "inventory", "production", "crm", "attendance", "reports", "settings"],
   "HR Manager": ["dashboard", "attendance", "reports", "settings"],
   Cashier: ["dashboard", "pos", "tables", "finance"],
-  Waiter: ["pos", "tables", "kds"],
+  Waiter: ["tables", "kds"],
   Chef: ["kds", "inventory", "production"],
   Accountant: ["dashboard", "finance", "reports"],
 };
@@ -920,7 +920,11 @@ function App() {
 
   function handleLogin(user) {
     const loginUser = { ...user, storeId: user.storeId || "STORE-001" };
+    const loginRole = roleLabelForUser(loginUser);
+    const landingModule = loginRole === "Waiter" ? "tables" : loginRole === "Chef" ? "kds" : "dashboard";
     setCurrentUser(loginUser);
+    setActive(landingModule);
+    setReturnModule(landingModule);
     if (loginUser.role === "super_admin") {
       setSuperAdminLanding(true);
       localStorage.removeItem("vestora-super-admin-in-store");
