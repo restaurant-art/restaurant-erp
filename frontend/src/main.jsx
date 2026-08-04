@@ -1359,10 +1359,10 @@ function App() {
         setPosCashier(cashier);
         localStorage.setItem("vestora-pos-cashier", JSON.stringify(cashier));
         return true;
-      }} onExit={exitPOS} onCreateCashier={() => openAdminView("create")} />
+      }} onExit={exitPOS} onLogout={handleLogout} onCreateCashier={() => openAdminView("create")} />
       : currentShift
-        ? <POS cart={cart} setCart={setCart} items={productItems} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
-        : <ShiftOpening online={online} onOpenShift={openShift} onExit={exitPOS} cashier={posCashier} />,
+        ? <POS cart={cart} setCart={setCart} items={productItems} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onLogout={handleLogout} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
+        : <ShiftOpening online={online} onOpenShift={openShift} onExit={exitPOS} onLogout={handleLogout} cashier={posCashier} />,
     kds: <KDS notify={notify} orders={scopedKdsOrders} setOrders={setKdsOrders} kotPrinter={kotPrinter} />,
     tables: <Tables key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} items={productItems} currentUser={currentUser} tableOrders={scopedTableOrders} onSaveOrder={saveTableOrder} onSendKot={sendTableKot} onSendReception={sendTableToReception} onCancelOrder={cancelTableOrder} onCancelItem={cancelTableOrderItem} kotPrinter={kotPrinter} />,
     menu: <MenuManagement key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} productItems={productItems} setProductItems={setProductItems} activeView={menuView} editingItemId={menuItemEditId} onNavigate={openMenuView} />,
@@ -1523,6 +1523,10 @@ function App() {
               </button>
             );
           })}
+          <button className="nav sidebar-logout" onClick={handleLogout} title="Logout">
+            <LogOut size={18} />
+            {sidebarOpen && <span>Logout</span>}
+          </button>
         </nav>
       </aside>
       <main>
@@ -1549,7 +1553,7 @@ function App() {
             <span className="pill role-pill">{currentRoleLabel}</span>
             <button className="icon-btn" onClick={() => notify("No new notifications")} title="Notifications"><Bell size={18} /></button>
             <button className="icon-btn" onClick={() => setDark(!dark)} title="Toggle theme">{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
-            <button className="icon-btn" onClick={() => { localStorage.removeItem("vestora-current-user"); localStorage.removeItem("vestora-super-admin-in-store"); setCurrentUser(null); }} title="Logout"><LogOut size={18} /></button>
+            <button className="icon-btn" onClick={handleLogout} title="Logout"><LogOut size={18} /></button>
           </div>
         </header>
         {content}
@@ -1572,7 +1576,16 @@ function LoginScreen({ onLogin }) {
     const loginId = email.trim().toLowerCase();
     const savedUsers = loadStoredArray("vestora-users");
     const restaurantAccounts = [
-      ...savedUsers.map((user) => ({ email: user.email, password: user.password, name: user.name, role: roleToAuthRole(user.role), appRole: user.role, status: user.status, storeId: user.storeId || "STORE-001" })),
+      ...savedUsers.map((user) => ({
+        id: user.id,
+        email: String(user.email || "").trim().toLowerCase(),
+        password: String(user.password || ""),
+        name: user.name,
+        role: roleToAuthRole(user.role),
+        appRole: user.role,
+        status: user.status || "Active",
+        storeId: user.storeId || "STORE-001",
+      })),
       ...demoAccounts,
     ];
     const user = portal === "supplier"
@@ -1603,7 +1616,7 @@ function LoginScreen({ onLogin }) {
       <form className="login-card" onSubmit={login}>
         <img src="/vestora-mark.png" alt="" />
         <h1>VESTORA</h1>
-        <p>{portal === "supplier" ? "Supplier Purchase Order Portal" : "Login as Super Admin or Restaurant Admin"}</p>
+        <p>{portal === "supplier" ? "Supplier Purchase Order Portal" : "Restaurant staff login"}</p>
         <div className="login-tabs">
           <button type="button" className={portal === "restaurant" ? "active-action" : ""} onClick={() => choosePortal("restaurant")}>Restaurant</button>
           <button type="button" className={portal === "supplier" ? "active-action" : ""} onClick={() => choosePortal("supplier")}>Supplier</button>
@@ -2458,7 +2471,7 @@ function Dashboard({ notify, salesLedger, refundLedger = [], kdsOrders, comparis
   );
 }
 
-function CashierLogin({ cashiers, activeStore, currentShift, onAuthenticated, onExit, onCreateCashier }) {
+function CashierLogin({ cashiers, activeStore, currentShift, onAuthenticated, onExit, onLogout, onCreateCashier }) {
   const [selectedCashier, setSelectedCashier] = useState(null);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -2490,10 +2503,10 @@ function CashierLogin({ cashiers, activeStore, currentShift, onAuthenticated, on
             <img src="/vestora-mark.png" alt="" />
             <div><p>VESTORA POS</p><h1>Cashier login</h1></div>
           </div>
-          <button type="button" className="cashier-exit-button" onClick={onExit} title="Exit POS">
-            <LogOut size={18} />
-            <span>Exit POS</span>
-          </button>
+          <div className="cashier-login-actions">
+            <button type="button" className="cashier-exit-button" onClick={onExit} title="Exit POS"><PanelLeftClose size={18} /><span>Exit POS</span></button>
+            <button type="button" className="cashier-exit-button" onClick={onLogout} title="Logout"><LogOut size={18} /><span>Logout</span></button>
+          </div>
         </header>
 
         {!selectedCashier ? (
@@ -2546,7 +2559,7 @@ function CashierLogin({ cashiers, activeStore, currentShift, onAuthenticated, on
   );
 }
 
-function ShiftOpening({ online, onOpenShift, onExit, cashier }) {
+function ShiftOpening({ online, onOpenShift, onExit, onLogout, cashier }) {
   const [openingBalance, setOpeningBalance] = useState("0");
   const balance = Number(openingBalance || 0);
 
@@ -2585,6 +2598,7 @@ function ShiftOpening({ online, onOpenShift, onExit, cashier }) {
           <span className={online ? "shift-connection online" : "shift-connection offline"}>{online ? <Wifi size={16} /> : <WifiOff size={16} />} {online ? "Online" : "Offline"}</span>
           <div className="shift-secondary-actions">
             <button type="button" onClick={onExit}><PanelLeftClose size={17} /> Exit POS</button>
+            <button type="button" onClick={onLogout}><LogOut size={17} /> Logout</button>
           </div>
           <button className="primary-table-action shift-open-button" type="submit" disabled={Number.isNaN(balance) || balance < 0}>Open shift</button>
         </div>
@@ -2593,7 +2607,7 @@ function ShiftOpening({ online, onOpenShift, onExit, cashier }) {
   );
 }
 
-function POS({ cart, setCart, items, orderType, setOrderType, online, notify, billTemplate, onSale, onVoidItem, onExit, currentShift, onCloseShift, shiftBills, shiftRefunds = [], orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
+function POS({ cart, setCart, items, orderType, setOrderType, online, notify, billTemplate, onSale, onVoidItem, onExit, onLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
   const catalogItems = (items?.length ? items : menuItems).filter((item) => item.status !== "Inactive");
   const categories = ["All", ...Array.from(new Set(catalogItems.map((item) => item.category).filter(Boolean))), "Favourites"];
   const [category, setCategory] = useState("All");
@@ -2872,6 +2886,7 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
           <button className={pendingTableOrders.length ? "reception-queue-button has-orders" : "reception-queue-button"} onClick={openReceptionQueue}><ReceiptText size={16} /> Reception {pendingTableOrders.length ? `(${pendingTableOrders.length})` : ""}</button>
           <button className="pos-close-shift" onClick={() => setShowCloseShift(true)}>Close shift</button>
           <button className="pos-exit-button" onClick={onExit}><PanelLeftClose size={17} /> Exit POS</button>
+          <button className="pos-exit-button" onClick={onLogout}><LogOut size={17} /> Logout</button>
         </div>
       </div>
       <div className="pos-catalog">
@@ -4786,9 +4801,10 @@ function ProductItemsManager({ items, setItems, notify, canManageAll, menuCatego
         <PanelHead title="Menu items" icon={PackageSearch} actions={canManageAll ? ["Create item"] : []} onAction={() => onNavigate("create")} />
         <div className="product-master-table">
           <table>
-            <thead><tr><th>Item</th><th>Category</th><th>Rate</th><th>GST</th><th>Status</th><th aria-label="Actions" /></tr></thead>
+            <thead><tr><th>Image</th><th>Item</th><th>Category</th><th>Rate</th><th>GST</th><th>Status</th><th aria-label="Actions" /></tr></thead>
             <tbody>{items.map((item) => (
               <tr key={item.id}>
+                <td><img className="product-master-thumb" src={getMenuItemPhoto(item)} alt="" /></td>
                 <td>{item.name}</td>
                 <td>{item.category}</td>
                 <td>{formatMoney(item.price)}</td>
@@ -5977,7 +5993,15 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       return;
     }
     const allowedRole = roleChoices.includes(draft.role) ? draft.role : "Cashier";
-    const scopedDraft = { ...draft, role: allowedRole, storeId: activeStore.id };
+    const scopedDraft = {
+      ...draft,
+      name: draft.name.trim(),
+      email: draft.email.trim().toLowerCase(),
+      password: draft.password,
+      role: allowedRole,
+      status: draft.status || "Active",
+      storeId: activeStore.id,
+    };
     if (editingId) {
       const targetUser = users.find((user) => user.id === editingId);
       if (!canEditUser(targetUser)) {

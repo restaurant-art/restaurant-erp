@@ -1015,6 +1015,16 @@ nav {
   box-shadow: inset 3px 0 0 #c28a3a;
 }
 
+.sidebar-logout {
+  margin-top: 8px;
+  color: #f5d5cd;
+}
+
+.sidebar-logout:hover {
+  background: rgba(190, 77, 57, 0.2);
+  color: #ffffff;
+}
+
 .sidebar-admin-group {
   display: grid;
   gap: 5px;
@@ -2563,6 +2573,13 @@ h3 {
   min-height: 46px;
   padding: 0 17px;
   transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.cashier-login-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .cashier-exit-button:hover {
@@ -8164,6 +8181,16 @@ h3 {
 
 .product-master-table table {
   min-width: 640px;
+}
+
+.product-master-thumb {
+  display: block;
+  width: 42px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid rgba(16, 35, 31, 0.12);
+  background: #edf4f0;
 }
 
 .settings-admin-grid {
