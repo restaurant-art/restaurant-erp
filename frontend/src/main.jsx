@@ -7241,7 +7241,6 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
               </div>
             )}
             <div className="sample-meter">{Array.from({ length: 5 }, (_, index) => <span key={index} className={samples[index] ? "filled" : ""} />)}</div>
-            <p className="settings-description">Capture 3 to 5 clear samples from the fixed camera. VESTORA saves only the averaged face descriptor unless image storage is enabled in settings.</p>
           </div>
           <div className="panel">
             <PanelHead title="User source" icon={Users} actions={["Open Admin"]} onAction={() => onOpenAdmin?.()} />
