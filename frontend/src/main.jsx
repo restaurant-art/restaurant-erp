@@ -561,6 +561,9 @@ const roleModuleAccess = {
   Accountant: ["dashboard", "finance", "reports"],
 };
 
+const adminRoleChoicesAll = ["Restaurant Admin", "Branch Manager", "Cashier", "Waiter", "Chef", "Accountant"];
+const adminRoleChoicesStore = ["Branch Manager", "Cashier", "Waiter", "Chef", "Accountant"];
+
 function formatMoney(value) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
 }
@@ -717,6 +720,14 @@ function readableMutedColor(background) {
   return readableTextColor(background) === "#ffffff" ? "#cbd5d1" : "#60736a";
 }
 
+function blendHexColors(first, second, firstWeight = 0.5) {
+  const firstRgb = hexToRgb(first);
+  const secondRgb = hexToRgb(second);
+  const weight = Math.min(1, Math.max(0, firstWeight));
+  const blended = firstRgb.map((value, index) => Math.round(value * weight + secondRgb[index] * (1 - weight)));
+  return `#${blended.map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
 function ensureReadableText(color, background, minimumRatio = 4.5) {
   const foreground = safeColorValue(color, readableTextColor(background));
   const backdrop = safeColorValue(background, "#ffffff");
@@ -744,15 +755,42 @@ function normalizeThemeConfig(config) {
 
 function themeStyleVariables(config) {
   const theme = normalizeThemeConfig(config);
+  if (theme.mode === "Dark") {
+    const darkPrimary = "#2f3a36";
+    const darkAccent = "#8a948f";
+    const darkSidebar = "#111816";
+    const darkSidebarActive = "#26312d";
+    const darkBg = "#0f1413";
+    const darkSurface = "#1b2421";
+    const darkText = "#f3f6f4";
+    const darkMuted = "#a7b5af";
+    return {
+      "--theme-primary": darkPrimary,
+      "--theme-accent": darkAccent,
+      "--theme-sidebar": darkSidebar,
+      "--theme-sidebar-active": darkSidebarActive,
+      "--theme-bg": darkBg,
+      "--theme-surface": darkSurface,
+      "--theme-text": darkText,
+      "--theme-muted": darkMuted,
+      "--theme-on-primary": readableTextColor(darkPrimary),
+      "--theme-on-accent": readableTextColor(darkAccent),
+      "--theme-on-sidebar": readableTextColor(darkSidebar),
+      "--theme-on-sidebar-active": readableTextColor(darkSidebarActive),
+      "--theme-on-surface": readableTextColor(darkSurface),
+    };
+  }
   const primaryColor = safeColorValue(theme.primaryColor);
   const accentColor = safeColorValue(theme.accentColor, "#c28a3a");
   const sidebarColor = safeColorValue(theme.sidebarColor, "#10231f");
   const backgroundColor = safeColorValue(theme.backgroundColor, "#f7f8f5");
   const surfaceColor = safeColorValue(theme.surfaceColor, "#ffffff");
+  const sidebarActiveColor = blendHexColors(primaryColor, sidebarColor, 0.58);
   return {
     "--theme-primary": primaryColor,
     "--theme-accent": accentColor,
     "--theme-sidebar": sidebarColor,
+    "--theme-sidebar-active": sidebarActiveColor,
     "--theme-bg": backgroundColor,
     "--theme-surface": surfaceColor,
     "--theme-text": ensureReadableText(theme.textColor, surfaceColor),
@@ -760,6 +798,7 @@ function themeStyleVariables(config) {
     "--theme-on-primary": readableTextColor(primaryColor),
     "--theme-on-accent": readableTextColor(accentColor),
     "--theme-on-sidebar": readableTextColor(sidebarColor),
+    "--theme-on-sidebar-active": readableTextColor(sidebarActiveColor),
     "--theme-on-surface": readableTextColor(surfaceColor),
   };
 }
@@ -1047,6 +1086,7 @@ function App() {
     const savedUsers = loadStoredArray("vestora-users");
     return savedUsers.length ? savedUsers : starterUsers;
   });
+  const [customRoles, setCustomRoles] = useState(() => loadStoredArray("vestora-custom-roles"));
   const [stores, setStores] = useState(() => {
     const savedStores = localStorage.getItem("vestora-stores");
     if (savedStores !== null) {
@@ -1095,7 +1135,11 @@ function App() {
     .filter((store) => store && store.status !== "Inactive" && (store.branch || store.id === activeStore.id));
   const comparisonSalesLedger = canManageAll ? salesLedger : scopedSalesLedger;
   const currentRoleLabel = roleLabelForUser(currentUser);
-  const allowedModuleIds = roleModuleAccess[currentRoleLabel] || roleModuleAccess.Cashier;
+  const roleAccessMap = {
+    ...roleModuleAccess,
+    ...Object.fromEntries(customRoles.filter((role) => role.status !== "Inactive").map((role) => [role.name, role.modules?.length ? role.modules : roleModuleAccess.Cashier])),
+  };
+  const allowedModuleIds = roleAccessMap[currentRoleLabel] || roleModuleAccess.Cashier;
   const visibleModules = modules.filter((module) => allowedModuleIds.includes(module.id));
   const activeModule = visibleModules.some((module) => module.id === active) ? active : visibleModules[0]?.id || "dashboard";
   const themeVariables = themeStyleVariables(themeConfig);
@@ -1103,6 +1147,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem("vestora-theme-config", JSON.stringify({ ...themeConfig, mode: dark ? "Dark" : "Light" }));
   }, [themeConfig, dark]);
+
+  useEffect(() => {
+    localStorage.setItem("vestora-custom-roles", JSON.stringify(customRoles));
+  }, [customRoles]);
 
   function notify(message) {
     setToast(message);
@@ -1568,7 +1616,7 @@ function App() {
     attendance: <AttendanceModule key={activeStore.id} notify={notify} activeStore={activeStore} users={users} canManage={canManage} canManageAll={canManageAll} activeView={attendanceView} onViewChange={setAttendanceView} onOpenAdmin={() => openAdminView("create")} />,
   finance: <Finance notify={notify} canManageAll={canManage} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} storeId={activeStore.id} view={financeView} />,
     reports: <Reports notify={notify} storeId={activeStore.id} salesLedger={scopedSalesLedger} voidLedger={scopedVoidLedger} refundLedger={scopedRefundLedger} onRefund={recordRefund} lastShiftClose={lastShiftClose} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} activeView={reportView} onReportChange={setReportView} />,
-    admin: <Admin notify={notify} users={users} setUsers={setUsers} currentUser={currentUser} canManageAll={canManageAll} canManageStore={canManage} stores={stores} activeStore={activeStore} activeView={adminView} onViewChange={openAdminView} />,
+    admin: <Admin notify={notify} users={users} setUsers={setUsers} currentUser={currentUser} canManageAll={canManageAll} canManageStore={canManage} stores={stores} activeStore={activeStore} activeView={adminView} onViewChange={openAdminView} customRoles={customRoles} setCustomRoles={setCustomRoles} />,
     settings: <SettingsView notify={notify} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} canManage={canManage} canManageAll={canManageAll} activeStore={activeStore} setStores={setStores} themeConfig={{ ...themeConfig, mode: dark ? "Dark" : "Light" }} setThemeConfig={setThemeConfig} setDark={setDark} />,
   }[activeModule];
 
@@ -1618,6 +1666,7 @@ function App() {
                   {sidebarOpen && adminMenuOpen && <div className="sidebar-subnav">
                     <button className={adminView === "all" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAdminView("all")}><Users size={15} /> All users</button>
                     <button className={adminView === "create" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAdminView("create")}><UserPlus size={15} /> User creation</button>
+                    <button className={adminView === "roles" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAdminView("roles")}><ShieldCheck size={15} /> Role creation</button>
                   </div>}
                 </div>
               );
@@ -1760,8 +1809,6 @@ function App() {
 }
 
 function LoginScreen({ onLogin }) {
-  const [portal, setPortal] = useState("restaurant");
-  const [authMode, setAuthMode] = useState("password");
   const [email, setEmail] = useState("super@vestora.test");
   const [password, setPassword] = useState("Super@123");
   const [showPassword, setShowPassword] = useState(false);
@@ -1784,9 +1831,7 @@ function LoginScreen({ onLogin }) {
       })),
       ...demoAccounts,
     ];
-    const user = portal === "supplier"
-      ? supplierAccounts.find((account) => (account.email === loginId || account.mobile === email.trim()) && (authMode === "otp" ? account.otp === password : account.password === password))
-      : restaurantAccounts.find((account) => account.email?.toLowerCase() === loginId && account.password === password && account.status !== "Inactive" && account.status !== "Suspended");
+    const user = restaurantAccounts.find((account) => account.email?.toLowerCase() === loginId && account.password === password && account.status !== "Inactive" && account.status !== "Suspended");
     if (!user) {
       setError("Invalid login");
       return;
@@ -1794,71 +1839,40 @@ function LoginScreen({ onLogin }) {
     onLogin(user);
   }
 
-  function choosePortal(nextPortal) {
-    setPortal(nextPortal);
-    setAuthMode("password");
-    setError("");
-    if (nextPortal === "supplier") {
-      setEmail("supplier@freshfarm.test");
-      setPassword("Supplier@123");
-    } else {
-      setEmail("super@vestora.test");
-      setPassword("Super@123");
-    }
-  }
-
   return (
     <div className="login-screen">
       <form className="login-card" onSubmit={login}>
-        <img src={vestoraLogoPath} alt="" />
-        <h1>VESTORA</h1>
-        <p>{portal === "supplier" ? "Supplier Purchase Order Portal" : "Restaurant staff login"}</p>
-        <div className="login-tabs">
-          <button type="button" className={portal === "restaurant" ? "active-action" : ""} onClick={() => choosePortal("restaurant")}>Restaurant</button>
-          <button type="button" className={portal === "supplier" ? "active-action" : ""} onClick={() => choosePortal("supplier")}>Supplier</button>
-        </div>
-        {portal === "supplier" && (
-          <div className="login-tabs compact">
-            <button type="button" className={authMode === "password" ? "active-action" : ""} onClick={() => { setAuthMode("password"); setPassword("Supplier@123"); }}>Password</button>
-            <button type="button" className={authMode === "otp" ? "active-action" : ""} onClick={() => { setAuthMode("otp"); setPassword("123456"); }}>OTP</button>
+        <div className="login-brand-panel">
+          <img src={vestoraLogoPath} alt="" />
+          <div>
+            <span>VESTORA ERP & POS</span>
+            <h1>Staff sign in</h1>
+            <p>Restaurant operations workspace</p>
           </div>
-        )}
-        <label>{portal === "supplier" ? "Email or mobile" : "Email"}<input value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-        <label>{authMode === "otp" ? "OTP" : "Password"}
-          <span className="password-field">
-            <input value={password} type={showPassword ? "text" : "password"} onChange={(event) => setPassword(event.target.value)} />
-            <button type="button" onClick={() => setShowPassword((value) => !value)} title={showPassword ? `Hide ${authMode}` : `Show ${authMode}`}>
-              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-            </button>
-          </span>
-        </label>
+        </div>
+        <div className="login-form-fields">
+          <label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" /></label>
+          <label>Password
+            <span className="password-field">
+              <input value={password} type={showPassword ? "text" : "password"} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
+              <button type="button" onClick={() => setShowPassword((value) => !value)} title={showPassword ? "Hide password" : "Show password"}>
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </span>
+          </label>
+        </div>
         {error && <strong className="login-error">{error}</strong>}
         <button className="login-submit" type="submit">Login</button>
-        <div className="demo-logins">
-          {portal === "supplier" ? (
-            <>
-              <button type="button" onClick={() => { setEmail("supplier@freshfarm.test"); setPassword(authMode === "otp" ? "123456" : "Supplier@123"); }}>Supplier Demo</button>
-              <button type="button" onClick={() => { setEmail("9876543210"); setPassword("123456"); setAuthMode("otp"); }}>Mobile OTP</button>
-            </>
-          ) : (
-            <>
-              <button type="button" onClick={() => { setEmail("super@vestora.test"); setPassword("Super@123"); }}>Super Admin</button>
-              <button type="button" onClick={() => { setEmail("admin@vestora.test"); setPassword("Admin@123"); }}>Admin</button>
-            </>
-          )}
-        </div>
-        <div className="login-credentials">
-          {portal === "supplier" ? (
-            <>
-              <small>Supplier: supplier@freshfarm.test / Supplier@123</small>
-              <small>Mobile OTP: 9876543210 / 123456</small>
-            </>
-          ) : (
-            <>
-              <small>Super: super@vestora.test / Super@123</small>
-              <small>Admin: admin@vestora.test / Admin@123</small>
-            </>
-          )}
+        <div className="demo-login-panel">
+          <span>Quick demo access</span>
+          <div className="demo-logins">
+            <button type="button" onClick={() => { setEmail("super@vestora.test"); setPassword("Super@123"); }}>Super Admin</button>
+            <button type="button" onClick={() => { setEmail("admin@vestora.test"); setPassword("Admin@123"); }}>Admin</button>
+          </div>
+          <div className="login-credentials">
+            <small>super@vestora.test / Super@123</small>
+            <small>admin@vestora.test / Admin@123</small>
+          </div>
         </div>
       </form>
     </div>
@@ -3133,9 +3147,9 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
           </div>
         </div>
         <div className="pos-page-actions">
-          <span className={online ? "pill online" : "pill offline"}>{online ? <Wifi size={15} /> : <WifiOff size={15} />} {online ? "Online" : "Offline"}</span>
           <span className="shift-pill"><small>Opening float</small><strong>{formatMoney(currentShift.openingBalance)}</strong></span>
           <span className="shift-pill"><small>Cash sales</small><strong>{formatMoney(shiftCashSales)}</strong></span>
+          <span className={online ? "pill online pos-network-pill" : "pill offline pos-network-pill"}>{online ? <Wifi size={15} /> : <WifiOff size={15} />} {online ? "Online" : "Offline"}</span>
           <button className={pendingTableOrders.length ? "reception-queue-button has-orders" : "reception-queue-button"} onClick={openReceptionQueue}><ReceiptText size={16} /> Reception {pendingTableOrders.length ? `(${pendingTableOrders.length})` : ""}</button>
           <button className="pos-close-shift" onClick={() => setShowCloseShift(true)}>Close shift</button>
           <button className="pos-exit-button" onClick={onExit}><PanelLeftClose size={17} /> Exit POS</button>
@@ -6309,13 +6323,15 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, onRef
   );
 }
 
-function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageStore, stores, activeStore, activeView, onViewChange }) {
+function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageStore, stores, activeStore, activeView, onViewChange, customRoles = [], setCustomRoles }) {
   const [draft, setDraft] = useState({ name: "", email: "", password: "", role: "Cashier", status: "Active", storeId: activeStore.id });
+  const [roleDraft, setRoleDraft] = useState({ id: "", name: "", description: "", status: "Active", modules: ["dashboard", "pos"] });
   const [editingId, setEditingId] = useState(null);
   const [showUserPassword, setShowUserPassword] = useState(false);
   const showUserEditor = activeView === "create";
+  const showRoleEditor = activeView === "roles";
   const canManageUsers = canManageStore;
-  const roleAccessSummary = {
+  const baseRoleAccessSummary = {
     "Restaurant Admin": "Full access to this restaurant only, including staff and store operations.",
     "Branch Manager": "Dashboard, POS, kitchen, tables, menu, inventory, reports, and settings.",
     Cashier: "POS Billing, tables, dashboard, and finance. Use this role for billing counter staff.",
@@ -6323,19 +6339,29 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
     Chef: "Kitchen Display System, production, and inventory access.",
     Accountant: "Dashboard, finance, and reports only.",
   };
+  const storeCustomRoles = customRoles.filter((role) => role.storeId === activeStore.id || role.storeId === "GLOBAL");
+  const activeCustomRoles = storeCustomRoles.filter((role) => role.status !== "Inactive").map((role) => role.name);
+  const roleAccessSummary = {
+    ...baseRoleAccessSummary,
+    ...Object.fromEntries(storeCustomRoles.map((role) => [role.name, role.description || `Custom role with ${role.modules?.length || 0} selected modules.`])),
+  };
   const visibleUsers = users.filter((user) => {
     if (user.storeId === "GLOBAL" || normalizeStoreId(user.storeId) !== activeStore.id) return false;
     if (!canManageAll && user.role === "Super Admin") return false;
     return true;
   });
-  const roleChoices = canManageAll
-    ? ["Restaurant Admin", "Branch Manager", "Cashier", "Waiter", "Chef", "Accountant"]
-    : ["Branch Manager", "Cashier", "Waiter", "Chef", "Accountant"];
+  const baseRoleChoices = canManageAll ? adminRoleChoicesAll : adminRoleChoicesStore;
+  const roleChoices = Array.from(new Set([...baseRoleChoices, ...activeCustomRoles, draft.role].filter(Boolean)));
+  const protectedRoleNames = new Set(["Super Admin", "Restaurant Admin", "Branch Manager", "Cashier", "Waiter", "Chef", "Accountant", "supplier"]);
 
   function resetUserEditor() {
     setDraft({ name: "", email: "", password: "", role: "Cashier", status: "Active", storeId: activeStore.id });
     setEditingId(null);
     setShowUserPassword(false);
+  }
+
+  function resetRoleEditor() {
+    setRoleDraft({ id: "", name: "", description: "", status: "Active", modules: ["dashboard", "pos"] });
   }
 
   function closeUserEditor() {
@@ -6346,6 +6372,66 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
   useEffect(() => {
     if (activeView === "all") resetUserEditor();
   }, [activeView]);
+
+  function toggleRoleModule(moduleId) {
+    setRoleDraft((current) => {
+      const selected = new Set(current.modules || []);
+      if (selected.has(moduleId)) selected.delete(moduleId);
+      else selected.add(moduleId);
+      return { ...current, modules: Array.from(selected) };
+    });
+  }
+
+  function editRole(role) {
+    setRoleDraft({ id: role.id, name: role.name, description: role.description || "", status: role.status || "Active", modules: role.modules?.length ? role.modules : ["dashboard"] });
+  }
+
+  function saveRole() {
+    if (!canManageUsers) {
+      notify("Admin permission required to create roles");
+      return;
+    }
+    const name = roleDraft.name.trim();
+    if (!name) {
+      notify("Enter role name");
+      return;
+    }
+    if (protectedRoleNames.has(name)) {
+      notify("Built-in role name already exists");
+      return;
+    }
+    const duplicate = customRoles.some((role) => role.storeId === activeStore.id && role.name.trim().toLowerCase() === name.toLowerCase() && role.id !== roleDraft.id);
+    if (duplicate) {
+      notify("Role name already exists");
+      return;
+    }
+    if (!roleDraft.modules.length) {
+      notify("Select at least one module for this role");
+      return;
+    }
+    const savedRole = {
+      ...roleDraft,
+      id: roleDraft.id || `ROLE-${Date.now()}`,
+      name,
+      description: roleDraft.description.trim(),
+      status: roleDraft.status || "Active",
+      modules: roleDraft.modules,
+      storeId: activeStore.id,
+    };
+    setCustomRoles((current) => current.some((role) => role.id === savedRole.id) ? current.map((role) => role.id === savedRole.id ? savedRole : role) : [savedRole, ...current]);
+    resetRoleEditor();
+    notify(`${savedRole.name} role saved`);
+  }
+
+  function deleteRole(role) {
+    if (users.some((user) => user.role === role.name && normalizeStoreId(user.storeId) === activeStore.id)) {
+      notify("Role is assigned to users. Change those users before deleting");
+      return;
+    }
+    setCustomRoles((current) => current.filter((item) => item.id !== role.id));
+    if (roleDraft.id === role.id) resetRoleEditor();
+    notify(`${role.name} role deleted`);
+  }
 
   function canEditUser(user) {
     if (!canManageUsers || normalizeStoreId(user?.storeId) !== activeStore.id) return false;
@@ -6421,17 +6507,56 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
         <Metric icon={Building2} label={canManageAll ? "Restaurants" : "Current store"} value={canManageAll ? String(stores.length) : activeStore.name} trend={canManageAll ? "Global control" : activeStore.branch} />
         <Metric icon={Store} label="Access scope" value={canManageAll ? "Overall" : "Store only"} trend={canManageAll ? "All stores" : activeStore.id} />
         <Metric icon={Users} label="Users" value={String(visibleUsers.length)} trend="This store" />
-        <Metric icon={ShieldCheck} label="Permission" value={canManageAll ? "Super" : "Admin"} trend={canManageAll ? "Create stores" : "Manage store"} />
+        <Metric icon={ShieldCheck} label="Roles" value={String(storeCustomRoles.length + baseRoleChoices.length)} trend="Built-in and custom" />
       </div>
       <section className="user-management-workspace">
         <div className="user-management-head">
           <div>
             <span>Team access</span>
             <h2>{activeStore.branch} users</h2>
-            <p>Manage staff logins and access for this branch.</p>
+            <p>Manage staff logins, custom roles, and module access for this branch.</p>
           </div>
         </div>
         <div className={showUserEditor && canManageUsers ? "user-management-layout editor-open" : "user-management-layout"}>
+        {canManageUsers && showRoleEditor && (
+          <div className="role-management-layout">
+            <div className="panel user-editor-panel role-editor-panel">
+              <PanelHead title={roleDraft.id ? "Edit role" : "Create role"} icon={ShieldCheck} actions={roleDraft.id ? ["New role"] : []} onAction={resetRoleEditor} />
+              <div className="role-form">
+                <p className="permission-note">Create custom roles for this branch. Select only the modules staff should access.</p>
+                <label>Role name<input value={roleDraft.name} onChange={(event) => setRoleDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Floor Supervisor" /></label>
+                <label>Status<select value={roleDraft.status} onChange={(event) => setRoleDraft((current) => ({ ...current, status: event.target.value }))}><option>Active</option><option>Inactive</option></select></label>
+                <label className="role-description-field">Description<input value={roleDraft.description} onChange={(event) => setRoleDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Short access note" /></label>
+                <div className="role-module-grid">
+                  {modules.map((module) => {
+                    const Icon = module.icon;
+                    return (
+                      <button key={module.id} type="button" className={roleDraft.modules.includes(module.id) ? "selected" : ""} onClick={() => toggleRoleModule(module.id)}>
+                        <Icon size={16} />
+                        {module.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button className="login-submit" onClick={saveRole}>{roleDraft.id ? "Update role" : "Create role"}</button>
+              </div>
+            </div>
+            <div className="panel user-list-panel role-list-panel">
+              <PanelHead title="Custom roles" icon={ShieldCheck} />
+              {storeCustomRoles.length ? <table>
+                <thead><tr><th>Role</th><th>Modules</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody>{storeCustomRoles.map((role) => (
+                  <tr key={role.id}>
+                    <td><strong>{role.name}</strong><small>{role.description || "Custom branch role"}</small></td>
+                    <td>{(role.modules || []).map((moduleId) => modules.find((module) => module.id === moduleId)?.label || moduleId).join(", ")}</td>
+                    <td><span className={role.status === "Inactive" ? "active-chip inactive" : "active-chip"}>{role.status || "Active"}</span></td>
+                    <td><div className="row-actions"><button onClick={() => editRole(role)}>Edit</button><button onClick={() => deleteRole(role)}>Delete</button></div></td>
+                  </tr>
+                ))}</tbody>
+              </table> : <div className="user-empty-state"><ShieldCheck size={22} /><strong>No custom roles yet</strong><span>Create a role to control module access.</span></div>}
+            </div>
+          </div>
+        )}
         {canManageUsers && showUserEditor && (
           <div className="panel user-editor-panel">
             <PanelHead title={editingId ? "Edit user" : "Create user"} icon={UserPlus} actions={["Close"]} onAction={closeUserEditor} />
@@ -6457,7 +6582,7 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
             </div>
           </div>
         )}
-        {!showUserEditor && <div className="panel table-panel user-list-panel">
+        {!showUserEditor && !showRoleEditor && <div className="panel table-panel user-list-panel">
           <PanelHead title="User access" icon={Users} actions={["Export"]} onAction={() => notify("Users exported")} />
           {!canManageUsers && <p className="permission-note">Logged in as {currentUser.name}. User creation is available only for an administrator.</p>}
           {canManageUsers && !visibleUsers.length && <div className="user-empty-state"><Users size={22} /><strong>No staff users yet</strong><span>Create the first user for this branch.</span></div>}
@@ -6759,6 +6884,9 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
   const selectedLanguage = languageOptions.includes(draft.language) ? draft.language : "English";
   const selectedCurrency = currencyOptions.some(([code]) => code === draft.currency) ? draft.currency : "INR";
   const selectedTimezone = placeTimezoneOptions.some(([zone]) => zone === draft.timezone) ? draft.timezone : "Asia/Kolkata";
+  const themeHeroStyle = draft.theme === "Dark"
+    ? { background: "linear-gradient(135deg, #111816, #2f3a36)" }
+    : { background: `linear-gradient(135deg, ${draft.sidebarColor}, ${draft.primaryColor})` };
 
   return (
     <section className="screen settings-detail-screen">
@@ -6780,7 +6908,7 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
               {activeSection === "Printer setup" && <div className={`settings-printer-status ${draft.connectionStatus === "Connected" ? "connected" : ""}`}><span className={draft.connectionStatus === "Connected" ? "active-chip" : "pill offline"}>{draft.connectionStatus || "Not connected"}</span><div><strong>{draft.connectionStatus === "Connected" ? "Printer routing is active" : "Test the KOT printer to activate routing"}</strong><small>{draft.connectionStatus === "Connected" ? `${draft.kotPrinter} receives new kitchen tickets.` : "The KOT printer will display as connected only after a successful test."}</small></div></div>}
               {activeSection === "Theme and language" ? (
                 <div className="theme-studio">
-                  <div className="theme-studio-hero" style={{ background: `linear-gradient(135deg, ${draft.sidebarColor}, ${draft.primaryColor})` }}>
+                  <div className="theme-studio-hero" style={themeHeroStyle}>
                     <div>
                       <span>Website appearance</span>
                       <h3>{draft.themePreset || "Custom"} / {draft.theme}</h3>
