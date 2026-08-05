@@ -98,12 +98,12 @@ const modules = [
 ];
 
 const menuItems = [
-  { id: 1, name: "Paneer Tikka Bowl", category: "Mains", price: 249, tax: 5, fav: true },
-  { id: 2, name: "Hyderabadi Biryani", category: "Mains", price: 329, tax: 5, fav: true },
-  { id: 3, name: "Tandoori Platter", category: "Mains", price: 429, tax: 5 },
-  { id: 4, name: "Masala Chaas", category: "Beverages", price: 79, tax: 5 },
-  { id: 5, name: "Filter Coffee", category: "Beverages", price: 99, tax: 5 },
-  { id: 6, name: "Gulab Jamun", category: "Dessert", price: 119, tax: 5 },
+  { id: 1, name: "Paneer Tikka Bowl", category: "Mains", price: 249, tax: 5, fav: true, barcode: "890100100001" },
+  { id: 2, name: "Hyderabadi Biryani", category: "Mains", price: 329, tax: 5, fav: true, barcode: "890100100002" },
+  { id: 3, name: "Tandoori Platter", category: "Mains", price: 429, tax: 5, barcode: "890100100003" },
+  { id: 4, name: "Masala Chaas", category: "Beverages", price: 79, tax: 5, barcode: "890100100004" },
+  { id: 5, name: "Filter Coffee", category: "Beverages", price: 99, tax: 5, barcode: "890100100005" },
+  { id: 6, name: "Gulab Jamun", category: "Dessert", price: 119, tax: 5, barcode: "890100100006" },
 ];
 
 const menuItemPhotos = {
@@ -482,13 +482,52 @@ const starterUsers = [
 const defaultBillTemplate = {
   restaurantName: "Demo Spice House",
   address: "Indiranagar, Bengaluru",
+  phone: "+91 90000 11111",
+  email: "hello@vestora.test",
   gst: "27ABCDE1234F1Z5",
   fssai: "10019064001234",
+  billTitle: "TAX INVOICE",
+  tagline: "Fresh food. Fast service.",
   footer: "Thank you. Visit again.",
+  terms: "Goods once sold cannot be returned.",
+  qrText: "Scan to pay / follow us",
+  copyLabel: "Customer copy",
   showLogo: true,
+  showAddress: true,
+  showPhone: true,
+  showEmail: false,
+  showGst: true,
+  showFssai: true,
+  showCustomer: true,
+  showOrderInfo: true,
+  showPayment: true,
+  showTaxBreakup: true,
+  showItemCount: true,
+  showQrBox: false,
+  showTerms: true,
   logoData: "",
   printerSize: "80mm",
+  layout: "Detailed",
+  logoPosition: "Left",
+  fontSize: 13,
 };
+
+const billFontSizePresets = {
+  Small: 12,
+  Normal: 13,
+  Large: 15,
+};
+
+function getBillFontSize(value) {
+  const preset = billFontSizePresets[value];
+  const numeric = Number(preset ?? value);
+  if (!Number.isFinite(numeric)) return defaultBillTemplate.fontSize;
+  return Math.min(22, Math.max(10, Math.round(numeric)));
+}
+
+function getBillPaperStyle(billTemplate) {
+  return { "--bill-font-size": `${getBillFontSize(billTemplate?.fontSize)}px` };
+}
 
 const defaultKotPrinter = {
   enabled: false,
@@ -605,8 +644,81 @@ const themeColorFields = [
   ["mutedColor", "Muted", "Secondary labels"],
 ];
 
+const languageOptions = [
+  "English",
+  "Hindi",
+  "Kannada",
+  "Tamil",
+  "Malayalam",
+  "Telugu",
+  "Marathi",
+  "Bengali",
+  "Arabic",
+];
+
+const currencyOptions = [
+  ["INR", "INR - Indian Rupee"],
+  ["USD", "USD - US Dollar"],
+  ["AED", "AED - UAE Dirham"],
+  ["SAR", "SAR - Saudi Riyal"],
+  ["EUR", "EUR - Euro"],
+  ["GBP", "GBP - British Pound"],
+  ["SGD", "SGD - Singapore Dollar"],
+  ["MYR", "MYR - Malaysian Ringgit"],
+  ["LKR", "LKR - Sri Lankan Rupee"],
+  ["NPR", "NPR - Nepalese Rupee"],
+];
+
+const placeTimezoneOptions = [
+  ["Asia/Kolkata", "India - Kolkata"],
+  ["Asia/Dubai", "UAE - Dubai"],
+  ["Asia/Riyadh", "Saudi Arabia - Riyadh"],
+  ["Asia/Singapore", "Singapore"],
+  ["Asia/Kuala_Lumpur", "Malaysia - Kuala Lumpur"],
+  ["Asia/Colombo", "Sri Lanka - Colombo"],
+  ["Asia/Kathmandu", "Nepal - Kathmandu"],
+  ["Europe/London", "United Kingdom - London"],
+  ["Europe/Berlin", "Germany - Berlin"],
+  ["America/New_York", "USA - New York"],
+  ["America/Los_Angeles", "USA - Los Angeles"],
+];
+
 function safeColorValue(value, fallback = "#17604b") {
   return /^#[0-9a-f]{6}$/i.test(String(value || "")) ? value : fallback;
+}
+
+function hexToRgb(hex) {
+  const clean = safeColorValue(hex).slice(1);
+  return [0, 2, 4].map((index) => parseInt(clean.slice(index, index + 2), 16));
+}
+
+function relativeLuminance(hex) {
+  const [red, green, blue] = hexToRgb(hex).map((value) => {
+    const channel = value / 255;
+    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+function contrastRatio(first, second) {
+  const light = Math.max(relativeLuminance(first), relativeLuminance(second));
+  const dark = Math.min(relativeLuminance(first), relativeLuminance(second));
+  return (light + 0.05) / (dark + 0.05);
+}
+
+function readableTextColor(background) {
+  const color = safeColorValue(background, "#ffffff");
+  return contrastRatio("#10231f", color) >= contrastRatio("#ffffff", color) ? "#10231f" : "#ffffff";
+}
+
+function readableMutedColor(background) {
+  return readableTextColor(background) === "#ffffff" ? "#cbd5d1" : "#60736a";
+}
+
+function ensureReadableText(color, background, minimumRatio = 4.5) {
+  const foreground = safeColorValue(color, readableTextColor(background));
+  const backdrop = safeColorValue(background, "#ffffff");
+  return contrastRatio(foreground, backdrop) >= minimumRatio ? foreground : readableTextColor(backdrop);
 }
 
 const defaultThemeConfig = {
@@ -630,14 +742,23 @@ function normalizeThemeConfig(config) {
 
 function themeStyleVariables(config) {
   const theme = normalizeThemeConfig(config);
+  const primaryColor = safeColorValue(theme.primaryColor);
+  const accentColor = safeColorValue(theme.accentColor, "#c28a3a");
+  const sidebarColor = safeColorValue(theme.sidebarColor, "#10231f");
+  const backgroundColor = safeColorValue(theme.backgroundColor, "#f7f8f5");
+  const surfaceColor = safeColorValue(theme.surfaceColor, "#ffffff");
   return {
-    "--theme-primary": theme.primaryColor,
-    "--theme-accent": theme.accentColor,
-    "--theme-sidebar": theme.sidebarColor,
-    "--theme-bg": theme.backgroundColor,
-    "--theme-surface": theme.surfaceColor,
-    "--theme-text": theme.textColor,
-    "--theme-muted": theme.mutedColor,
+    "--theme-primary": primaryColor,
+    "--theme-accent": accentColor,
+    "--theme-sidebar": sidebarColor,
+    "--theme-bg": backgroundColor,
+    "--theme-surface": surfaceColor,
+    "--theme-text": ensureReadableText(theme.textColor, surfaceColor),
+    "--theme-muted": ensureReadableText(theme.mutedColor, surfaceColor, 3),
+    "--theme-on-primary": readableTextColor(primaryColor),
+    "--theme-on-accent": readableTextColor(accentColor),
+    "--theme-on-sidebar": readableTextColor(sidebarColor),
+    "--theme-on-surface": readableTextColor(surfaceColor),
   };
 }
 
@@ -2680,6 +2801,46 @@ function ShiftOpening({ online, onOpenShift, onExit, onLogout, cashier }) {
   );
 }
 
+function BillReceiptHeader({ billTemplate }) {
+  const logo = billTemplate.logoData || "/vestora-mark.png";
+  const headerClass = `bill-title ${billTemplate.logoPosition === "Center" ? "centered" : ""} ${billTemplate.layout === "Compact" ? "compact" : ""}`;
+  return (
+    <div className={headerClass}>
+      {billTemplate.showLogo && <img src={logo} alt="" />}
+      <div>
+        {billTemplate.billTitle && <em>{billTemplate.billTitle}</em>}
+        <strong>{billTemplate.restaurantName}</strong>
+        {billTemplate.tagline && <small>{billTemplate.tagline}</small>}
+        {billTemplate.showAddress !== false && <span>{billTemplate.address}</span>}
+        {(billTemplate.showPhone !== false || billTemplate.showEmail) && <span>{[billTemplate.showPhone !== false && billTemplate.phone, billTemplate.showEmail && billTemplate.email].filter(Boolean).join(" | ")}</span>}
+        {(billTemplate.showGst !== false || billTemplate.showFssai !== false) && <span>{[billTemplate.showGst !== false && `GST ${billTemplate.gst}`, billTemplate.showFssai !== false && `FSSAI ${billTemplate.fssai}`].filter(Boolean).join(" - ")}</span>}
+      </div>
+    </div>
+  );
+}
+
+function BillReceiptFooter({ billTemplate }) {
+  return (
+    <>
+      {billTemplate.showQrBox && <div className="bill-qr-box"><span>QR</span><strong>{billTemplate.qrText || "Scan to pay"}</strong></div>}
+      {billTemplate.showTerms !== false && billTemplate.terms && <span className="bill-terms">{billTemplate.terms}</span>}
+      {billTemplate.footer && <span>{billTemplate.footer}</span>}
+      {billTemplate.copyLabel && <span className="bill-copy-label">{billTemplate.copyLabel}</span>}
+    </>
+  );
+}
+
+function BillReceiptMeta({ billTemplate, rows }) {
+  if (billTemplate.showOrderInfo === false) return null;
+  const visibleRows = rows.filter(Boolean);
+  if (!visibleRows.length) return null;
+  return (
+    <div className="bill-order-details">
+      {visibleRows.map(([label, value]) => <span key={`${label}-${value}`}><small>{label}</small><strong>{value}</strong></span>)}
+    </div>
+  );
+}
+
 function POS({ cart, setCart, items, orderType, setOrderType, online, notify, billTemplate, onSale, onVoidItem, onExit, onLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
   const catalogItems = (items?.length ? items : menuItems).filter((item) => item.status !== "Inactive");
   const categories = ["All", ...Array.from(new Set(catalogItems.map((item) => item.category).filter(Boolean))), "Favourites"];
@@ -2711,7 +2872,11 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
 
   const filtered = catalogItems.filter((item) => {
     const inCategory = category === "All" || item.category === category || (category === "Favourites" && item.fav);
-    const inSearch = item.name.toLowerCase().includes(query.toLowerCase()) || item.category.toLowerCase().includes(query.toLowerCase());
+    const searchText = query.trim().toLowerCase();
+    const inSearch = !searchText
+      || String(item.name || "").toLowerCase().includes(searchText)
+      || String(item.category || "").toLowerCase().includes(searchText)
+      || String(item.barcode || "").toLowerCase().includes(searchText);
     return inCategory && inSearch;
   });
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
@@ -2782,6 +2947,15 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
       return [...current, { ...item, cartItemKey, qty: 1, notes: "" }];
     });
     notify(`${item.name} added`);
+  }
+
+  function addBarcodeMatch() {
+    const scannedCode = query.trim().toLowerCase();
+    if (!scannedCode) return;
+    const matchedItem = catalogItems.find((item) => String(item.barcode || "").trim().toLowerCase() === scannedCode);
+    if (!matchedItem) return;
+    add(matchedItem);
+    setQuery("");
   }
 
   function changeQty(cartItemKey, delta) {
@@ -2942,6 +3116,10 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
     setShowReceptionQueue(true);
   }
 
+  const billPaperClass = `bill-paper print-bill bill-layout-${String(billTemplate.layout || "Detailed").toLowerCase()}`;
+  const previewBillPaperClass = completedBill ? billPaperClass.replace(" print-bill", "") : billPaperClass;
+  const billPaperStyle = getBillPaperStyle(billTemplate);
+
   return (
     <section className="pos-screen">
       <div className="pos-page-header">
@@ -2964,20 +3142,20 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
       </div>
       <div className="pos-catalog">
         <div className="toolbar">
-          <label className="search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search item, barcode, QR, coupon" /></label>
+          <label className="search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addBarcodeMatch(); } }} placeholder="Search item or scan barcode" /></label>
           <div className="segmented">{["Dine-in", "Takeaway", "Delivery", "Online"].map((type) => <button key={type} className={orderType === type ? "selected" : ""} onClick={() => { setOrderType(type); notify(`${type} billing selected`); }}>{type}</button>)}</div>
         </div>
         <div className="catalog-section-head"><div><span>Menu catalog</span><strong>{filtered.length} available items</strong></div><div className="category-row">{categories.map((name) => <button key={name} className={category === name ? "chip active" : "chip"} onClick={() => setCategory(name)}>{name}</button>)}</div></div>
         <div className="item-grid">{filtered.map((item) => {
           const catalogItemKey = getCartItemKey(item);
-          return <button key={catalogItemKey} className="item-card" onClick={() => add(item)}><img className="item-photo" src={getMenuItemPhoto(item)} alt="" loading="lazy" /><span>{item.category}</span><strong>{item.name}</strong><em>{formatMoney(item.price)}</em></button>;
+          return <button key={catalogItemKey} className="item-card" onClick={() => add(item)}><img className="item-photo" src={getMenuItemPhoto(item)} alt="" loading="lazy" /><span>{item.category}</span><strong>{item.name}</strong>{item.barcode && <small className="item-barcode">Barcode {item.barcode}</small>}<em>{formatMoney(item.price)}</em></button>;
         })}</div>
       </div>
       <div ref={billPanelRef} className="bill-panel">
         <PanelHead title={sourceTableOrder ? `Bill preview · ${cartItemCount} ${cartItemCount === 1 ? "item" : "items"}` : "Bill preview"} icon={ReceiptText} />
-          <div className={completedBill ? "bill-paper" : "bill-paper print-bill"}>
-            <div className="bill-title">{billTemplate.showLogo && <img src={billTemplate.logoData || "/vestora-mark.png"} alt="" />}<div><strong>{billTemplate.restaurantName}</strong><span>{billTemplate.address}</span><span>GST {billTemplate.gst} - FSSAI {billTemplate.fssai}</span></div></div>
-          <div className="bill-type-row"><span>Billing type</span><strong>{orderType}</strong></div>
+          <div className={previewBillPaperClass} style={billPaperStyle}>
+            <BillReceiptHeader billTemplate={billTemplate} />
+          {billTemplate.showOrderInfo !== false && <div className="bill-type-row"><span>Billing type</span><strong>{orderType}</strong></div>}
           {sourceTableOrder && (
             <div className="bill-table-row">
               <span className="bill-table-detail">
@@ -2994,7 +3172,7 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
               </span>
             </div>
           )}
-          <div className="bill-customer-details">
+          {billTemplate.showCustomer !== false && <div className="bill-customer-details">
             <label className={customerName && !customerNameValid ? "bill-customer-field invalid" : "bill-customer-field"}>
               <User size={14} />
               <span className="bill-customer-input">
@@ -3009,12 +3187,12 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
                 <input type="tel" inputMode="numeric" autoComplete="tel" maxLength="10" value={customerMobile} onChange={(event) => setCustomerMobile(event.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="Optional" aria-label="Customer mobile" aria-invalid={Boolean(customerMobile && !customerMobileValid)} />
               </span>
             </label>
-          </div>
-          <div className="bill-order-details">
-            <span><small>Order number</small><strong>{orderNumber}</strong></span>
-            <span><small>Date & time</small><strong>{orderCreatedAt.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</strong></span>
-            <span><small>Payment</small><strong>{paymentMode}</strong></span>
-          </div>
+          </div>}
+          <BillReceiptMeta billTemplate={billTemplate} rows={[
+            ["Order number", orderNumber],
+            ["Date & time", orderCreatedAt.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })],
+            billTemplate.showPayment !== false && ["Payment", paymentMode],
+          ]} />
           <div ref={billItemsRef} className="bill-items scrollable" tabIndex={0} aria-label="Selected bill items">
             {cart.length === 0 ? <p className="empty">No items added</p> : cart.map((item) => {
               const cartItemKey = getCartItemKey(item);
@@ -3034,10 +3212,11 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
           <div className="totals">
             <span>Subtotal <strong>{formatMoney(subtotal)}</strong></span>
             <span>Discount <strong>{formatMoney(discount)}</strong></span>
-            <span>CGST <strong>{formatMoney(cgst)}</strong></span>
-            <span>SGST <strong>{formatMoney(sgst)}</strong></span>
+            {billTemplate.showTaxBreakup !== false && <span>CGST <strong>{formatMoney(cgst)}</strong></span>}
+            {billTemplate.showTaxBreakup !== false && <span>SGST <strong>{formatMoney(sgst)}</strong></span>}
+            {billTemplate.showItemCount && <span>Items <strong>{cartItemCount}</strong></span>}
             <b>Grand total <strong>{formatMoney(total)}</strong></b>
-            <span>{billTemplate.footer}</span>
+            <BillReceiptFooter billTemplate={billTemplate} />
           </div>
         </div>
         <div className="payment-grid">{["Cash", "UPI", "Card", "Split"].map((mode) => <button key={mode} className={paymentMode === mode ? "active-pay" : ""} onClick={() => mode === "Split" ? openSplitPayment() : (setPaymentMode(mode), notify(`${mode} selected`))}>{mode}</button>)}</div>
@@ -3141,13 +3320,13 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
               <span><small>Items</small><strong>{completedBill.itemCount}</strong></span>
               <span><small>Status</small><strong>Paid</strong></span>
             </div>
-            <div className="bill-paper print-bill completed-receipt completed-print-receipt" aria-hidden="true">
-              <div className="bill-title">{billTemplate.showLogo && <img src={billTemplate.logoData || "/vestora-mark.png"} alt="" />}<div><strong>{billTemplate.restaurantName}</strong><span>{billTemplate.address}</span><span>GST {billTemplate.gst} - FSSAI {billTemplate.fssai}</span></div></div>
+            <div className={`${billPaperClass} completed-receipt completed-print-receipt`} style={billPaperStyle} aria-hidden="true">
+              <BillReceiptHeader billTemplate={billTemplate} />
               <div className="bill-type-row"><span>Billing type</span><strong>{completedBill.orderType}{completedBill.tableName ? ` · ${completedBill.tableName}` : ""}</strong></div>
               <div className="bill-order-details"><span><small>Order number</small><strong>{completedBill.orderNumber}</strong></span><span><small>Payment</small><strong>{completedBill.payment}</strong></span>{completedBill.customerName && <span><small>Customer name</small><strong>{completedBill.customerName}</strong></span>}{completedBill.customerMobile && <span><small>Customer mobile</small><strong>{completedBill.customerMobile}</strong></span>}</div>
               {completedBill.payment === "Split" && <div className="completed-split-lines">{completedBill.splitPayments.map((entry) => <span key={entry.method}>{entry.method}<strong>{formatMoney(entry.amount)}</strong></span>)}</div>}
               <div className="bill-items">{completedBill.items.map((item) => <div className="bill-line" key={getCartItemKey(item)}><span>{item.qty} x {item.name}</span><strong>{formatMoney(item.qty * item.price)}</strong></div>)}</div>
-              <div className="totals"><span>Subtotal <strong>{formatMoney(completedBill.subtotal)}</strong></span><span>Discount <strong>{formatMoney(completedBill.discount)}</strong></span><span>CGST <strong>{formatMoney(Number(completedBill.cgst ?? Math.round(Number(completedBill.tax || 0) / 2)))}</strong></span><span>SGST <strong>{formatMoney(Number(completedBill.sgst ?? Number(completedBill.tax || 0) - Math.round(Number(completedBill.tax || 0) / 2)))}</strong></span><b>Grand total <strong>{formatMoney(completedBill.total)}</strong></b><span>{billTemplate.footer}</span></div>
+              <div className="totals"><span>Subtotal <strong>{formatMoney(completedBill.subtotal)}</strong></span><span>Discount <strong>{formatMoney(completedBill.discount)}</strong></span>{billTemplate.showTaxBreakup !== false && <span>CGST <strong>{formatMoney(Number(completedBill.cgst ?? Math.round(Number(completedBill.tax || 0) / 2)))}</strong></span>}{billTemplate.showTaxBreakup !== false && <span>SGST <strong>{formatMoney(Number(completedBill.sgst ?? Number(completedBill.tax || 0) - Math.round(Number(completedBill.tax || 0) / 2)))}</strong></span>}{billTemplate.showItemCount && <span>Items <strong>{completedBill.itemCount}</strong></span>}<b>Grand total <strong>{formatMoney(completedBill.total)}</strong></b><BillReceiptFooter billTemplate={billTemplate} /></div>
             </div>
             <div className="shift-actions completed-bill-actions"><button type="button" onClick={() => setCompletedBill(null)}>Done</button><button className="primary-table-action" type="button" onClick={printCompletedBill}><Printer size={17} /> Print bill</button></div>
           </section>
@@ -3210,8 +3389,8 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
                   <span>SGST<strong>{formatMoney(selectedHistorySgst)}</strong></span>
                   <b>Grand total<strong>{formatMoney(Number(selectedHistoryBill.total || 0))}</strong></b>
                 </div>
-                <div className="bill-paper print-bill completed-receipt completed-print-receipt history-print-receipt" aria-hidden="true">
-                  <div className="bill-title">{billTemplate.showLogo && <img src={billTemplate.logoData || "/vestora-mark.png"} alt="" />}<div><strong>{billTemplate.restaurantName}</strong><span>{billTemplate.address}</span><span>GST {billTemplate.gst} - FSSAI {billTemplate.fssai}</span></div></div>
+                <div className={`${billPaperClass} completed-receipt completed-print-receipt history-print-receipt`} style={billPaperStyle} aria-hidden="true">
+                  <BillReceiptHeader billTemplate={billTemplate} />
                   <div className="bill-type-row"><span>Billing type</span><strong>{selectedHistoryBill.orderType}{selectedHistoryBill.tableName ? ` · ${selectedHistoryBill.tableName}` : ""}</strong></div>
                   <div className="bill-order-details">
                     <span><small>Order number</small><strong>{selectedHistoryBill.orderNumber || selectedHistoryBill.id}</strong></span>
@@ -3224,7 +3403,7 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
                   </div>
                   {selectedHistoryBill.payment === "Split" && <div className="completed-split-lines">{(selectedHistoryBill.splitPayments || []).map((entry) => <span key={entry.method}>{entry.method}<strong>{formatMoney(Number(entry.amount || 0))}</strong></span>)}</div>}
                   <div className="bill-items">{(selectedHistoryBill.items || []).map((item) => <div className="bill-line" key={getCartItemKey(item)}><span>{item.qty} x {item.name}</span><strong>{formatMoney(Number(item.qty || 0) * Number(item.price || 0))}</strong></div>)}</div>
-                  <div className="totals"><span>Subtotal <strong>{formatMoney(Number(selectedHistoryBill.subtotal || 0))}</strong></span><span>Discount <strong>{formatMoney(Number(selectedHistoryBill.discount || 0))}</strong></span><span>CGST <strong>{formatMoney(selectedHistoryCgst)}</strong></span><span>SGST <strong>{formatMoney(selectedHistorySgst)}</strong></span><b>Grand total <strong>{formatMoney(Number(selectedHistoryBill.total || 0))}</strong></b><span>{billTemplate.footer}</span></div>
+                  <div className="totals"><span>Subtotal <strong>{formatMoney(Number(selectedHistoryBill.subtotal || 0))}</strong></span><span>Discount <strong>{formatMoney(Number(selectedHistoryBill.discount || 0))}</strong></span>{billTemplate.showTaxBreakup !== false && <span>CGST <strong>{formatMoney(selectedHistoryCgst)}</strong></span>}{billTemplate.showTaxBreakup !== false && <span>SGST <strong>{formatMoney(selectedHistorySgst)}</strong></span>}{billTemplate.showItemCount && <span>Items <strong>{selectedHistoryBill.itemCount || (selectedHistoryBill.items || []).reduce((sum, item) => sum + Number(item.qty || 0), 0)}</strong></span>}<b>Grand total <strong>{formatMoney(Number(selectedHistoryBill.total || 0))}</strong></b><BillReceiptFooter billTemplate={billTemplate} /></div>
                 </div>
               </div>
             )}
@@ -3331,7 +3510,7 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
   const selectedTable = tables.find((table) => table.id === selected);
   const catalogItems = (items?.length ? items : menuItems).filter((item) => item.status !== "Inactive");
   const orderCategories = ["All", ...Array.from(new Set(catalogItems.map((item) => item.category).filter(Boolean)))];
-  const filteredOrderItems = catalogItems.filter((item) => (orderCategory === "All" || item.category === orderCategory) && [item.name, item.category].join(" ").toLowerCase().includes(orderQuery.trim().toLowerCase()));
+  const filteredOrderItems = catalogItems.filter((item) => (orderCategory === "All" || item.category === orderCategory) && [item.name, item.category, item.barcode].join(" ").toLowerCase().includes(orderQuery.trim().toLowerCase()));
   const activeTableOrder = selectedTable ? tableOrders.find((order) => order.tableId === selectedTable.id && order.status !== "Paid" && order.status !== "Cancelled") : null;
   const addonTableOrder = activeTableOrder
     && ["Taking order", "KOT sent"].includes(activeTableOrder.status)
@@ -4586,8 +4765,9 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
         </div>
 
         {activeTab === "Recipes" && (
-          <div className="production-layout">
-            <div className="module-list">{recipes.map((recipe) => <button key={recipe.id} className={recipe.id === selectedRecipeId ? "active-module" : ""} onClick={() => openRecipe(recipe)}><span>{recipe.name}</span><strong>v{recipe.version}</strong></button>)}</div>
+          <div className="production-layout production-recipe-layout">
+            {!!recipes.length && <div className="module-list production-recipe-strip">{recipes.map((recipe) => <button key={recipe.id} className={recipe.id === selectedRecipeId ? "active-module" : ""} onClick={() => openRecipe(recipe)}><span>{recipe.name}</span><strong>v{recipe.version}</strong></button>)}</div>}
+            {!recipes.length && <div className="production-empty-strip"><ChefHat size={18} /><strong>No recipes yet</strong><span>Create a recipe to start building your production master.</span></div>}
             <div className="production-editor">
               <div className="production-form recipe-master-form">
                 <label>Recipe name<input value={recipeDraft.name} onChange={(event) => updateRecipe("name", event.target.value)} disabled={!canManageAll} placeholder="Chicken Biryani" /></label>
@@ -4764,7 +4944,7 @@ function CRM({ notify, canManageAll, salesLedger = [] }) {
 }
 
 function ProductItemsManager({ items, setItems, notify, canManageAll, menuCategories = [], onCreateCategory, mode = "items", editingItemId = "", onNavigate }) {
-  const blankDraft = { name: "", category: "Mains", price: "", tax: 5, fav: false, status: "Active", image: "" };
+  const blankDraft = { name: "", category: "Mains", barcode: "", price: "", tax: 5, fav: false, status: "Active", image: "" };
   const [selectedId, setSelectedId] = useState("");
   const [draft, setDraft] = useState(() => ({ ...blankDraft, id: "" }));
   const [showCategoryCreator, setShowCategoryCreator] = useState(false);
@@ -4836,11 +5016,17 @@ function ProductItemsManager({ items, setItems, notify, canManageAll, menuCatego
       notify("Enter product item name");
       return;
     }
+    const barcode = String(draft.barcode || "").trim();
+    if (barcode && items.some((item) => String(item.id) !== String(draft.id) && String(item.barcode || "").trim().toLowerCase() === barcode.toLowerCase())) {
+      notify("Barcode already assigned to another item");
+      return;
+    }
     const savedItem = {
       ...draft,
       id: draft.id || `ITEM-${Date.now()}`,
       name: draft.name.trim(),
       category: draft.category.trim() || "Mains",
+      barcode,
       price: Number(draft.price || 0),
       tax: Number(draft.tax || 0),
       fav: Boolean(draft.fav),
@@ -4874,12 +5060,13 @@ function ProductItemsManager({ items, setItems, notify, canManageAll, menuCatego
         <PanelHead title="Menu items" icon={PackageSearch} actions={canManageAll ? ["Create item"] : []} onAction={() => onNavigate("create")} />
         <div className="product-master-table">
           <table>
-            <thead><tr><th>Image</th><th>Item</th><th>Category</th><th>Rate</th><th>GST</th><th>Status</th><th aria-label="Actions" /></tr></thead>
+            <thead><tr><th>Image</th><th>Item</th><th>Category</th><th>Barcode</th><th>Rate</th><th>GST</th><th>Status</th><th aria-label="Actions" /></tr></thead>
             <tbody>{items.map((item) => (
               <tr key={item.id}>
                 <td><img className="product-master-thumb" src={getMenuItemPhoto(item)} alt="" /></td>
                 <td>{item.name}</td>
                 <td>{item.category}</td>
+                <td>{item.barcode ? <span className="product-barcode-chip">{item.barcode}</span> : <span className="muted-table-value">Optional</span>}</td>
                 <td>{formatMoney(item.price)}</td>
                 <td>{item.tax}%</td>
                 <td><span className="active-chip">{item.status || "Active"}</span></td>
@@ -4907,6 +5094,7 @@ function ProductItemsManager({ items, setItems, notify, canManageAll, menuCatego
             <div className="product-preview-copy">
               <span>{draft.category || "Category"}</span>
               <strong>{draft.name.trim() || "New menu item"}</strong>
+              {draft.barcode && <small>Barcode {draft.barcode}</small>}
               <b>{draft.price === "" ? "Set item rate" : formatMoney(Number(draft.price || 0))}</b>
             </div>
             <label className="product-photo-upload">
@@ -4923,6 +5111,7 @@ function ProductItemsManager({ items, setItems, notify, canManageAll, menuCatego
               <div className="product-form-section-head"><div><span>Item details</span><small>Name and menu grouping</small></div></div>
               <div className="product-form-grid">
                 <label className="product-field-wide">Item name<input value={draft.name} onChange={(event) => update("name", event.target.value)} disabled={!canManageAll} placeholder="Chicken Biryani" autoFocus /></label>
+                <label>Barcode <small>Optional</small><input value={draft.barcode || ""} onChange={(event) => update("barcode", event.target.value)} disabled={!canManageAll} placeholder="Scan or type barcode" /></label>
                 <div className="product-category-field">
                   <div className="product-category-head">
                     <span>Category</span>
@@ -5598,8 +5787,39 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
 }
 
 function BillTemplateEditor({ billTemplate, setBillTemplate, notify }) {
+  const displayToggles = [
+    ["showLogo", "Logo"],
+    ["showAddress", "Address"],
+    ["showPhone", "Phone"],
+    ["showEmail", "Email"],
+    ["showGst", "GST"],
+    ["showFssai", "FSSAI"],
+    ["showCustomer", "Customer fields"],
+    ["showOrderInfo", "Order info"],
+    ["showPayment", "Payment"],
+    ["showTaxBreakup", "Tax breakup"],
+    ["showItemCount", "Item count"],
+    ["showQrBox", "QR box"],
+    ["showTerms", "Terms"],
+  ];
+
   function update(field, value) {
     setBillTemplate((current) => ({ ...current, [field]: value }));
+  }
+
+  const billFontSize = getBillFontSize(billTemplate.fontSize);
+  const billPreviewClass = `bill-paper print-bill bill-layout-${String(billTemplate.layout || "Detailed").toLowerCase()}`;
+  const billPreviewStyle = getBillPaperStyle({ ...billTemplate, fontSize: billFontSize });
+
+  function updateBillFontSize(value) {
+    update("fontSize", getBillFontSize(value));
+  }
+
+  function saveBillFormat() {
+    const normalizedTemplate = { ...defaultBillTemplate, ...billTemplate, fontSize: billFontSize };
+    localStorage.setItem("vestora-bill-template", JSON.stringify(normalizedTemplate));
+    setBillTemplate(normalizedTemplate);
+    notify("Bill format saved");
   }
 
   function uploadLogo(event) {
@@ -5621,25 +5841,104 @@ function BillTemplateEditor({ billTemplate, setBillTemplate, notify }) {
 
   return (
     <div className="bill-editor">
-      <h3>Edit print bill</h3>
-      <div className="logo-upload-row">
-        <div className="logo-preview">{billTemplate.showLogo && <img src={billTemplate.logoData || "/vestora-mark.png"} alt="" />}</div>
+      <div className="bill-editor-head">
         <div>
-          <strong>Bill logo</strong>
-          <span>Upload restaurant logo for printed bills.</span>
-          <label className="file-upload">Upload logo<input type="file" accept="image/*" onChange={uploadLogo} /></label>
+          <span>Advanced bill designer</span>
+          <h3>Customize printed receipt</h3>
+          <p>Control receipt branding, paper layout, visible sections, footer notes, and print preview.</p>
         </div>
+        <button type="button" className="bill-save-format" onClick={saveBillFormat}><Save size={17} />Save format</button>
       </div>
-      <label>Restaurant name<input value={billTemplate.restaurantName} onChange={(event) => update("restaurantName", event.target.value)} /></label>
-      <label>Address<input value={billTemplate.address} onChange={(event) => update("address", event.target.value)} /></label>
-      <label>GST number<input value={billTemplate.gst} onChange={(event) => update("gst", event.target.value)} /></label>
-      <label>FSSAI number<input value={billTemplate.fssai} onChange={(event) => update("fssai", event.target.value)} /></label>
-      <label>Footer message<input value={billTemplate.footer} onChange={(event) => update("footer", event.target.value)} /></label>
-      <label>Paper size<select value={billTemplate.printerSize} onChange={(event) => update("printerSize", event.target.value)}><option>80mm</option><option>58mm</option></select></label>
-      <div className="editor-row">
-        <button className={billTemplate.showLogo ? "active-action" : ""} onClick={() => update("showLogo", !billTemplate.showLogo)}>{billTemplate.showLogo ? "Logo on" : "Logo off"}</button>
-        <button onClick={() => { update("logoData", ""); notify("Logo reset to default"); }}>Reset logo</button>
-        <button onClick={() => notify("Print bill format saved")}>Save bill format</button>
+
+      <div className="bill-editor-layout">
+        <div className="bill-editor-controls">
+          <section className="bill-editor-card">
+            <div className="bill-editor-card-head"><strong>Branding</strong><span>Logo and restaurant identity</span></div>
+            <div className="logo-upload-row">
+              <div className="logo-preview">{billTemplate.showLogo && <img src={billTemplate.logoData || "/vestora-mark.png"} alt="" />}</div>
+              <div>
+                <strong>Bill logo</strong>
+                <span>Upload restaurant logo for printed bills.</span>
+                <label className="file-upload">Upload logo<input type="file" accept="image/*" onChange={uploadLogo} /></label>
+              </div>
+            </div>
+            <div className="bill-editor-grid">
+              <label>Bill title<input value={billTemplate.billTitle || ""} onChange={(event) => update("billTitle", event.target.value)} /></label>
+              <label>Restaurant name<input value={billTemplate.restaurantName} onChange={(event) => update("restaurantName", event.target.value)} /></label>
+              <label className="wide">Tagline<input value={billTemplate.tagline || ""} onChange={(event) => update("tagline", event.target.value)} /></label>
+              <label className="wide">Address<input value={billTemplate.address} onChange={(event) => update("address", event.target.value)} /></label>
+              <label>Phone<input value={billTemplate.phone || ""} onChange={(event) => update("phone", event.target.value)} /></label>
+              <label>Email<input value={billTemplate.email || ""} onChange={(event) => update("email", event.target.value)} /></label>
+              <label>GST number<input value={billTemplate.gst} onChange={(event) => update("gst", event.target.value)} /></label>
+              <label>FSSAI number<input value={billTemplate.fssai} onChange={(event) => update("fssai", event.target.value)} /></label>
+            </div>
+          </section>
+
+          <section className="bill-editor-card">
+            <div className="bill-editor-card-head"><strong>Paper and layout</strong><span>Thermal receipt structure</span></div>
+            <div className="bill-editor-grid compact">
+              <label>Paper size<select value={billTemplate.printerSize} onChange={(event) => update("printerSize", event.target.value)}><option>80mm</option><option>58mm</option></select></label>
+              <label>Layout<select value={billTemplate.layout || "Detailed"} onChange={(event) => update("layout", event.target.value)}><option>Detailed</option><option>Compact</option><option>Branded</option></select></label>
+              <label>Logo position<select value={billTemplate.logoPosition || "Left"} onChange={(event) => update("logoPosition", event.target.value)}><option>Left</option><option>Center</option></select></label>
+              <div className="bill-font-control">
+                <span>Font size</span>
+                <div className="number-stepper">
+                  <button type="button" onClick={() => updateBillFontSize(billFontSize - 1)} aria-label="Decrease bill font size"><Minus size={15} /></button>
+                  <input type="number" min="10" max="22" step="1" value={billFontSize} onChange={(event) => updateBillFontSize(event.target.value)} aria-label="Bill font size in pixels" />
+                  <strong>px</strong>
+                  <button type="button" onClick={() => updateBillFontSize(billFontSize + 1)} aria-label="Increase bill font size"><Plus size={15} /></button>
+                </div>
+                <input className="bill-font-range" type="range" min="10" max="22" step="1" value={billFontSize} onChange={(event) => updateBillFontSize(event.target.value)} aria-label="Bill font size slider" />
+              </div>
+            </div>
+          </section>
+
+          <section className="bill-editor-card">
+            <div className="bill-editor-card-head"><strong>Visible sections</strong><span>Choose what appears on the printed bill</span></div>
+            <div className="bill-toggle-grid">
+              {displayToggles.map(([field, label]) => (
+                <button key={field} className={billTemplate[field] !== false ? "active" : ""} onClick={() => update(field, billTemplate[field] === false)}>
+                  {billTemplate[field] !== false ? <CircleCheck size={15} /> : <X size={15} />}
+                  {label}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="bill-editor-card">
+            <div className="bill-editor-card-head"><strong>Footer and QR</strong><span>Closing copy and optional QR placeholder</span></div>
+            <div className="bill-editor-grid">
+              <label className="wide">Footer message<input value={billTemplate.footer} onChange={(event) => update("footer", event.target.value)} /></label>
+              <label className="wide">Terms / policy<input value={billTemplate.terms || ""} onChange={(event) => update("terms", event.target.value)} /></label>
+              <label>QR label<input value={billTemplate.qrText || ""} onChange={(event) => update("qrText", event.target.value)} /></label>
+              <label>Copy label<input value={billTemplate.copyLabel || ""} onChange={(event) => update("copyLabel", event.target.value)} /></label>
+            </div>
+          </section>
+
+          <div className="editor-row">
+            <button className={billTemplate.showLogo ? "active-action" : ""} onClick={() => update("showLogo", !billTemplate.showLogo)}>{billTemplate.showLogo ? "Logo on" : "Logo off"}</button>
+            <button onClick={() => { update("logoData", ""); notify("Logo reset to default"); }}>Reset logo</button>
+            <button onClick={() => setBillTemplate(defaultBillTemplate)}>Reset all</button>
+          </div>
+        </div>
+
+        <div className="bill-editor-preview">
+          <div className={billPreviewClass} style={billPreviewStyle}>
+            <BillReceiptHeader billTemplate={billTemplate} />
+            {billTemplate.showOrderInfo !== false && <div className="bill-type-row"><span>Billing type</span><strong>Dine-in</strong></div>}
+            <BillReceiptMeta billTemplate={billTemplate} rows={[
+              ["Order number", "ORD-1024"],
+              ["Date & time", "04 Aug, 05:12 pm"],
+              billTemplate.showPayment !== false && ["Payment", "UPI"],
+              billTemplate.showCustomer !== false && ["Customer name", "Sample customer"],
+            ]} />
+            <div className="bill-items">
+              <div className="bill-line"><span>2 x Paneer Tikka Bowl</span><strong>{formatMoney(498)}</strong></div>
+              <div className="bill-line"><span>1 x Filter Coffee</span><strong>{formatMoney(99)}</strong></div>
+            </div>
+            <div className="totals"><span>Subtotal <strong>{formatMoney(597)}</strong></span><span>Discount <strong>{formatMoney(0)}</strong></span>{billTemplate.showTaxBreakup !== false && <span>CGST <strong>{formatMoney(15)}</strong></span>}{billTemplate.showTaxBreakup !== false && <span>SGST <strong>{formatMoney(15)}</strong></span>}{billTemplate.showItemCount && <span>Items <strong>3</strong></span>}<b>Grand total <strong>{formatMoney(627)}</strong></b><BillReceiptFooter billTemplate={billTemplate} /></div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -6331,6 +6630,11 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
       if (themeColorFields.some(([key]) => key === field)) {
         nextTheme.themePreset = "Custom";
       }
+      if (["backgroundColor", "surfaceColor"].includes(field)) {
+        const readableBackground = safeColorValue(nextTheme.surfaceColor || nextTheme.backgroundColor || value, "#ffffff");
+        nextTheme.textColor = readableTextColor(readableBackground);
+        nextTheme.mutedColor = readableMutedColor(readableBackground);
+      }
       setThemeConfig(normalizeThemeConfig({
         mode: nextTheme.theme,
         preset: nextTheme.themePreset,
@@ -6450,6 +6754,10 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
     }
   }
 
+  const selectedLanguage = languageOptions.includes(draft.language) ? draft.language : "English";
+  const selectedCurrency = currencyOptions.some(([code]) => code === draft.currency) ? draft.currency : "INR";
+  const selectedTimezone = placeTimezoneOptions.some(([zone]) => zone === draft.timezone) ? draft.timezone : "Asia/Kolkata";
+
   return (
     <section className="screen settings-detail-screen">
       <button className="settings-back-button" onClick={onBack}><PanelLeftClose size={17} /> Back to settings</button>
@@ -6474,7 +6782,7 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
                     <div>
                       <span>Website appearance</span>
                       <h3>{draft.themePreset || "Custom"} / {draft.theme}</h3>
-                      <p>Choose a preset, then tune every important website color for this browser.</p>
+                      <p>Choose a preset, tune every important website color, and VESTORA will adjust letter contrast for clear reading.</p>
                     </div>
                     <Sparkles size={34} />
                   </div>
@@ -6492,11 +6800,26 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
                       </div>
                     </div>
                     <div>
-                      <span className="theme-control-label">Language / currency</span>
+                      <span className="theme-control-label">Language / currency / place</span>
                       <div className="theme-local-grid">
-                        <input value={draft.language || ""} onChange={(event) => update("language", event.target.value)} disabled={!canManage} placeholder="Language" />
-                        <input value={draft.currency || ""} onChange={(event) => update("currency", event.target.value)} disabled={!canManage} placeholder="Currency" />
-                        <input value={draft.timezone || ""} onChange={(event) => update("timezone", event.target.value)} disabled={!canManage} placeholder="Timezone" />
+                        <label>
+                          <span>Language</span>
+                          <select value={selectedLanguage} onChange={(event) => update("language", event.target.value)} disabled={!canManage}>
+                            {languageOptions.map((language) => <option key={language}>{language}</option>)}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Currency</span>
+                          <select value={selectedCurrency} onChange={(event) => update("currency", event.target.value)} disabled={!canManage}>
+                            {currencyOptions.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Place / timezone</span>
+                          <select value={selectedTimezone} onChange={(event) => update("timezone", event.target.value)} disabled={!canManage}>
+                            {placeTimezoneOptions.map(([zone, label]) => <option key={zone} value={zone}>{label} ({zone})</option>)}
+                          </select>
+                        </label>
                       </div>
                     </div>
                   </div>
