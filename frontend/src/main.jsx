@@ -81,6 +81,8 @@ function publicAssetPath(path) {
   return `${cleanBase}${cleanPath}`;
 }
 
+const vestoraLogoPath = publicAssetPath("vestora-mark.png");
+
 const modules = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "pos", label: "POS Billing", icon: ShoppingCart },
@@ -1583,7 +1585,7 @@ function App() {
     <div className={`${dark ? "app dark" : "app"} ${sidebarOpen ? "sidebar-expanded" : "sidebar-collapsed"}`} style={themeVariables}>
       <aside className={sidebarOpen ? "sidebar" : "sidebar collapsed"}>
         <div className="brand">
-          <img src="/vestora-mark.png" alt="" />
+          <img src={vestoraLogoPath} alt="" />
           {sidebarOpen && <div><strong>VESTORA</strong><span>ERP & POS</span></div>}
         </div>
         <nav>
@@ -1808,7 +1810,7 @@ function LoginScreen({ onLogin }) {
   return (
     <div className="login-screen">
       <form className="login-card" onSubmit={login}>
-        <img src="/vestora-mark.png" alt="" />
+        <img src={vestoraLogoPath} alt="" />
         <h1>VESTORA</h1>
         <p>{portal === "supplier" ? "Supplier Purchase Order Portal" : "Restaurant staff login"}</p>
         <div className="login-tabs">
@@ -2107,7 +2109,7 @@ function SuperAdminStoreLanding({ stores, setStores, activeStore, onEnterStore, 
     <div className="super-admin-landing">
       <header className="super-admin-landing-head">
         <div className="super-admin-brand">
-          <img src="/vestora-mark.png" alt="" />
+          <img src={vestoraLogoPath} alt="" />
           <div>
             <strong>VESTORA</strong>
             <span>Super Admin Store Access</span>
@@ -2332,7 +2334,7 @@ function SupplierPortal({ currentUser, orders, setOrders, onLogout }) {
   return (
     <div className="supplier-app">
       <header className="supplier-topbar">
-        <div className="supplier-brand"><img src="/vestora-mark.png" alt="" /><div><strong>VESTORA Supplier Portal</strong><span>{currentUser.name}</span></div></div>
+        <div className="supplier-brand"><img src={vestoraLogoPath} alt="" /><div><strong>VESTORA Supplier Portal</strong><span>{currentUser.name}</span></div></div>
         <div className="supplier-actions"><span className="pill role-pill">Supplier</span><button className="icon-btn" onClick={onLogout} title="Logout"><LogOut size={18} /></button></div>
       </header>
       <main className="supplier-main">
@@ -2694,7 +2696,7 @@ function CashierLogin({ cashiers, activeStore, currentShift, onAuthenticated, on
       <div className="cashier-login-card">
         <header className="cashier-login-head">
           <div className="pos-brand-lockup">
-            <img src="/vestora-mark.png" alt="" />
+            <img src={vestoraLogoPath} alt="" />
             <div><p>VESTORA POS</p><h1>Cashier login</h1></div>
           </div>
           <div className="cashier-login-actions">
@@ -2767,7 +2769,7 @@ function ShiftOpening({ online, onOpenShift, onExit, onLogout, cashier }) {
     <section className="shift-open-screen">
       <form className="shift-card" onSubmit={submit}>
         <div className="shift-card-head">
-          <img src="/vestora-mark.png" alt="" />
+          <img src={vestoraLogoPath} alt="" />
           <div>
             <p>VESTORA POS</p>
             <h1>Open shift</h1>
@@ -2802,7 +2804,7 @@ function ShiftOpening({ online, onOpenShift, onExit, onLogout, cashier }) {
 }
 
 function BillReceiptHeader({ billTemplate }) {
-  const logo = billTemplate.logoData || "/vestora-mark.png";
+  const logo = billTemplate.logoData || vestoraLogoPath;
   const headerClass = `bill-title ${billTemplate.logoPosition === "Center" ? "centered" : ""} ${billTemplate.layout === "Compact" ? "compact" : ""}`;
   return (
     <div className={headerClass}>
@@ -3124,7 +3126,7 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
     <section className="pos-screen">
       <div className="pos-page-header">
         <div className="pos-brand-lockup">
-          <img src="/vestora-mark.png" alt="" />
+          <img src={vestoraLogoPath} alt="" />
           <div>
             <p>VESTORA POS</p>
             <h1>POS Billing</h1>
@@ -5855,7 +5857,7 @@ function BillTemplateEditor({ billTemplate, setBillTemplate, notify }) {
           <section className="bill-editor-card">
             <div className="bill-editor-card-head"><strong>Branding</strong><span>Logo and restaurant identity</span></div>
             <div className="logo-upload-row">
-              <div className="logo-preview">{billTemplate.showLogo && <img src={billTemplate.logoData || "/vestora-mark.png"} alt="" />}</div>
+              <div className="logo-preview">{billTemplate.showLogo && <img src={billTemplate.logoData || vestoraLogoPath} alt="" />}</div>
               <div>
                 <strong>Bill logo</strong>
                 <span>Upload restaurant logo for printed bills.</span>
