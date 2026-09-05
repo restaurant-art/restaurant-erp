@@ -33,7 +33,7 @@ jobs:
         run: npm install
 
       - name: Build frontend
-        run: npm run build -- --base=/restaurant-erp/
+        run: npm run build -- --base=/
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

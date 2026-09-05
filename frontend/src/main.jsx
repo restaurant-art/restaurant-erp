@@ -34,6 +34,8 @@ import {
   EyeOff,
   FileDown,
   FileBarChart,
+  Folder,
+  FolderOpen,
   Gauge,
   GripVertical,
   History,
@@ -5446,9 +5448,116 @@ function MenuManagement({ notify, canManageAll, storeId, productItems, setProduc
   );
 }
 
+const financeExpensePurposes = ["Rent", "Salary", "Supplies", "Utilities", "Maintenance", "Marketing", "Food purchase", "Packaging", "Transport", "GST payment", "Other expense"];
+const financeReceiptPurposes = ["Food sales", "Customer payment", "Advance received", "Catering income", "Service charge", "Refund recovery", "Other income"];
+const financeJournalPurposes = ["Adjustment", "Bank transfer", "Owner capital", "Owner withdrawal", "GST adjustment", "Supplier settlement", "Payroll accrual", "Depreciation", "Other journal"];
+const financeAccountOptions = ["Cash", "Bank", "UPI", "Card", "Wallet", "Credit", "Accounts receivable", "Accounts payable", "Sales", "Food sales", "Service income", "GST output", "GST input", "Owner capital", "Owner drawings", ...financeExpensePurposes.map((purpose) => `Expense - ${purpose}`)];
+const financeLedgerGroups = {
+  Asset: ["Current asset", "Bank accounts", "Cash in hand", "Accounts receivable", "Inventory", "Fixed asset"],
+  Liability: ["Current liability", "Accounts payable", "Tax payable", "Loan payable", "Accrued expense"],
+  Equity: ["Partners capital", "Owner capital", "Retained earnings", "Drawings"],
+  Income: ["Sales income", "Service income", "Other income", "Discount received"],
+  Expense: ["Direct expense", "Indirect expense", "Bank charges", "Salary expense", "Rent expense", "Utilities expense"],
+};
+const financeLedgerCodePrefix = { Asset: "AST", Liability: "LIA", Equity: "EQT", Income: "INC", Expense: "EXP" };
+const defaultFinanceLedgers = financeAccountOptions.map((name, index) => {
+  const type = name.startsWith("Expense -") ? "Expense"
+    : ["Cash", "Bank", "UPI", "Card", "Wallet", "Credit", "Accounts receivable"].includes(name) ? "Asset"
+      : name === "Accounts payable" ? "Liability"
+        : ["Owner capital", "Owner drawings"].includes(name) ? "Equity"
+          : "Income";
+  const group = name.startsWith("Expense -") ? "Indirect expense"
+    : ["Cash", "Bank", "UPI", "Card", "Wallet"].includes(name) ? "Current asset"
+      : name === "Accounts payable" ? "Current liability"
+        : ["Owner capital", "Owner drawings"].includes(name) ? "Partners capital"
+          : "Sales income";
+  return { id: `SYS-${index + 1}`, code: `${financeLedgerCodePrefix[type]}-${String(index + 1).padStart(3, "0")}`, name, type, group, status: "Active", system: true };
+});
+
+function financeOptions(options, currentValue = "") {
+  return Array.from(new Set([String(currentValue || "").trim(), ...options].filter(Boolean)));
+}
+
+function expenseAccountForPurpose(purpose) {
+  return `Expense - ${purpose || "Other expense"}`;
+}
+
+function financeLedgerStorageKey(storeId) {
+  return `vestora-finance-ledgers-${storeId}`;
+}
+
+function loadFinanceLedgers(storeId) {
+  const saved = loadStoredArray(financeLedgerStorageKey(storeId));
+  const byName = new Map();
+  [...defaultFinanceLedgers, ...saved].forEach((ledger) => {
+    const name = String(ledger.name || "").trim();
+    if (name) byName.set(name.toLowerCase(), { ...ledger, name });
+  });
+  return Array.from(byName.values());
+}
+
+function financeAccountNames(ledgers, currentValue = "") {
+  return financeOptions(ledgers.filter((ledger) => ledger.status !== "Inactive").map((ledger) => ledger.name), currentValue);
+}
+
+function financeLedgerOptionLabel(ledger) {
+  const code = ledger.code ? `${ledger.code} - ` : "";
+  const group = [ledger.type, ledger.group].filter(Boolean).join(" / ");
+  return `${code}${ledger.name}${group ? ` - ${group}` : ""}`;
+}
+
+function newFinanceJournalLine(account = "", debit = "", credit = "", description = "", side = "") {
+  return { id: `JLINE-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, account, debit, credit, description, side };
+}
+
+function blankFinanceJournalDraft() {
+  return { date: localDateKey(), purpose: "", reference: "", note: "", status: "Posted", lines: [newFinanceJournalLine("", "", "", "", "debit"), newFinanceJournalLine("", "", "", "", "credit")] };
+}
+
+function normalizeFinanceJournalLines(record = {}) {
+  if (Array.isArray(record.lines) && record.lines.length) {
+    return record.lines.map((line, index) => ({
+      id: line.id || newFinanceJournalLine().id,
+      account: line.account || "",
+      debit: line.debit ? String(line.debit) : "",
+      credit: line.credit ? String(line.credit) : "",
+      description: line.description || "",
+      side: line.side || (line.debit ? "debit" : line.credit ? "credit" : index === 0 ? "debit" : index === 1 ? "credit" : ""),
+    }));
+  }
+  const amount = record.amount ? String(record.amount) : "";
+  return [
+    newFinanceJournalLine(record.debitAccount || "", amount, "", record.note || record.purpose || "", "debit"),
+    newFinanceJournalLine(record.creditAccount || "", "", amount, record.note || record.purpose || "", "credit"),
+  ];
+}
+
+function nextFinanceLedgerCode(type, ledgers) {
+  const prefix = financeLedgerCodePrefix[type] || "LED";
+  const max = ledgers.reduce((highest, ledger) => {
+    if (ledger.system) return highest;
+    const match = String(ledger.code || "").match(new RegExp(`^${prefix}-(\\d+)$`, "i"));
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+  return `${prefix}-${String(max + 1).padStart(3, "0")}`;
+}
+
+function financeLedgerHierarchy(ledgers, balances = {}) {
+  return Object.keys(financeLedgerGroups).map((type) => {
+    const typeLedgers = ledgers.filter((ledger) => ledger.type === type && ledger.status !== "Inactive");
+    const groups = Array.from(new Set(typeLedgers.map((ledger) => ledger.group || "General"))).map((group) => {
+      const groupLedgers = typeLedgers.filter((ledger) => (ledger.group || "General") === group);
+      const balance = groupLedgers.reduce((sum, ledger) => sum + Number(balances[ledger.name] || 0), 0);
+      return { name: group, ledgers: groupLedgers, balance };
+    });
+    const balance = groups.reduce((sum, group) => sum + group.balance, 0);
+    return { type, groups, balance };
+  });
+}
+
 function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId, view = "Expenses" }) {
   const expenseStorageKey = `vestora-finance-expenses-${storeId}`;
-  const emptyExpense = () => ({ category: "", amount: "", paidFrom: "Cash", status: "Posted", date: localDateKey(), reference: "", note: "" });
+  const emptyExpense = () => ({ category: "", debitAccount: "", creditAccount: "Cash", amount: "", paidFrom: "Cash", status: "Posted", date: localDateKey(), reference: "", note: "" });
   const [expenses, setExpenses] = useState(() => loadStoredArray(expenseStorageKey));
   const [expenseDraft, setExpenseDraft] = useState(emptyExpense);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
@@ -5458,6 +5567,8 @@ function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId
   const [ledgerFormOpen, setLedgerFormOpen] = useState(false);
   const [ledgerDraft, setLedgerDraft] = useState({ date: localDateKey(), debitAccount: "", creditAccount: "", amount: "", reference: "", note: "" });
   const [filters, setFilters] = useState({ query: "", method: "All", status: "All", from: "", to: "" });
+  const ledgerMasters = loadFinanceLedgers(storeId);
+  const accountNames = financeAccountNames(ledgerMasters);
 
   useEffect(() => {
     setExpenses(loadStoredArray(expenseStorageKey));
@@ -5495,8 +5606,10 @@ function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId
     const record = {
       id: editingExpenseId || `EXP-${Date.now()}`,
       category,
+      debitAccount: expenseDraft.debitAccount || expenseAccountForPurpose(category),
+      creditAccount: expenseDraft.creditAccount || expenseDraft.paidFrom || "Cash",
       amount,
-      paidFrom: expenseDraft.paidFrom,
+      paidFrom: expenseDraft.creditAccount || expenseDraft.paidFrom,
       status: expenseDraft.status,
       date: expenseDraft.date || localDateKey(),
       reference: expenseDraft.reference.trim(),
@@ -5520,6 +5633,8 @@ function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId
     setEditingExpenseId(expense.id);
     setExpenseDraft({
       category: expense.category || "",
+      debitAccount: expense.debitAccount || expenseAccountForPurpose(expense.category),
+      creditAccount: expense.creditAccount || expense.paidFrom || "Cash",
       amount: String(expense.amount || ""),
       paidFrom: expense.paidFrom || "Cash",
       status: expense.status || "Posted",
@@ -5541,9 +5656,9 @@ function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId
   }
 
   const filteredExpenses = expenses.filter((expense) => {
-    const searchText = `${expense.category} ${expense.reference} ${expense.note} ${expense.paidFrom}`.toLowerCase();
+    const searchText = `${expense.category} ${expense.debitAccount} ${expense.creditAccount} ${expense.reference} ${expense.note} ${expense.paidFrom}`.toLowerCase();
     return (!filters.query || searchText.includes(filters.query.toLowerCase()))
-      && (filters.method === "All" || expense.paidFrom === filters.method)
+      && (filters.method === "All" || expense.paidFrom === filters.method || expense.creditAccount === filters.method)
       && (filters.status === "All" || expense.status === filters.status)
       && (!filters.from || expense.date >= filters.from)
       && (!filters.to || expense.date <= filters.to);
@@ -5585,14 +5700,14 @@ function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId
             <button onClick={openNewExpense}><Plus size={18} />Add expense</button>
             <button className={filtersOpen ? "active-action" : ""} onClick={() => setFiltersOpen((open) => !open)}><SlidersHorizontal size={18} />Filter</button>
             <button className={rangeOpen ? "active-action" : ""} onClick={() => setRangeOpen((open) => !open)}><CalendarClock size={18} />Date range</button>
-            <button onClick={() => downloadCsv("vestora-expenses.csv", ["Date", "Category", "Amount", "Paid from", "Status", "Reference", "Note"], filteredExpenses.map((expense) => ({ Date: expense.date, Category: expense.category, Amount: expense.amount, "Paid from": expense.paidFrom, Status: expense.status, Reference: expense.reference, Note: expense.note })))}><Download size={18} />Export</button>
+            <button onClick={() => downloadCsv("vestora-expenses.csv", ["Date", "Purpose", "Debited account", "Credited account", "Amount", "Status", "Reference", "Note"], filteredExpenses.map((expense) => ({ Date: expense.date, Purpose: expense.category, "Debited account": expense.debitAccount || expenseAccountForPurpose(expense.category), "Credited account": expense.creditAccount || expense.paidFrom, Amount: expense.amount, Status: expense.status, Reference: expense.reference, Note: expense.note })))}><Download size={18} />Export</button>
           </div>
         </div>
 
         {(filtersOpen || rangeOpen) && <div className="finance-filter-row">
           {filtersOpen && <>
             <label className="finance-search"><Search size={18} /><input placeholder="Search expense, reference, note" value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>
-            <label>Paid from<select value={filters.method} onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value }))}><option>All</option><option>Cash</option><option>UPI</option><option>Card</option><option>Bank</option><option>Credit</option></select></label>
+            <label>Credited account<select value={filters.method} onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value }))}><option>All</option>{accountNames.map((account) => <option key={account}>{account}</option>)}</select></label>
             <label>Status<select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option>All</option><option>Posted</option><option>Review</option><option>Pending</option><option>Paid</option></select></label>
           </>}
           {rangeOpen && <>
@@ -5604,9 +5719,10 @@ function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId
 
         {formOpen && <form className="finance-expense-form" onSubmit={saveExpense}>
           <div className="finance-form-title"><div><span>{editingExpenseId ? "Update expense" : "New expense"}</span><strong>{editingExpenseId ? "Edit expense details" : "Record a business expense"}</strong></div><button type="button" className="icon-button" title="Close expense form" onClick={() => { setFormOpen(false); setEditingExpenseId(null); setExpenseDraft(emptyExpense()); }}><X size={18} /></button></div>
-          <label>Category<input autoFocus placeholder="Rent, salary, supplies" value={expenseDraft.category} onChange={(event) => setExpenseDraft((current) => ({ ...current, category: event.target.value }))} /></label>
+          <label>Purpose / amount gone for<select autoFocus value={expenseDraft.category} onChange={(event) => setExpenseDraft((current) => ({ ...current, category: event.target.value, debitAccount: expenseAccountForPurpose(event.target.value) }))}><option value="">Select purpose</option>{financeExpensePurposes.map((purpose) => <option key={purpose}>{purpose}</option>)}</select></label>
+          <label>Debited account<select value={expenseDraft.debitAccount || expenseAccountForPurpose(expenseDraft.category)} onChange={(event) => setExpenseDraft((current) => ({ ...current, debitAccount: event.target.value }))}><option value="">Select debit account</option>{financeOptions(accountNames, expenseDraft.debitAccount).map((account) => <option key={account}>{account}</option>)}</select></label>
           <label>Amount<input type="number" min="0" step="0.01" placeholder="0.00" value={expenseDraft.amount} onChange={(event) => setExpenseDraft((current) => ({ ...current, amount: event.target.value }))} /></label>
-          <label>Paid from<select value={expenseDraft.paidFrom} onChange={(event) => setExpenseDraft((current) => ({ ...current, paidFrom: event.target.value }))}><option>Cash</option><option>UPI</option><option>Card</option><option>Bank</option><option>Credit</option></select></label>
+          <label>Credited account / paid from<select value={expenseDraft.creditAccount || expenseDraft.paidFrom} onChange={(event) => setExpenseDraft((current) => ({ ...current, creditAccount: event.target.value, paidFrom: event.target.value }))}>{financeOptions(accountNames, expenseDraft.creditAccount || expenseDraft.paidFrom).map((account) => <option key={account}>{account}</option>)}</select></label>
           <label>Status<select value={expenseDraft.status} onChange={(event) => setExpenseDraft((current) => ({ ...current, status: event.target.value }))}><option>Posted</option><option>Review</option><option>Pending</option><option>Paid</option></select></label>
           <label>Date<input type="date" value={expenseDraft.date} onChange={(event) => setExpenseDraft((current) => ({ ...current, date: event.target.value }))} /></label>
           <label>Reference<input placeholder="Invoice or receipt number" value={expenseDraft.reference} onChange={(event) => setExpenseDraft((current) => ({ ...current, reference: event.target.value }))} /></label>
@@ -5617,8 +5733,8 @@ function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId
         <div className="finance-summary"><span>Receivables <strong>{formatMoney(netCreditReceivables)}</strong></span><span>Showing <strong>{filteredExpenses.length}</strong> expenses</span><span>Total <strong>{formatMoney(expenseTotal)}</strong></span></div>
         <div className="finance-table-wrap">
           <table className="finance-table">
-            <thead><tr><th>Date</th><th>Category</th><th>Amount</th><th>Paid from</th><th>Status</th><th>Reference</th><th>Actions</th></tr></thead>
-            <tbody>{filteredExpenses.length ? filteredExpenses.map((expense) => <tr key={expense.id}><td>{expense.date || "-"}</td><td><strong>{expense.category}</strong>{expense.note && <small>{expense.note}</small>}</td><td>{formatMoney(expense.amount)}</td><td>{expense.paidFrom}</td><td><span className={`status-pill ${String(expense.status).toLowerCase()}`}>{expense.status}</span></td><td>{expense.reference || "-"}</td><td><div className="row-actions"><button title="Edit expense" onClick={() => editExpense(expense)}><Pencil size={17} />Edit</button><button className="danger-action" title="Delete expense" onClick={() => deleteExpense(expense)}><Trash2 size={17} />Delete</button></div></td></tr>) : <tr><td colSpan="7" className="finance-empty">No expense records match this view.</td></tr>}</tbody>
+            <thead><tr><th>Date</th><th>Purpose</th><th>Debited</th><th>Credited</th><th>Amount</th><th>Status</th><th>Reference</th><th>Actions</th></tr></thead>
+            <tbody>{filteredExpenses.length ? filteredExpenses.map((expense) => <tr key={expense.id}><td>{expense.date || "-"}</td><td><strong>{expense.category}</strong>{expense.note && <small>{expense.note}</small>}</td><td>{expense.debitAccount || expenseAccountForPurpose(expense.category)}</td><td>{expense.creditAccount || expense.paidFrom}</td><td>{formatMoney(expense.amount)}</td><td><span className={`status-pill ${String(expense.status).toLowerCase()}`}>{expense.status}</span></td><td>{expense.reference || "-"}</td><td><div className="row-actions"><button title="Edit expense" onClick={() => editExpense(expense)}><Pencil size={17} />Edit</button><button className="danger-action" title="Delete expense" onClick={() => deleteExpense(expense)}><Trash2 size={17} />Delete</button></div></td></tr>) : <tr><td colSpan="8" className="finance-empty">No expense records match this view.</td></tr>}</tbody>
           </table>
         </div>
       </section>
@@ -5635,12 +5751,12 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
   };
   const storageKey = keyByView[view] || "";
   const blank = () => view === "Receipts"
-    ? { customer: "", amount: "", method: "Cash", status: "Received", date: localDateKey(), reference: "", note: "" }
+    ? { customer: "", purpose: "Food sales", debitAccount: "Cash", creditAccount: "Sales", amount: "", method: "Cash", status: "Received", date: localDateKey(), reference: "", note: "" }
     : view === "Bank Accounts"
       ? { accountName: "", bankName: "", accountNumber: "", openingBalance: "", status: "Active", note: "" }
       : view === "Vendor Payments"
-        ? { vendor: "", invoice: "", dueAmount: "", amount: "", method: "Bank", status: "Paid", date: localDateKey(), reference: "", note: "" }
-      : { date: localDateKey(), debitAccount: "", creditAccount: "", amount: "", status: "Posted", reference: "", note: "" };
+        ? { vendor: "", purpose: "Supplier settlement", invoice: "", dueAmount: "", amount: "", debitAccount: "Accounts payable", creditAccount: "Bank", method: "Bank", status: "Paid", date: localDateKey(), reference: "", note: "" }
+      : blankFinanceJournalDraft();
   const [records, setRecords] = useState(() => storageKey ? loadStoredArray(storageKey) : []);
   const [draft, setDraft] = useState(blank);
   const [editingId, setEditingId] = useState("");
@@ -5649,7 +5765,15 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
   const [rangeOpen, setRangeOpen] = useState(false);
   const [filters, setFilters] = useState({ query: "", method: "All", status: "All", from: "", to: "" });
   const [ledgerFormOpen, setLedgerFormOpen] = useState(false);
-  const [ledgerDraft, setLedgerDraft] = useState({ date: localDateKey(), debitAccount: "", creditAccount: "", amount: "", reference: "", note: "" });
+  const [ledgerDraft, setLedgerDraft] = useState(blankFinanceJournalDraft);
+  const ledgerStorageKey = financeLedgerStorageKey(storeId);
+  const [ledgerMasterOpen, setLedgerMasterOpen] = useState(false);
+  const [ledgerMasters, setLedgerMasters] = useState(() => loadFinanceLedgers(storeId));
+  const [ledgerMasterDraft, setLedgerMasterDraft] = useState(() => {
+    const ledgers = loadFinanceLedgers(storeId);
+    return { code: nextFinanceLedgerCode("Asset", ledgers), name: "", type: "Asset", group: "Current asset", status: "Active" };
+  });
+  const [collapsedLedgerNodes, setCollapsedLedgerNodes] = useState(() => new Set());
   const reportBucketByView = { Receipts: "receipts", "Bank Accounts": "banks", "Vendor Payments": "vendors", "Journal Entries": "journals" };
   const reportBucket = reportBucketByView[view];
   const loadFinanceReportRecords = () => ({
@@ -5668,7 +5792,12 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     setFiltersOpen(false);
     setRangeOpen(false);
     setLedgerFormOpen(false);
-    setLedgerDraft({ date: localDateKey(), debitAccount: "", creditAccount: "", amount: "", reference: "", note: "" });
+    setLedgerDraft(blankFinanceJournalDraft());
+    const nextLedgers = loadFinanceLedgers(storeId);
+    setLedgerMasters(nextLedgers);
+    setLedgerMasterOpen(false);
+    setLedgerMasterDraft({ code: nextFinanceLedgerCode("Asset", nextLedgers), name: "", type: "Asset", group: "Current asset", status: "Active" });
+    setCollapsedLedgerNodes(new Set());
     setFilters({ query: "", method: "All", status: "All", from: "", to: "" });
     setReportRecords(loadFinanceReportRecords());
   }, [storeId, view]);
@@ -5677,7 +5806,99 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
   const title = isReports ? "Finance reports" : view;
   const singular = view === "Receipts" ? "Receipt" : view === "Bank Accounts" ? "Bank account" : view === "Vendor Payments" ? "Vendor payment" : "Journal entry";
   const statuses = view === "Receipts" ? ["Received", "Pending", "Reversed"] : view === "Bank Accounts" ? ["Active", "Inactive"] : view === "Vendor Payments" ? ["Paid", "Partially paid", "Pending", "Cancelled"] : ["Posted", "Draft", "Review"];
+  const accountNames = financeAccountNames(ledgerMasters);
   const setValue = (field, value) => setDraft((current) => ({ ...current, [field]: value }));
+  const ledgerSelectMasters = ledgerMasters
+    .filter((ledger) => !ledger.system && ledger.status !== "Inactive")
+    .sort((a, b) => `${a.type}-${a.group}-${a.code}`.localeCompare(`${b.type}-${b.group}-${b.code}`));
+  const ledgerInfo = (name) => ledgerMasters.find((ledger) => ledger.name === name);
+  const ledgerInfoText = (name) => {
+    const ledger = ledgerInfo(name);
+    if (!ledger) return "";
+    return [ledger.code, ledger.type, ledger.group, ledger.system ? "System ledger" : "Created ledger"].filter(Boolean).join(" - ");
+  };
+  const renderLedgerOptions = (currentValue = "", blockedValue = "") => {
+    const current = String(currentValue || "").trim();
+    const blocked = String(blockedValue || "").trim();
+    const options = ledgerSelectMasters.filter((ledger) => ledger.name !== blocked);
+    const currentLedger = current && !options.some((ledger) => ledger.name === current)
+      ? { id: `current-${current}`, name: current, code: "", type: "Saved", group: "Ledger" }
+      : null;
+    return <>
+      {currentLedger && <option value={currentLedger.name}>{financeLedgerOptionLabel(currentLedger)}</option>}
+      {options.length > 0 && <optgroup label="Created ledgers">
+        {options.map((ledger) => <option key={ledger.id || ledger.name} value={ledger.name}>{financeLedgerOptionLabel(ledger)}</option>)}
+      </optgroup>}
+      {!options.length && !currentLedger && <option value="" disabled>Create ledger first</option>}
+    </>;
+  };
+  const renderJournalFields = (value, patchValue, autoFocus = false) => {
+    const lines = normalizeFinanceJournalLines(value);
+    const debitTotal = lines.reduce((sum, line) => sum + Number(line.debit || 0), 0);
+    const creditTotal = lines.reduce((sum, line) => sum + Number(line.credit || 0), 0);
+    const balanceDiff = debitTotal - creditTotal;
+    const isBalanced = debitTotal > 0 && Math.abs(balanceDiff) < 0.005;
+    const updateLine = (lineId, patch) => patchValue({ lines: lines.map((line) => line.id === lineId ? { ...line, ...patch } : line) });
+    const removeLine = (lineId) => patchValue({ lines: lines.length > 2 ? lines.filter((line) => line.id !== lineId) : lines.map((line) => line.id === lineId ? { ...line, account: "", debit: "", credit: "", description: "" } : line) });
+    const addDebitLine = () => patchValue({ lines: [...lines, newFinanceJournalLine("", "", "", "", "debit")] });
+    const addCreditLine = () => patchValue({ lines: [...lines, newFinanceJournalLine("", "", "", "", "credit")] });
+    return <>
+      <label>Date<input type="date" value={value.date} onChange={(event) => patchValue({ date: event.target.value })} required /></label>
+      <label>Entry number<input placeholder="Auto generated if blank" value={value.reference || ""} onChange={(event) => patchValue({ reference: event.target.value })} /></label>
+      <div className="journal-lines-panel">
+        <div className="journal-lines-title"><strong>Entry lines</strong><div><button type="button" onClick={() => { if (!canManageAll) return notify("Only an administrator can create ledgers"); setLedgerMasterOpen(true); }}><Plus size={16} />Create ledger</button><button type="button" className="journal-title-add debit" onClick={addDebitLine}><Plus size={16} />Debit line</button><button type="button" className="journal-title-add credit" onClick={addCreditLine}><Minus size={16} />Credit line</button><span className={isBalanced ? "balanced" : "not-balanced"}>{isBalanced ? "Balanced" : "Not balanced"}</span></div></div>
+        <div className="journal-lines-table">
+          <div className="journal-lines-head"><span>Account</span><span>Debit</span><span>Credit</span><span>Description</span><span></span></div>
+          {lines.map((line, index) => { const fixedDebit = line.side === "debit"; const fixedCredit = line.side === "credit"; return <div className={`journal-line-row ${fixedDebit ? "debit-line" : fixedCredit ? "credit-line" : ""}`} key={line.id}>
+            <label><select autoFocus={autoFocus && index === 0} value={line.account} onChange={(event) => updateLine(line.id, { account: event.target.value })} required={index < 2}><option value="">Select created ledger</option>{renderLedgerOptions(line.account)}</select><small><span>{fixedDebit ? "Debit line" : fixedCredit ? "Credit line" : "Journal line"}</span>{ledgerInfoText(line.account) || "Only created ledgers show here"}</small></label>
+            <input type="number" min="0" step="0.01" placeholder={fixedCredit ? "-" : "0.00"} value={line.debit} disabled={fixedCredit} onChange={(event) => updateLine(line.id, { debit: event.target.value, credit: event.target.value ? "" : line.credit })} />
+            <input type="number" min="0" step="0.01" placeholder={fixedDebit ? "-" : "0.00"} value={line.credit} disabled={fixedDebit} onChange={(event) => updateLine(line.id, { credit: event.target.value, debit: event.target.value ? "" : line.debit })} />
+            <input placeholder="Line description" value={line.description} onChange={(event) => updateLine(line.id, { description: event.target.value })} />
+            <button type="button" className="icon-action danger-action" title="Remove line" onClick={() => removeLine(line.id)}><Trash2 size={16} /></button>
+          </div>; })}
+          <div className={isBalanced ? "journal-lines-total balanced" : "journal-lines-total not-balanced"}><span>Total</span><strong>{formatMoney(debitTotal)}</strong><strong>{formatMoney(creditTotal)}</strong><small>{isBalanced ? "Debit and credit are matching." : `Difference ${formatMoney(Math.abs(balanceDiff))}`}</small><span></span></div>
+        </div>
+      </div>
+    </>;
+  };
+  const prepareJournalRecord = (sourceDraft, existingId = "") => {
+    const lines = normalizeFinanceJournalLines(sourceDraft).map((line) => ({
+      id: line.id || newFinanceJournalLine().id,
+      account: String(line.account || "").trim(),
+      debit: Number(line.debit || 0),
+      credit: Number(line.credit || 0),
+      description: String(line.description || "").trim(),
+      side: line.side || (Number(line.debit || 0) > 0 ? "debit" : Number(line.credit || 0) > 0 ? "credit" : ""),
+    })).filter((line) => line.account || line.debit || line.credit || line.description);
+    const debitTotal = lines.reduce((sum, line) => sum + line.debit, 0);
+    const creditTotal = lines.reduce((sum, line) => sum + line.credit, 0);
+    const invalidLine = lines.some((line) => !line.account || (line.debit <= 0 && line.credit <= 0) || (line.debit > 0 && line.credit > 0));
+    if (lines.length < 2 || invalidLine || debitTotal <= 0 || Math.abs(debitTotal - creditTotal) >= 0.005) return null;
+    const debitLine = lines.find((line) => line.debit > 0);
+    const creditLine = lines.find((line) => line.credit > 0);
+    const narration = sourceDraft.purpose?.trim()
+      || sourceDraft.note?.trim()
+      || lines.map((line) => line.description).find(Boolean)
+      || "Journal entry";
+    return {
+      id: existingId || `JRN-${Date.now()}`,
+      date: sourceDraft.date || localDateKey(),
+      purpose: narration,
+      debitAccount: debitLine?.account || "",
+      creditAccount: creditLine?.account || "",
+      amount: debitTotal,
+      lines,
+      status: sourceDraft.status || "Posted",
+      reference: sourceDraft.reference?.trim() || `JRN-${Date.now().toString().slice(-6)}`,
+      note: sourceDraft.note?.trim() || "",
+      updatedAt: new Date().toISOString(),
+    };
+  };
+  const journalSideText = (record, side) => {
+    const lines = normalizeFinanceJournalLines(record).filter((line) => Number(line[side] || 0) > 0);
+    return lines.map((line) => line.account).filter(Boolean).join(", ");
+  };
+  const journalAmountTotal = (record) => normalizeFinanceJournalLines(record).reduce((sum, line) => sum + Number(line.debit || 0), 0);
   const saveRecords = (nextValue) => setRecords((current) => {
     const next = typeof nextValue === "function" ? nextValue(current) : nextValue;
     if (storageKey) localStorage.setItem(storageKey, JSON.stringify(next));
@@ -5685,6 +5906,36 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     return next;
   });
   const resetForm = () => { setDraft(blank()); setEditingId(""); setFormOpen(false); };
+
+  function updateLedgerMasterType(type) {
+    const group = financeLedgerGroups[type]?.[0] || "";
+    setLedgerMasterDraft((current) => ({ ...current, type, group, code: nextFinanceLedgerCode(type, ledgerMasters) }));
+  }
+
+  function saveLedgerMaster(event) {
+    event.preventDefault();
+    if (!canManageAll) return notify("Only an administrator can create ledgers");
+    const name = ledgerMasterDraft.name.trim();
+    if (!name || !ledgerMasterDraft.type || !ledgerMasterDraft.group) return notify("Enter ledger name, type, and group");
+    if (ledgerMasters.some((ledger) => ledger.name.toLowerCase() === name.toLowerCase())) return notify("Ledger name already exists");
+    const record = {
+      id: `LEDGER-${Date.now()}`,
+      code: ledgerMasterDraft.code || nextFinanceLedgerCode(ledgerMasterDraft.type, ledgerMasters),
+      name,
+      type: ledgerMasterDraft.type,
+      group: ledgerMasterDraft.group,
+      status: ledgerMasterDraft.status || "Active",
+      createdAt: new Date().toISOString(),
+    };
+    const savedLedgers = loadStoredArray(ledgerStorageKey);
+    const nextSaved = [record, ...savedLedgers];
+    localStorage.setItem(ledgerStorageKey, JSON.stringify(nextSaved));
+    const nextMasters = loadFinanceLedgers(storeId);
+    setLedgerMasters(nextMasters);
+    setLedgerMasterDraft({ code: nextFinanceLedgerCode(record.type, nextMasters), name: "", type: record.type, group: record.group, status: "Active" });
+    setLedgerMasterOpen(false);
+    notify(`${record.code} ${record.name} ledger created`);
+  }
 
   function openNew() {
     if (!canManageAll) return notify("Only an administrator can manage finance records");
@@ -5694,12 +5945,12 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     if (!canManageAll) return notify("Only an administrator can manage finance records");
     setEditingId(record.id);
     setDraft(view === "Receipts"
-      ? { customer: record.customer || "", amount: String(record.amount || ""), method: record.method || "Cash", status: record.status || "Received", date: record.date || localDateKey(), reference: record.reference || "", note: record.note || "" }
+      ? { customer: record.customer || "", purpose: record.purpose || "Food sales", debitAccount: record.debitAccount || record.method || "Cash", creditAccount: record.creditAccount || "Sales", amount: String(record.amount || ""), method: record.method || "Cash", status: record.status || "Received", date: record.date || localDateKey(), reference: record.reference || "", note: record.note || "" }
       : view === "Bank Accounts"
       ? { accountName: record.accountName || "", bankName: record.bankName || "", accountNumber: record.accountNumber || "", openingBalance: String(record.openingBalance || ""), status: record.status || "Active", note: record.note || "" }
         : view === "Vendor Payments"
-          ? { vendor: record.vendor || "", invoice: record.invoice || "", dueAmount: String(record.dueAmount || ""), amount: String(record.amount || ""), method: record.method || "Bank", status: record.status || "Paid", date: record.date || localDateKey(), reference: record.reference || "", note: record.note || "" }
-        : { date: record.date || localDateKey(), debitAccount: record.debitAccount || "", creditAccount: record.creditAccount || "", amount: String(record.amount || ""), status: record.status || "Posted", reference: record.reference || "", note: record.note || "" });
+          ? { vendor: record.vendor || "", purpose: record.purpose || "Supplier settlement", invoice: record.invoice || "", dueAmount: String(record.dueAmount || ""), amount: String(record.amount || ""), debitAccount: record.debitAccount || "Accounts payable", creditAccount: record.creditAccount || record.method || "Bank", method: record.method || "Bank", status: record.status || "Paid", date: record.date || localDateKey(), reference: record.reference || "", note: record.note || "" }
+        : { date: record.date || localDateKey(), purpose: record.purpose || "", reference: record.reference || "", note: record.note || "", status: record.status || "Posted", lines: normalizeFinanceJournalLines(record) });
     setFormOpen(true);
   }
   function saveRecord(event) {
@@ -5707,18 +5958,18 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     const amount = Number(view === "Bank Accounts" ? draft.openingBalance : draft.amount);
     let record;
     if (view === "Receipts") {
-      if (!draft.customer.trim() || !Number.isFinite(amount) || amount <= 0) return notify("Enter customer and receipt amount");
-      record = { ...draft, id: editingId || `RCT-${Date.now()}`, customer: draft.customer.trim(), amount, reference: draft.reference.trim(), note: draft.note.trim(), updatedAt: new Date().toISOString() };
+      if (!draft.customer.trim() || !draft.purpose?.trim() || !draft.debitAccount?.trim() || !draft.creditAccount?.trim() || !Number.isFinite(amount) || amount <= 0) return notify("Enter customer, purpose, accounts, and receipt amount");
+      record = { ...draft, id: editingId || `RCT-${Date.now()}`, customer: draft.customer.trim(), purpose: draft.purpose.trim(), debitAccount: draft.debitAccount.trim(), creditAccount: draft.creditAccount.trim(), method: draft.debitAccount.trim(), amount, reference: draft.reference.trim(), note: draft.note.trim(), updatedAt: new Date().toISOString() };
     } else if (view === "Bank Accounts") {
       if (!draft.accountName.trim() || !draft.bankName.trim()) return notify("Enter account and bank name");
       record = { ...draft, id: editingId || `BANK-${Date.now()}`, accountName: draft.accountName.trim(), bankName: draft.bankName.trim(), accountNumber: draft.accountNumber.trim(), openingBalance: Number.isFinite(amount) ? amount : 0, note: draft.note.trim(), updatedAt: new Date().toISOString() };
     } else if (view === "Vendor Payments") {
       const dueAmount = Number(draft.dueAmount);
-      if (!draft.vendor.trim() || !Number.isFinite(amount) || amount <= 0) return notify("Enter vendor and payment amount");
-      record = { ...draft, id: editingId || `VND-${Date.now()}`, vendor: draft.vendor.trim(), invoice: draft.invoice.trim(), dueAmount: Number.isFinite(dueAmount) ? dueAmount : 0, amount, reference: draft.reference.trim(), note: draft.note.trim(), updatedAt: new Date().toISOString() };
+      if (!draft.vendor.trim() || !draft.purpose?.trim() || !draft.debitAccount?.trim() || !draft.creditAccount?.trim() || !Number.isFinite(amount) || amount <= 0) return notify("Enter vendor, purpose, accounts, and payment amount");
+      record = { ...draft, id: editingId || `VND-${Date.now()}`, vendor: draft.vendor.trim(), purpose: draft.purpose.trim(), invoice: draft.invoice.trim(), dueAmount: Number.isFinite(dueAmount) ? dueAmount : 0, amount, debitAccount: draft.debitAccount.trim(), creditAccount: draft.creditAccount.trim(), method: draft.creditAccount.trim(), reference: draft.reference.trim(), note: draft.note.trim(), updatedAt: new Date().toISOString() };
     } else {
-      if (!draft.debitAccount.trim() || !draft.creditAccount.trim() || draft.debitAccount.trim() === draft.creditAccount.trim() || !Number.isFinite(amount) || amount <= 0) return notify("Enter different debit and credit accounts with a valid amount");
-      record = { ...draft, id: editingId || `JRN-${Date.now()}`, debitAccount: draft.debitAccount.trim(), creditAccount: draft.creditAccount.trim(), amount, reference: draft.reference.trim(), note: draft.note.trim(), updatedAt: new Date().toISOString() };
+      record = prepareJournalRecord(draft, editingId);
+      if (!record) return notify("Select ledger accounts, enter at least two valid lines, and match debit and credit totals");
     }
     saveRecords((current) => editingId ? current.map((item) => item.id === editingId ? record : item) : [record, ...current]);
     notify(editingId ? `${singular} updated` : `${singular} saved`);
@@ -5733,34 +5984,21 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
   function saveLedgerEntry(event) {
     event.preventDefault();
     if (!canManageAll) return notify("Only an administrator can create ledger entries");
-    const amount = Number(ledgerDraft.amount);
-    const debitAccount = ledgerDraft.debitAccount.trim();
-    const creditAccount = ledgerDraft.creditAccount.trim();
-    if (!debitAccount || !creditAccount || debitAccount === creditAccount || !Number.isFinite(amount) || amount <= 0) return notify("Enter different debit and credit accounts with a valid amount");
-    const record = {
-      id: `JRN-${Date.now()}`,
-      date: ledgerDraft.date || localDateKey(),
-      debitAccount,
-      creditAccount,
-      amount,
-      status: "Posted",
-      reference: ledgerDraft.reference.trim() || `LED-${Date.now().toString().slice(-6)}`,
-      note: ledgerDraft.note.trim(),
-      updatedAt: new Date().toISOString(),
-    };
+    const record = prepareJournalRecord({ ...ledgerDraft, status: "Posted" });
+    if (!record) return notify("Select ledger accounts, enter at least two valid lines, and match debit and credit totals");
     const journalKey = `vestora-finance-journals-${storeId}`;
     const nextJournals = [record, ...loadStoredArray(journalKey)];
     localStorage.setItem(journalKey, JSON.stringify(nextJournals));
     setReportRecords((current) => ({ ...current, journals: nextJournals }));
-    setLedgerDraft({ date: localDateKey(), debitAccount: "", creditAccount: "", amount: "", reference: "", note: "" });
+    setLedgerDraft(blankFinanceJournalDraft());
     setLedgerFormOpen(false);
     notify("Ledger entry posted");
   }
 
   const filtered = records.filter((record) => {
-    const text = Object.values(record).join(" ").toLowerCase();
+    const text = JSON.stringify(record).toLowerCase();
     return (!filters.query || text.includes(filters.query.toLowerCase()))
-      && (!["Receipts", "Vendor Payments"].includes(view) || filters.method === "All" || record.method === filters.method)
+      && (!["Receipts", "Vendor Payments"].includes(view) || filters.method === "All" || record.method === filters.method || record.debitAccount === filters.method || record.creditAccount === filters.method)
       && (filters.status === "All" || record.status === filters.status)
       && (view === "Bank Accounts" || !filters.from || record.date >= filters.from)
       && (view === "Bank Accounts" || !filters.to || record.date <= filters.to);
@@ -5771,31 +6009,33 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
   const journalTotal = reportRecords.journals.filter((item) => item.status === "Posted").reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const vendorPaymentTotal = reportRecords.vendors.filter((item) => item.status !== "Cancelled").reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const reportRows = [
-    ...reportRecords.receipts.map((item) => ({ date: item.date, type: "Receipt", reference: item.reference || item.id, details: item.customer, method: item.method, amount: Number(item.amount || 0), status: item.status })),
-    ...expenses.map((item) => ({ date: item.date, type: "Expense", reference: item.reference || item.id, details: item.category, method: item.paidFrom, amount: -Number(item.amount || 0), status: item.status })),
-    ...reportRecords.vendors.map((item) => ({ date: item.date, type: "Vendor payment", reference: item.reference || item.invoice || item.id, details: item.vendor, method: item.method, amount: -Number(item.amount || 0), status: item.status })),
-    ...reportRecords.journals.map((item) => ({ date: item.date, type: "Journal", reference: item.reference || item.id, details: `${item.debitAccount} -> ${item.creditAccount}`, method: "Journal", amount: Number(item.amount || 0), status: item.status })),
+    ...reportRecords.receipts.map((item) => ({ date: item.date, type: "Receipt", reference: item.reference || item.id, details: `${item.purpose || "Receipt"} - ${item.customer}`, method: `${item.debitAccount || item.method || "Cash"} debit / ${item.creditAccount || "Sales"} credit`, amount: Number(item.amount || 0), status: item.status })),
+    ...expenses.map((item) => ({ date: item.date, type: "Expense", reference: item.reference || item.id, details: item.category, method: `${item.debitAccount || expenseAccountForPurpose(item.category)} debit / ${item.creditAccount || item.paidFrom || "Cash"} credit`, amount: -Number(item.amount || 0), status: item.status })),
+    ...reportRecords.vendors.map((item) => ({ date: item.date, type: "Vendor payment", reference: item.reference || item.invoice || item.id, details: `${item.purpose || "Vendor payment"} - ${item.vendor}`, method: `${item.debitAccount || `Accounts payable - ${item.vendor}`} debit / ${item.creditAccount || item.method || "Bank"} credit`, amount: -Number(item.amount || 0), status: item.status })),
+    ...reportRecords.journals.map((item) => {
+      const lines = normalizeFinanceJournalLines(item);
+      const debitTotal = lines.reduce((sum, line) => sum + Number(line.debit || 0), 0);
+      const creditTotal = lines.reduce((sum, line) => sum + Number(line.credit || 0), 0);
+      return { date: item.date, type: "Journal", reference: item.reference || item.id, details: `${item.purpose || "Journal"} - ${lines.length} lines`, method: `Debit ${formatMoney(debitTotal)} / Credit ${formatMoney(creditTotal)}`, amount: debitTotal, status: item.status };
+    }),
   ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
   const isLedger = view === "General Ledger";
   const rawLedgerRows = [
     ...reportRecords.banks.filter((item) => item.status === "Active").map((item) => ({ date: item.updatedAt?.slice(0, 10) || localDateKey(), account: item.accountName, debit: Number(item.openingBalance || 0), credit: 0, source: "Opening balance", reference: item.id, details: item.bankName })),
     ...reportRecords.receipts.filter((item) => item.status === "Received").flatMap((item) => [
-      { date: item.date, account: item.method || "Cash", debit: Number(item.amount || 0), credit: 0, source: "Receipt", reference: item.reference || item.id, details: item.customer },
-      { date: item.date, account: "Sales", debit: 0, credit: Number(item.amount || 0), source: "Receipt", reference: item.reference || item.id, details: item.customer },
+      { date: item.date, account: item.debitAccount || item.method || "Cash", debit: Number(item.amount || 0), credit: 0, source: "Receipt", reference: item.reference || item.id, details: `${item.purpose || "Receipt"} - ${item.customer}` },
+      { date: item.date, account: item.creditAccount || "Sales", debit: 0, credit: Number(item.amount || 0), source: "Receipt", reference: item.reference || item.id, details: `${item.purpose || "Receipt"} - ${item.customer}` },
     ]),
     ...expenses.filter((item) => item.status === "Posted").flatMap((item) => [
-      { date: item.date, account: `Expense - ${item.category}`, debit: Number(item.amount || 0), credit: 0, source: "Expense", reference: item.reference || item.id, details: item.note || item.paidFrom },
-      { date: item.date, account: item.paidFrom || "Cash", debit: 0, credit: Number(item.amount || 0), source: "Expense", reference: item.reference || item.id, details: item.category },
+      { date: item.date, account: item.debitAccount || expenseAccountForPurpose(item.category), debit: Number(item.amount || 0), credit: 0, source: "Expense", reference: item.reference || item.id, details: `${item.category}${item.note ? ` - ${item.note}` : ""}` },
+      { date: item.date, account: item.creditAccount || item.paidFrom || "Cash", debit: 0, credit: Number(item.amount || 0), source: "Expense", reference: item.reference || item.id, details: item.category },
     ]),
     ...reportRecords.vendors.filter((item) => item.status !== "Cancelled").flatMap((item) => [
-      { date: item.date, account: `Accounts payable - ${item.vendor}`, debit: Number(item.amount || 0), credit: 0, source: "Vendor payment", reference: item.reference || item.invoice || item.id, details: item.invoice || "Vendor settlement" },
-      { date: item.date, account: item.method || "Bank", debit: 0, credit: Number(item.amount || 0), source: "Vendor payment", reference: item.reference || item.invoice || item.id, details: item.vendor },
+      { date: item.date, account: item.debitAccount || `Accounts payable - ${item.vendor}`, debit: Number(item.amount || 0), credit: 0, source: "Vendor payment", reference: item.reference || item.invoice || item.id, details: `${item.purpose || "Vendor settlement"} - ${item.vendor}` },
+      { date: item.date, account: item.creditAccount || item.method || "Bank", debit: 0, credit: Number(item.amount || 0), source: "Vendor payment", reference: item.reference || item.invoice || item.id, details: item.vendor },
     ]),
-    ...reportRecords.journals.filter((item) => item.status === "Posted").flatMap((item) => [
-      { date: item.date, account: item.debitAccount, debit: Number(item.amount || 0), credit: 0, source: "Journal", reference: item.reference || item.id, details: item.note || item.creditAccount },
-      { date: item.date, account: item.creditAccount, debit: 0, credit: Number(item.amount || 0), source: "Journal", reference: item.reference || item.id, details: item.note || item.debitAccount },
-    ]),
+    ...reportRecords.journals.filter((item) => item.status === "Posted").flatMap((item) => normalizeFinanceJournalLines(item).map((line) => ({ date: item.date, account: line.account, debit: Number(line.debit || 0), credit: Number(line.credit || 0), source: "Journal", reference: item.reference || item.id, details: line.description || `${item.purpose || "Journal"}${item.note ? ` - ${item.note}` : ""}` }))),
   ].filter((item) => item.account);
   const runningBalances = {};
   const ledgerRowsWithBalances = rawLedgerRows.sort((a, b) => `${a.date}-${a.reference}`.localeCompare(`${b.date}-${b.reference}`)).map((item) => {
@@ -5807,24 +6047,37 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
   const visibleLedgerBalances = {};
   ledgerRows.forEach((item) => { visibleLedgerBalances[item.account] = item.balance; });
   const ledgerAccounts = Object.entries(visibleLedgerBalances).sort(([a], [b]) => a.localeCompare(b));
+  const customLedgerMasters = ledgerMasters.filter((ledger) => !ledger.system && ledger.status !== "Inactive");
+  const ledgerHierarchy = financeLedgerHierarchy(customLedgerMasters, runningBalances).filter((section) => section.groups.length);
+  const ledgerTreeNodeKeys = ledgerHierarchy.flatMap((section) => [`type:${section.type}`, ...section.groups.map((group) => `group:${section.type}:${group.name}`)]);
+  const allLedgerNodesCollapsed = ledgerTreeNodeKeys.length > 0 && ledgerTreeNodeKeys.every((key) => collapsedLedgerNodes.has(key));
+  const toggleLedgerNode = (key) => setCollapsedLedgerNodes((current) => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  });
+  const expandAllLedgerNodes = () => setCollapsedLedgerNodes(new Set());
+  const collapseAllLedgerNodes = () => setCollapsedLedgerNodes(new Set(ledgerTreeNodeKeys));
   const financeExportColumns = view === "Receipts"
-    ? ["date", "customer", "reference", "method", "amount", "status", "note"]
+    ? ["date", "customer", "purpose", "debitAccount", "creditAccount", "reference", "amount", "status", "note"]
     : view === "Bank Accounts"
       ? ["accountName", "bankName", "accountNumber", "openingBalance", "status", "note"]
       : view === "Vendor Payments"
-        ? ["date", "vendor", "invoice", "dueAmount", "amount", "method", "status", "reference", "note"]
-        : ["date", "reference", "debitAccount", "creditAccount", "amount", "status", "note"];
-  const financeTableColumnCount = view === "Vendor Payments" ? 9 : view === "Bank Accounts" ? 6 : 7;
+        ? ["date", "vendor", "purpose", "invoice", "dueAmount", "amount", "debitAccount", "creditAccount", "status", "reference", "note"]
+        : ["date", "purpose", "reference", "debitAccount", "creditAccount", "amount", "status", "note"];
+  const financeTableColumnCount = view === "Vendor Payments" ? 11 : view === "Bank Accounts" ? 6 : view === "Journal Entries" ? 8 : 9;
 
   if (isLedger) return <section className="screen"><div className="metric-grid compact">
     <Metric icon={BookOpen} label="Ledger accounts" value={ledgerAccounts.length} trend="Accounts with recorded movement" />
     <Metric icon={ReceiptText} label="Total debits" value={formatMoney(ledgerRows.reduce((sum, item) => sum + item.debit, 0))} trend="Selected ledger period" />
     <Metric icon={CreditCard} label="Total credits" value={formatMoney(ledgerRows.reduce((sum, item) => sum + item.credit, 0))} trend="Selected ledger period" />
     <Metric icon={ClipboardList} label="Ledger entries" value={ledgerRows.length} trend="Receipts, expenses, vendor payments, journals" />
-  </div><section className="panel finance-workspace"><div className="panel-head finance-head"><div><BookOpen /><h2>General ledger</h2></div><div className="finance-actions"><button onClick={() => { if (!canManageAll) return notify("Only an administrator can create ledger entries"); setLedgerFormOpen(true); }}><Plus size={18} />Create ledger entry</button><button className={filtersOpen ? "active-action" : ""} onClick={() => setFiltersOpen((open) => !open)}><SlidersHorizontal size={18} />Filter</button><button className={rangeOpen ? "active-action" : ""} onClick={() => setRangeOpen((open) => !open)}><CalendarClock size={18} />Date range</button><button onClick={() => downloadCsv("vestora-general-ledger.csv", ["Date", "Account", "Source", "Reference", "Details", "Debit", "Credit", "Balance"], ledgerRows.map((item) => ({ Date: item.date, Account: item.account, Source: item.source, Reference: item.reference, Details: item.details, Debit: item.debit, Credit: item.credit, Balance: item.balance })))}><Download size={18} />Export</button></div></div>
-    {ledgerFormOpen && <form className="finance-expense-form" onSubmit={saveLedgerEntry}><div className="finance-form-title"><div><span>Manual journal</span><h3>Create balanced ledger entry</h3></div><button type="button" className="icon-action" title="Close ledger entry form" onClick={() => setLedgerFormOpen(false)}><X size={18} /></button></div><label>Date<input type="date" value={ledgerDraft.date} onChange={(event) => setLedgerDraft((current) => ({ ...current, date: event.target.value }))} required /></label><label>Debit account<input placeholder="Example: Cash, Rent expense" value={ledgerDraft.debitAccount} onChange={(event) => setLedgerDraft((current) => ({ ...current, debitAccount: event.target.value }))} required /></label><label>Credit account<input placeholder="Example: Bank, Accounts payable" value={ledgerDraft.creditAccount} onChange={(event) => setLedgerDraft((current) => ({ ...current, creditAccount: event.target.value }))} required /></label><label>Amount<input type="number" min="0" step="0.01" placeholder="0.00" value={ledgerDraft.amount} onChange={(event) => setLedgerDraft((current) => ({ ...current, amount: event.target.value }))} required /></label><label>Reference<input placeholder="Optional reference" value={ledgerDraft.reference} onChange={(event) => setLedgerDraft((current) => ({ ...current, reference: event.target.value }))} /></label><label className="finance-note">Details<input placeholder="Optional description" value={ledgerDraft.note} onChange={(event) => setLedgerDraft((current) => ({ ...current, note: event.target.value }))} /></label><div className="finance-form-actions"><button type="button" onClick={() => setLedgerFormOpen(false)}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />Post entry</button></div></form>}
-    {(filtersOpen || rangeOpen) && <div className="finance-filter-row">{filtersOpen && <label className="finance-search"><Search size={18} /><input placeholder="Search account, reference, or details" value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>}{rangeOpen && <><label>Start date<input type="date" value={filters.from} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} /></label><label>End date<input type="date" value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} /></label></>}<button className="text-action" onClick={() => setFilters({ query: "", method: "All", status: "All", from: "", to: "" })}>Clear filters</button></div>}
-  <div className="finance-summary"><span>Double-entry view of recorded finance activity</span><span><strong>{ledgerAccounts.length}</strong> account balances in view</span></div><div className="finance-table-wrap"><table className="finance-table"><thead><tr><th>Date</th><th>Account</th><th>Source</th><th>Reference</th><th>Details</th><th>Debit</th><th>Credit</th><th>Running balance</th></tr></thead><tbody>{ledgerRows.length ? ledgerRows.map((item, index) => <tr key={`${item.account}-${item.reference}-${index}`}><td>{item.date || "-"}</td><td><strong>{item.account}</strong></td><td>{item.source}</td><td>{item.reference}</td><td>{item.details || "-"}</td><td>{item.debit ? formatMoney(item.debit) : "-"}</td><td>{item.credit ? formatMoney(item.credit) : "-"}</td><td><strong>{formatMoney(item.balance)}</strong></td></tr>) : <tr><td colSpan="8" className="finance-empty">No ledger entries match this period. Create a ledger entry or record receipts, expenses, vendor payments, or journals.</td></tr>}</tbody></table></div><div className="finance-summary ledger-account-summary">{ledgerAccounts.map(([account, balance]) => <span key={account}>{account} <strong>{formatMoney(balance)}</strong></span>)}</div></section></section>;
+  </div><section className="panel finance-workspace"><div className="panel-head finance-head"><div><BookOpen /><h2>General ledger</h2></div><div className="finance-actions ledger-toolbar"><button className="ledger-toolbar-primary" onClick={() => { if (!canManageAll) return notify("Only an administrator can create ledgers"); setLedgerMasterOpen(true); setLedgerFormOpen(false); }}><Plus size={18} />Create ledger</button><button className="ledger-toolbar-primary" onClick={() => { if (!canManageAll) return notify("Only an administrator can create ledger entries"); setLedgerFormOpen(true); setLedgerMasterOpen(false); }}><ClipboardList size={18} />Post journal entry</button><button className={filtersOpen ? "active-action" : ""} onClick={() => setFiltersOpen((open) => !open)}><SlidersHorizontal size={18} />Filter</button><button className={rangeOpen ? "active-action" : ""} onClick={() => setRangeOpen((open) => !open)}><CalendarClock size={18} />Date range</button><button onClick={() => downloadCsv("vestora-general-ledger.csv", ["Date", "Account", "Source", "Reference", "Details", "Debit", "Credit", "Balance"], ledgerRows.map((item) => ({ Date: item.date, Account: item.account, Source: item.source, Reference: item.reference, Details: item.details, Debit: item.debit, Credit: item.credit, Balance: item.balance })))}><Download size={18} />Export</button></div></div>
+    {ledgerMasterOpen && <form className="finance-expense-form ledger-master-form" onSubmit={saveLedgerMaster}><div className="finance-form-title"><div><span>Ledger master</span><h3>Create ledger account</h3></div><button type="button" className="icon-action" title="Close ledger form" onClick={() => setLedgerMasterOpen(false)}><X size={18} /></button></div><label>Auto code<input value={ledgerMasterDraft.code} readOnly /></label><label>Ledger name<input autoFocus placeholder="Bank Charges" value={ledgerMasterDraft.name} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, name: event.target.value }))} required /></label><label>Account type<select value={ledgerMasterDraft.type} onChange={(event) => updateLedgerMasterType(event.target.value)}>{Object.keys(financeLedgerGroups).map((type) => <option key={type}>{type}</option>)}</select></label><label>Group<select value={ledgerMasterDraft.group} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, group: event.target.value }))}>{(financeLedgerGroups[ledgerMasterDraft.type] || []).map((group) => <option key={group}>{group}</option>)}</select></label><label>Status<select value={ledgerMasterDraft.status} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, status: event.target.value }))}><option>Active</option><option>Inactive</option></select></label><div className="finance-form-actions"><button type="button" onClick={() => setLedgerMasterOpen(false)}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />Save ledger</button></div></form>}
+    {ledgerFormOpen && <form className="finance-expense-form journal-entry-form" onSubmit={saveLedgerEntry}><div className="finance-form-title"><div><span>Manual journal</span><h3>Create balanced ledger entry</h3></div><button type="button" className="icon-action" title="Close ledger entry form" onClick={() => setLedgerFormOpen(false)}><X size={18} /></button></div>{renderJournalFields(ledgerDraft, (patch) => setLedgerDraft((current) => ({ ...current, ...patch })), true)}<label className="finance-note">Notes<input placeholder="Optional note for this journal" value={ledgerDraft.note} onChange={(event) => setLedgerDraft((current) => ({ ...current, note: event.target.value }))} /></label><div className="finance-form-actions"><button type="button" onClick={() => setLedgerFormOpen(false)}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />Post entry</button></div></form>}
+    {(filtersOpen || rangeOpen) && <div className="finance-filter-row ledger-filter-panel">{filtersOpen && <label className="finance-search"><Search size={18} /><input placeholder="Search account, reference, or details" value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>}{rangeOpen && <><label>Start date<input type="date" value={filters.from} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} /></label><label>End date<input type="date" value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} /></label></>}<button className="text-action" onClick={() => setFilters({ query: "", method: "All", status: "All", from: "", to: "" })}>Clear filters</button></div>}
+  <div className="ledger-report-shell"><div className="ledger-report-hero"><div><span>General ledger report</span><h3>Chart of accounts and activity</h3><p>Review custom ledger groups, account balances, and posted debit or credit movements in one easy report view.</p></div><div className="ledger-report-total"><small>Net movement</small><strong>{formatMoney(ledgerRows.reduce((sum, item) => sum + item.debit - item.credit, 0))}</strong><em>{ledgerRows.length} posted lines</em></div></div><div className="finance-summary chart-account-summary"><span>Chart of accounts</span><div className="chart-account-tools"><span><strong>{customLedgerMasters.length}</strong> custom ledgers</span><button type="button" onClick={expandAllLedgerNodes} disabled={!ledgerTreeNodeKeys.length || !allLedgerNodesCollapsed}><ChevronDown size={16} />Expand all</button><button type="button" onClick={collapseAllLedgerNodes} disabled={!ledgerTreeNodeKeys.length || allLedgerNodesCollapsed}><ChevronRight size={16} />Collapse all</button></div></div><div className="chart-account-table"><div className="chart-account-head"><span>Account group</span><span>Balance</span></div>{ledgerHierarchy.length ? ledgerHierarchy.map((section) => { const typeKey = `type:${section.type}`; const typeClosed = collapsedLedgerNodes.has(typeKey); return <div className="chart-account-section" key={section.type}><button type="button" className="chart-account-row type-row" onClick={() => toggleLedgerNode(typeKey)} aria-expanded={!typeClosed}><span>{typeClosed ? <ChevronRight size={15} /> : <ChevronDown size={15} />} {typeClosed ? <Folder size={17} /> : <FolderOpen size={17} />} <strong>{section.type}</strong> <em>{section.groups.length} groups</em></span><b>{formatMoney(section.balance)}</b></button>{!typeClosed && section.groups.map((group) => { const groupKey = `group:${section.type}:${group.name}`; const groupClosed = collapsedLedgerNodes.has(groupKey); return <div className="chart-account-group" key={groupKey}><button type="button" className="chart-account-row group-row" onClick={() => toggleLedgerNode(groupKey)} aria-expanded={!groupClosed}><span>{groupClosed ? <ChevronRight size={15} /> : <ChevronDown size={15} />} {groupClosed ? <Folder size={17} /> : <FolderOpen size={17} />} <strong>{group.name}</strong> <em>{group.ledgers.length} ledgers</em></span><b>{formatMoney(group.balance)}</b></button>{!groupClosed && group.ledgers.map((ledger) => <div className="chart-account-row ledger-row" key={ledger.id || ledger.code}><span><BookOpen size={15} /> <strong>{ledger.code}</strong> - {ledger.name}</span><b>{formatMoney(runningBalances[ledger.name] || 0)}</b></div>)}</div>; })}</div>; }) : <div className="finance-empty">No custom ledgers created. Use Create ledger to add bank charges, capital, loan, asset, income, or expense ledgers.</div>}</div><div className="ledger-section-heading"><div><span>Posted activity</span><strong>Transaction movement</strong></div><small>Debit and credit lines are shown with running balance per ledger.</small></div><div className="finance-table-wrap ledger-activity-table"><table className="finance-table"><thead><tr><th>Date</th><th>Account</th><th>Source</th><th>Reference</th><th>Details</th><th>Debit</th><th>Credit</th><th>Running balance</th></tr></thead><tbody>{ledgerRows.length ? ledgerRows.map((item, index) => <tr key={`${item.account}-${item.reference}-${index}`}><td>{item.date || "-"}</td><td><strong>{item.account}</strong></td><td><span className="ledger-source-pill">{item.source}</span></td><td>{item.reference}</td><td>{item.details || "-"}</td><td>{item.debit ? formatMoney(item.debit) : "-"}</td><td>{item.credit ? formatMoney(item.credit) : "-"}</td><td><strong>{formatMoney(item.balance)}</strong></td></tr>) : <tr><td colSpan="8" className="finance-empty">No ledger entries match this period. Create a ledger entry or record receipts, expenses, vendor payments, or journals.</td></tr>}</tbody></table></div>{ledgerAccounts.length > 0 && <div className="finance-summary ledger-account-summary">{ledgerAccounts.map(([account, balance]) => <span key={account}>{account} <strong>{formatMoney(balance)}</strong></span>)}</div>}</div></section></section>;
 
   if (isReports) return <section className="screen"><div className="metric-grid compact">
     <Metric icon={BadgeIndianRupee} label="Net sales" value={formatMoney(netSales)} trend="POS sales after refunds" />
@@ -5835,9 +6088,10 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
   </div><section className="panel finance-workspace"><div className="panel-head finance-head"><div><FileBarChart /><h2>Finance reports</h2></div><button onClick={() => downloadCsv("vestora-finance-report.csv", ["Date", "Type", "Reference", "Details", "Method", "Amount", "Status"], reportRows.map((item) => ({ Date: item.date, Type: item.type, Reference: item.reference, Details: item.details, Method: item.method, Amount: item.amount, Status: item.status })))}><Download size={18} />Export</button></div><div className="finance-summary"><span>Cash collected <strong>{formatMoney(cashCollected)}</strong></span><span>Receivables <strong>{formatMoney(receivables)}</strong></span><span>Bank accounts <strong>{reportRecords.banks.length}</strong></span><span>Net GST <strong>{formatMoney(netGst)}</strong></span></div><div className="finance-table-wrap"><table className="finance-table"><thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Details</th><th>Method</th><th>Amount</th><th>Status</th></tr></thead><tbody>{reportRows.length ? reportRows.map((item, index) => <tr key={`${item.type}-${item.reference}-${index}`}><td>{item.date || "-"}</td><td>{item.type}</td><td>{item.reference}</td><td>{item.details}</td><td>{item.method}</td><td>{formatMoney(item.amount)}</td><td><span className={`status-pill ${String(item.status).toLowerCase()}`}>{item.status}</span></td></tr>) : <tr><td colSpan="7" className="finance-empty">No finance activity recorded yet.</td></tr>}</tbody></table></div></section></section>;
 
   return <section className="screen"><div className="metric-grid compact"><Metric icon={BadgeIndianRupee} label="Net sales" value={formatMoney(netSales)} trend="POS sales after refunds" /><Metric icon={CreditCard} label="Cash collected" value={formatMoney(cashCollected)} trend="POS cash payments" /><Metric icon={DatabaseZap} label="Expenses" value={formatMoney(expenseTotal)} trend={`${expenses.length} expense records`} /><Metric icon={ReceiptText} label="Receivables" value={formatMoney(receivables)} trend="Credit due" /></div><section className="panel finance-workspace"><div className="panel-head finance-head"><div>{view === "Receipts" ? <ReceiptText /> : view === "Bank Accounts" ? <CreditCard /> : view === "Vendor Payments" ? <BadgeIndianRupee /> : <ClipboardList />}<h2>{title}</h2></div><div className="finance-actions"><button onClick={openNew}><Plus size={18} />{view === "Receipts" ? "Record receipt" : view === "Bank Accounts" ? "Add bank account" : view === "Vendor Payments" ? "Record vendor payment" : "Record journal"}</button><button className={filtersOpen ? "active-action" : ""} onClick={() => setFiltersOpen((open) => !open)}><SlidersHorizontal size={18} />Filter</button>{view !== "Bank Accounts" && <button className={rangeOpen ? "active-action" : ""} onClick={() => setRangeOpen((open) => !open)}><CalendarClock size={18} />Date range</button>}<button onClick={() => downloadCsv(`vestora-${view.toLowerCase().replaceAll(" ", "-")}.csv`, financeExportColumns, filtered)}><Download size={18} />Export</button></div></div>
-    {(filtersOpen || rangeOpen) && <div className="finance-filter-row">{filtersOpen && <><label className="finance-search"><Search size={18} /><input placeholder={`Search ${title.toLowerCase()}`} value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>{["Receipts", "Vendor Payments"].includes(view) && <label>Method<select value={filters.method} onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value }))}><option>All</option><option>Cash</option><option>UPI</option><option>Card</option><option>Bank</option><option>Credit</option><option>Wallet</option></select></label>}<label>Status<select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option>All</option>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label></>}{rangeOpen && <><label>Start date<input type="date" value={filters.from} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} /></label><label>End date<input type="date" value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} /></label></>}<button className="text-action" onClick={() => setFilters({ query: "", method: "All", status: "All", from: "", to: "" })}>Clear filters</button></div>}
-    {formOpen && <form className="finance-expense-form" onSubmit={saveRecord}><div className="finance-form-title"><div><span>{editingId ? `Update ${singular.toLowerCase()}` : `New ${singular.toLowerCase()}`}</span><strong>{title}</strong></div><button type="button" className="icon-button" title="Close form" onClick={resetForm}><X size={18} /></button></div>{view === "Receipts" && <><label>Customer<input autoFocus placeholder="Customer name" value={draft.customer} onChange={(event) => setValue("customer", event.target.value)} /></label><label>Amount<input type="number" min="0" step="0.01" value={draft.amount} onChange={(event) => setValue("amount", event.target.value)} /></label><label>Payment method<select value={draft.method} onChange={(event) => setValue("method", event.target.value)}><option>Cash</option><option>UPI</option><option>Card</option><option>Bank</option><option>Credit</option><option>Wallet</option></select></label><label>Date<input type="date" value={draft.date} onChange={(event) => setValue("date", event.target.value)} /></label></>}{view === "Bank Accounts" && <><label>Account name<input autoFocus placeholder="Current account" value={draft.accountName} onChange={(event) => setValue("accountName", event.target.value)} /></label><label>Bank name<input placeholder="Bank name" value={draft.bankName} onChange={(event) => setValue("bankName", event.target.value)} /></label><label>Account number<input placeholder="Last four digits or account number" value={draft.accountNumber} onChange={(event) => setValue("accountNumber", event.target.value)} /></label><label>Opening balance<input type="number" step="0.01" value={draft.openingBalance} onChange={(event) => setValue("openingBalance", event.target.value)} /></label></>}{view === "Vendor Payments" && <><label>Vendor<input autoFocus placeholder="Supplier or vendor name" value={draft.vendor} onChange={(event) => setValue("vendor", event.target.value)} /></label><label>Invoice no.<input placeholder="Supplier invoice number" value={draft.invoice} onChange={(event) => setValue("invoice", event.target.value)} /></label><label>Due amount<input type="number" min="0" step="0.01" value={draft.dueAmount} onChange={(event) => setValue("dueAmount", event.target.value)} /></label><label>Paid amount<input type="number" min="0" step="0.01" value={draft.amount} onChange={(event) => setValue("amount", event.target.value)} /></label><label>Payment method<select value={draft.method} onChange={(event) => setValue("method", event.target.value)}><option>Bank</option><option>Cash</option><option>UPI</option><option>Card</option><option>Credit</option></select></label><label>Date<input type="date" value={draft.date} onChange={(event) => setValue("date", event.target.value)} /></label></>}{view === "Journal Entries" && <><label>Date<input type="date" value={draft.date} onChange={(event) => setValue("date", event.target.value)} /></label><label>Debit account<input autoFocus placeholder="Cash, bank, expense" value={draft.debitAccount} onChange={(event) => setValue("debitAccount", event.target.value)} /></label><label>Credit account<input placeholder="Sales, payable, bank" value={draft.creditAccount} onChange={(event) => setValue("creditAccount", event.target.value)} /></label><label>Amount<input type="number" min="0" step="0.01" value={draft.amount} onChange={(event) => setValue("amount", event.target.value)} /></label></>}<label>Status<select value={draft.status} onChange={(event) => setValue("status", event.target.value)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label><label>Reference<input placeholder="Invoice, voucher, or receipt number" value={draft.reference || ""} onChange={(event) => setValue("reference", event.target.value)} /></label><label className="finance-note">Notes<input placeholder="Optional note" value={draft.note} onChange={(event) => setValue("note", event.target.value)} /></label><div className="finance-form-actions"><button type="button" onClick={resetForm}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />{editingId ? "Save changes" : `Save ${singular.toLowerCase()}`}</button></div></form>}
-    <div className="finance-summary"><span>Showing <strong>{filtered.length}</strong> records</span><span>{view === "Receipts" ? "Received" : view === "Bank Accounts" ? "Opening balance" : view === "Vendor Payments" ? "Paid to vendors" : "Posted value"} <strong>{formatMoney(filtered.reduce((sum, item) => sum + Number(item.amount ?? item.openingBalance ?? 0), 0))}</strong></span></div><div className="finance-table-wrap"><table className="finance-table"><thead><tr>{view === "Receipts" ? <><th>Date</th><th>Customer</th><th>Receipt no.</th><th>Method</th><th>Amount</th></> : view === "Bank Accounts" ? <><th>Account</th><th>Bank</th><th>Account number</th><th>Opening balance</th></> : view === "Vendor Payments" ? <><th>Date</th><th>Vendor</th><th>Invoice no.</th><th>Due</th><th>Paid</th><th>Balance</th><th>Method</th></> : <><th>Date</th><th>Entry no.</th><th>Debit account</th><th>Credit account</th><th>Amount</th></>}<th>Status</th><th>Actions</th></tr></thead><tbody>{filtered.length ? filtered.map((record) => <tr key={record.id}>{view === "Receipts" ? <><td>{record.date}</td><td><strong>{record.customer}</strong>{record.note && <small>{record.note}</small>}</td><td>{record.reference || record.id}</td><td>{record.method}</td><td>{formatMoney(record.amount)}</td></> : view === "Bank Accounts" ? <><td><strong>{record.accountName}</strong>{record.note && <small>{record.note}</small>}</td><td>{record.bankName}</td><td>{record.accountNumber || "-"}</td><td>{formatMoney(record.openingBalance)}</td></> : view === "Vendor Payments" ? <><td>{record.date}</td><td><strong>{record.vendor}</strong>{record.note && <small>{record.note}</small>}</td><td>{record.invoice || record.reference || "-"}</td><td>{formatMoney(record.dueAmount)}</td><td>{formatMoney(record.amount)}</td><td>{formatMoney(Math.max(0, Number(record.dueAmount || 0) - Number(record.amount || 0)))}</td><td>{record.method}</td></> : <><td>{record.date}</td><td>{record.reference || record.id}</td><td>{record.debitAccount}</td><td>{record.creditAccount}</td><td>{formatMoney(record.amount)}</td></>}<td><span className={`status-pill ${String(record.status).toLowerCase()}`}>{record.status}</span></td><td><div className="row-actions"><button title={`Edit ${singular.toLowerCase()}`} onClick={() => editRecord(record)}><Pencil size={17} />Edit</button><button className="danger-action" title={`Delete ${singular.toLowerCase()}`} onClick={() => deleteRecord(record)}><Trash2 size={17} />Delete</button></div></td></tr>) : <tr><td colSpan={financeTableColumnCount} className="finance-empty">No {title.toLowerCase()} records match this view.</td></tr>}</tbody></table></div></section></section>;
+    {(filtersOpen || rangeOpen) && <div className="finance-filter-row">{filtersOpen && <><label className="finance-search"><Search size={18} /><input placeholder={`Search ${title.toLowerCase()}`} value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>{["Receipts", "Vendor Payments"].includes(view) && <label>Debit / credit account<select value={filters.method} onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value }))}><option>All</option>{accountNames.map((account) => <option key={account}>{account}</option>)}</select></label>}<label>Status<select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option>All</option>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label></>}{rangeOpen && <><label>Start date<input type="date" value={filters.from} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} /></label><label>End date<input type="date" value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} /></label></>}<button className="text-action" onClick={() => setFilters({ query: "", method: "All", status: "All", from: "", to: "" })}>Clear filters</button></div>}
+    {ledgerMasterOpen && <form className="finance-expense-form ledger-master-form" onSubmit={saveLedgerMaster}><div className="finance-form-title"><div><span>Ledger master</span><h3>Create ledger account</h3></div><button type="button" className="icon-action" title="Close ledger form" onClick={() => setLedgerMasterOpen(false)}><X size={18} /></button></div><label>Auto code<input value={ledgerMasterDraft.code} readOnly /></label><label>Ledger name<input autoFocus placeholder="Bank Charges" value={ledgerMasterDraft.name} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, name: event.target.value }))} required /></label><label>Account type<select value={ledgerMasterDraft.type} onChange={(event) => updateLedgerMasterType(event.target.value)}>{Object.keys(financeLedgerGroups).map((type) => <option key={type}>{type}</option>)}</select></label><label>Group<select value={ledgerMasterDraft.group} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, group: event.target.value }))}>{(financeLedgerGroups[ledgerMasterDraft.type] || []).map((group) => <option key={group}>{group}</option>)}</select></label><label>Status<select value={ledgerMasterDraft.status} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, status: event.target.value }))}><option>Active</option><option>Inactive</option></select></label><div className="finance-form-actions"><button type="button" onClick={() => setLedgerMasterOpen(false)}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />Save ledger</button></div></form>}
+    {formOpen && <form className={`finance-expense-form ${view === "Journal Entries" ? "journal-entry-form" : ""}`} onSubmit={saveRecord}><div className="finance-form-title"><div><span>{editingId ? `Update ${singular.toLowerCase()}` : `New ${singular.toLowerCase()}`}</span><strong>{title}</strong></div><button type="button" className="icon-button" title="Close form" onClick={resetForm}><X size={18} /></button></div>{view === "Receipts" && <><label>Customer<input autoFocus placeholder="Customer name" value={draft.customer} onChange={(event) => setValue("customer", event.target.value)} /></label><label>Purpose / received for<select value={draft.purpose || "Food sales"} onChange={(event) => setValue("purpose", event.target.value)}>{financeReceiptPurposes.map((purpose) => <option key={purpose}>{purpose}</option>)}</select></label><label>Debited account / received into<select value={draft.debitAccount || draft.method || "Cash"} onChange={(event) => { setValue("debitAccount", event.target.value); setValue("method", event.target.value); }}>{financeOptions(accountNames, draft.debitAccount || draft.method).map((account) => <option key={account}>{account}</option>)}</select></label><label>Credited account<select value={draft.creditAccount || "Sales"} onChange={(event) => setValue("creditAccount", event.target.value)}>{financeOptions(accountNames, draft.creditAccount || "Sales").map((account) => <option key={account}>{account}</option>)}</select></label><label>Amount<input type="number" min="0" step="0.01" value={draft.amount} onChange={(event) => setValue("amount", event.target.value)} /></label><label>Date<input type="date" value={draft.date} onChange={(event) => setValue("date", event.target.value)} /></label></>}{view === "Bank Accounts" && <><label>Account name<input autoFocus placeholder="Current account" value={draft.accountName} onChange={(event) => setValue("accountName", event.target.value)} /></label><label>Bank name<input placeholder="Bank name" value={draft.bankName} onChange={(event) => setValue("bankName", event.target.value)} /></label><label>Account number<input placeholder="Last four digits or account number" value={draft.accountNumber} onChange={(event) => setValue("accountNumber", event.target.value)} /></label><label>Opening balance<input type="number" step="0.01" value={draft.openingBalance} onChange={(event) => setValue("openingBalance", event.target.value)} /></label></>}{view === "Vendor Payments" && <><label>Vendor<input autoFocus placeholder="Supplier or vendor name" value={draft.vendor} onChange={(event) => setValue("vendor", event.target.value)} /></label><label>Purpose / paid for<select value={draft.purpose || "Supplier settlement"} onChange={(event) => setValue("purpose", event.target.value)}>{financeJournalPurposes.map((purpose) => <option key={purpose}>{purpose}</option>)}</select></label><label>Invoice no.<input placeholder="Supplier invoice number" value={draft.invoice} onChange={(event) => setValue("invoice", event.target.value)} /></label><label>Due amount<input type="number" min="0" step="0.01" value={draft.dueAmount} onChange={(event) => setValue("dueAmount", event.target.value)} /></label><label>Paid amount<input type="number" min="0" step="0.01" value={draft.amount} onChange={(event) => setValue("amount", event.target.value)} /></label><label>Debited account<select value={draft.debitAccount || "Accounts payable"} onChange={(event) => setValue("debitAccount", event.target.value)}>{financeOptions(accountNames, draft.debitAccount || "Accounts payable").map((account) => <option key={account}>{account}</option>)}</select></label><label>Credited account / paid from<select value={draft.creditAccount || draft.method || "Bank"} onChange={(event) => { setValue("creditAccount", event.target.value); setValue("method", event.target.value); }}>{financeOptions(accountNames, draft.creditAccount || draft.method).map((account) => <option key={account}>{account}</option>)}</select></label><label>Date<input type="date" value={draft.date} onChange={(event) => setValue("date", event.target.value)} /></label></>}{view === "Journal Entries" && renderJournalFields(draft, (patch) => setDraft((current) => ({ ...current, ...patch })), true)}<label>Status<select value={draft.status} onChange={(event) => setValue("status", event.target.value)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label><label>Reference<input placeholder="Invoice, voucher, or receipt number" value={draft.reference || ""} onChange={(event) => setValue("reference", event.target.value)} /></label><label className="finance-note">Notes<input placeholder="Optional note" value={draft.note} onChange={(event) => setValue("note", event.target.value)} /></label><div className="finance-form-actions"><button type="button" onClick={resetForm}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />{editingId ? "Save changes" : `Save ${singular.toLowerCase()}`}</button></div></form>}
+    <div className="finance-summary"><span>Showing <strong>{filtered.length}</strong> records</span><span>{view === "Receipts" ? "Received" : view === "Bank Accounts" ? "Opening balance" : view === "Vendor Payments" ? "Paid to vendors" : "Posted value"} <strong>{formatMoney(filtered.reduce((sum, item) => sum + Number(item.amount ?? item.openingBalance ?? 0), 0))}</strong></span></div><div className="finance-table-wrap"><table className="finance-table"><thead><tr>{view === "Receipts" ? <><th>Date</th><th>Customer</th><th>Purpose</th><th>Debited</th><th>Credited</th><th>Receipt no.</th><th>Amount</th></> : view === "Bank Accounts" ? <><th>Account</th><th>Bank</th><th>Account number</th><th>Opening balance</th></> : view === "Vendor Payments" ? <><th>Date</th><th>Vendor</th><th>Purpose</th><th>Invoice no.</th><th>Due</th><th>Paid</th><th>Balance</th><th>Debited</th><th>Credited</th></> : <><th>Date</th><th>Purpose</th><th>Entry no.</th><th>Debited</th><th>Credited</th><th>Amount</th></>}<th>Status</th><th>Actions</th></tr></thead><tbody>{filtered.length ? filtered.map((record) => <tr key={record.id}>{view === "Receipts" ? <><td>{record.date}</td><td><strong>{record.customer}</strong>{record.note && <small>{record.note}</small>}</td><td>{record.purpose || "Food sales"}</td><td>{record.debitAccount || record.method}</td><td>{record.creditAccount || "Sales"}</td><td>{record.reference || record.id}</td><td>{formatMoney(record.amount)}</td></> : view === "Bank Accounts" ? <><td><strong>{record.accountName}</strong>{record.note && <small>{record.note}</small>}</td><td>{record.bankName}</td><td>{record.accountNumber || "-"}</td><td>{formatMoney(record.openingBalance)}</td></> : view === "Vendor Payments" ? <><td>{record.date}</td><td><strong>{record.vendor}</strong>{record.note && <small>{record.note}</small>}</td><td>{record.purpose || "Supplier settlement"}</td><td>{record.invoice || record.reference || "-"}</td><td>{formatMoney(record.dueAmount)}</td><td>{formatMoney(record.amount)}</td><td>{formatMoney(Math.max(0, Number(record.dueAmount || 0) - Number(record.amount || 0)))}</td><td>{record.debitAccount || `Accounts payable - ${record.vendor}`}</td><td>{record.creditAccount || record.method}</td></> : <><td>{record.date}</td><td>{record.purpose || "Journal"}</td><td>{record.reference || record.id}</td><td>{record.debitAccount}</td><td>{record.creditAccount}</td><td>{formatMoney(record.amount)}</td></>}<td><span className={`status-pill ${String(record.status).toLowerCase()}`}>{record.status}</span></td><td><div className="row-actions"><button title={`Edit ${singular.toLowerCase()}`} onClick={() => editRecord(record)}><Pencil size={17} />Edit</button><button className="danger-action" title={`Delete ${singular.toLowerCase()}`} onClick={() => deleteRecord(record)}><Trash2 size={17} />Delete</button></div></td></tr>) : <tr><td colSpan={financeTableColumnCount} className="finance-empty">No {title.toLowerCase()} records match this view.</td></tr>}</tbody></table></div></section></section>;
 }
 
 function BillTemplateEditor({ billTemplate, setBillTemplate, notify }) {
