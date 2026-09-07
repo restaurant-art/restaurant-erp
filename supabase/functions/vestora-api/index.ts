@@ -36,6 +36,17 @@ Deno.serve(async (request) => {
 
   const url = new URL(request.url);
   const resource = url.pathname.split("/").filter(Boolean).at(-1);
+  if (resource === "profile") {
+    return json({
+      id: profile.id,
+      email: profile.email,
+      restaurantId: profile.restaurant_id,
+      role: profile.user_type,
+      appRole: profile.user_type,
+      isSuperuser: Boolean(profile.is_superuser),
+      status: "Active",
+    });
+  }
   if (resource === "health") {
     const { error: databaseError } = await admin.from("django_migrations").select("id").limit(1);
     return json({ ok: !databaseError, user_id: user.id, database: databaseError ? "unavailable" : "ok" }, databaseError ? 503 : 200);

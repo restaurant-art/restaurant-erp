@@ -74,7 +74,7 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
-import { hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseConfigured, syncLocalStateToSupabase } from "./lib/supabase";
+import { hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseConfigured, supabaseProfile, syncLocalStateToSupabase } from "./lib/supabase";
 
 const appBaseUrl = import.meta.env.BASE_URL || "/";
 
@@ -1266,7 +1266,7 @@ function App() {
     const applySession = async (session) => {
       if (!mounted || !session?.user) return;
       const metadata = session.user.user_metadata || {};
-      const loginUser = {
+      let loginUser = {
         id: session.user.id,
         email: session.user.email || "",
         name: metadata.name || session.user.email || "Supabase user",
@@ -1276,6 +1276,8 @@ function App() {
         status: "Active",
       };
       try {
+        const profile = await supabaseProfile();
+        loginUser = { ...loginUser, ...profile, storeId: metadata.storeId || "STORE-001" };
         await hydrateLocalStateFromSupabase();
         if (mounted) {
           setCurrentUser((existing) => existing || loginUser);
@@ -1882,23 +1884,25 @@ function LoginScreen({ onLogin }) {
       const { data, error: authError } = await signInWithSupabase(loginId, password);
       if (!authError && data.user) {
         try {
+          const profile = await supabaseProfile();
           await hydrateLocalStateFromSupabase();
           await syncLocalStateToSupabase();
+          const metadata = data.user.user_metadata || {};
+          const profileUser = {
+            id: data.user.id,
+            email: data.user.email || loginId,
+            name: metadata.name || data.user.email || loginId,
+            role: metadata.role || profile.role || "cashier",
+            appRole: metadata.appRole || profile.appRole || profile.role || "Cashier",
+            storeId: metadata.storeId || "STORE-001",
+            status: profile.status || "Active",
+          };
+          onLogin(profileUser);
+          return;
         } catch (syncError) {
           setError(`Supabase connection failed: ${syncError.message}`);
           return;
         }
-        const metadata = data.user.user_metadata || {};
-        onLogin({
-          id: data.user.id,
-          email: data.user.email || loginId,
-          name: metadata.name || data.user.email || loginId,
-          role: metadata.role || "cashier",
-          appRole: metadata.appRole || metadata.role || "Cashier",
-          storeId: metadata.storeId || "STORE-001",
-          status: "Active",
-        });
-        return;
       }
       setError(authError?.message || "Supabase sign-in failed");
       return;

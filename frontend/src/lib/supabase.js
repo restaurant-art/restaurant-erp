@@ -42,6 +42,10 @@ export async function supabaseApiList(resource, query = "") {
   return response.json();
 }
 
+export async function supabaseProfile() {
+  return supabaseFunctionJson("vestora-api/profile");
+}
+
 const syncableStateKey = (key) => key.startsWith("vestora-") && !/(user|password|token|credential|secret)/i.test(key);
 
 export async function syncLocalStateToSupabase() {
