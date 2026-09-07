@@ -58,15 +58,23 @@ const syncableStateKey = (key) => key.startsWith("vestora-") && !/(user|password
 export async function syncLocalStateToSupabase() {
   if (!supabaseConfigured) return;
   const entries = Object.entries(localStorage).filter(([key]) => syncableStateKey(key));
-  await Promise.all(entries.map(([key, raw]) => {
-    let value = raw;
-    try { value = JSON.parse(raw); } catch { /* Keep non-JSON values as strings. */ }
-    return supabaseFunctionJson("vestora-api/state", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, value }),
-    });
-  }));
+  const remoteRows = await supabaseFunctionJson("vestora-api/state");
+  const localKeys = new Set(entries.map(([key]) => key));
+  const deletedKeys = remoteRows
+    .map(({ state_key: key }) => key)
+    .filter((key) => syncableStateKey(key) && !localKeys.has(key));
+  await Promise.all([
+    ...deletedKeys.map((key) => supabaseFunctionJson(`vestora-api/state?key=${encodeURIComponent(key)}`, { method: "DELETE" })),
+    ...entries.map(([key, raw]) => {
+      let value = raw;
+      try { value = JSON.parse(raw); } catch { /* Keep non-JSON values as strings. */ }
+      return supabaseFunctionJson("vestora-api/state", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, value }),
+      });
+    }),
+  ]);
 }
 
 export async function hydrateLocalStateFromSupabase() {

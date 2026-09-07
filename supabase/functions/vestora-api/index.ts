@@ -87,7 +87,14 @@ Deno.serve(async (request) => {
       if (stateError) return json({ error: stateError.message }, 500);
       return json(data);
     }
-    return json({ error: "State endpoint supports GET and PUT" }, 405);
+    if (request.method === "DELETE") {
+      const key = url.searchParams.get("key");
+      if (!key) return json({ error: "A state key is required" }, 400);
+      const { error: deleteError } = await admin.from("vestora_app_state").delete().eq("user_id", user.id).eq("state_key", key);
+      if (deleteError) return json({ error: deleteError.message }, 500);
+      return json({ ok: true, key });
+    }
+    return json({ error: "State endpoint supports GET, PUT, and DELETE" }, 405);
   }
   const tableByResource: Record<string, string> = {
     restaurants: "core_restaurant",
