@@ -31,3 +31,29 @@ export async function supabaseApiList(resource, query = "") {
   if (!response.ok) throw new Error(`Supabase API request failed (${response.status})`);
   return response.json();
 }
+
+const syncableStateKey = (key) => key.startsWith("vestora-") && !/(user|password|token|credential|secret)/i.test(key);
+
+export async function syncLocalStateToSupabase() {
+  if (!supabaseConfigured) return;
+  const entries = Object.entries(localStorage).filter(([key]) => syncableStateKey(key));
+  await Promise.all(entries.map(([key, raw]) => {
+    let value = raw;
+    try { value = JSON.parse(raw); } catch { /* Keep non-JSON values as strings. */ }
+    return supabaseFunctionFetch("vestora-api/state", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, value }),
+    });
+  }));
+}
+
+export async function hydrateLocalStateFromSupabase() {
+  if (!supabaseConfigured) return false;
+  const response = await supabaseFunctionFetch("vestora-api/state");
+  if (!response.ok) throw new Error(`Supabase state request failed (${response.status})`);
+  const rows = await response.json();
+  if (!rows.length) return false;
+  rows.forEach(({ state_key: key, state_value: value }) => localStorage.setItem(key, JSON.stringify(value)));
+  return true;
+}

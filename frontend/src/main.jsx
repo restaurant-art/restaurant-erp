@@ -74,7 +74,7 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
-import { signInWithSupabase, supabaseConfigured } from "./lib/supabase";
+import { hydrateLocalStateFromSupabase, signInWithSupabase, supabaseConfigured, syncLocalStateToSupabase } from "./lib/supabase";
 
 const appBaseUrl = import.meta.env.BASE_URL || "/";
 
@@ -1827,6 +1827,13 @@ function LoginScreen({ onLogin }) {
       setError("");
       const { data, error: authError } = await signInWithSupabase(loginId, password);
       if (!authError && data.user) {
+        try {
+          await hydrateLocalStateFromSupabase();
+          await syncLocalStateToSupabase();
+        } catch (syncError) {
+          setError(`Supabase connection failed: ${syncError.message}`);
+          return;
+        }
         const metadata = data.user.user_metadata || {};
         onLogin({
           id: data.user.id,

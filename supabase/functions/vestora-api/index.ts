@@ -35,12 +35,29 @@ Deno.serve(async (request) => {
   if (profileError || !profile) return json({ error: "VESTORA profile is not linked to this Supabase user" }, 403);
 
   const url = new URL(request.url);
-  if (url.pathname.endsWith("/health")) {
+  const resource = url.pathname.split("/").filter(Boolean).at(-1);
+  if (resource === "health") {
     const { error: databaseError } = await admin.from("django_migrations").select("id").limit(1);
     return json({ ok: !databaseError, user_id: user.id, database: databaseError ? "unavailable" : "ok" }, databaseError ? 503 : 200);
   }
-
-  const resource = url.pathname.split("/").filter(Boolean).at(-1);
+  if (resource === "state") {
+    if (request.method === "GET") {
+      const key = url.searchParams.get("key");
+      let stateQuery = admin.from("vestora_app_state").select("state_key, state_value, updated_at").eq("user_id", user.id);
+      if (key) stateQuery = stateQuery.eq("state_key", key);
+      const { data, error: stateError } = await stateQuery;
+      if (stateError) return json({ error: stateError.message }, 500);
+      return json(data ?? []);
+    }
+    if (request.method === "PUT") {
+      const body = await request.json().catch(() => null);
+      if (!body || typeof body.key !== "string") return json({ error: "A state key is required" }, 400);
+      const { data, error: stateError } = await admin.from("vestora_app_state").upsert({ user_id: user.id, state_key: body.key, state_value: body.value ?? null, updated_at: new Date().toISOString() }).select("state_key, state_value, updated_at").single();
+      if (stateError) return json({ error: stateError.message }, 500);
+      return json(data);
+    }
+    return json({ error: "State endpoint supports GET and PUT" }, 405);
+  }
   const tableByResource: Record<string, string> = {
     restaurants: "core_restaurant",
     branches: "core_branch",
