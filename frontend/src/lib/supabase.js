@@ -42,6 +42,13 @@ export async function supabaseApiList(resource, query = "") {
   return response.json();
 }
 
+export async function supabaseApiRequest(resource, options = {}) {
+  return supabaseFunctionJson(`vestora-api/${resource}`, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+  });
+}
+
 export async function supabaseProfile() {
   return supabaseFunctionJson("vestora-api/profile");
 }
