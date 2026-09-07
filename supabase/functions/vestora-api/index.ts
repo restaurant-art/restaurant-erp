@@ -32,7 +32,7 @@ Deno.serve(async (request) => {
     .select("id, email, restaurant_id, user_type, is_superuser")
     .eq("email", user.email ?? "")
     .maybeSingle();
-  if (profileError || !profile) return json({ error: "VESTORA profile is not linked to this Supabase user" }, 403);
+  if (profileError) return json({ error: profileError.message }, 500);
 
   const url = new URL(request.url);
   const pathParts = url.pathname.split("/").filter(Boolean);
@@ -58,12 +58,12 @@ Deno.serve(async (request) => {
       customer: "Customer",
     };
     return json({
-      id: profile.id,
-      email: profile.email,
-      restaurantId: profile.restaurant_id,
-      role: profile.user_type,
-      appRole: appRoleByType[profile.user_type] || profile.user_type,
-      isSuperuser: Boolean(profile.is_superuser),
+      id: profile?.id || user.id,
+      email: profile?.email || user.email,
+      restaurantId: profile?.restaurant_id || null,
+      role: profile?.user_type || "cashier",
+      appRole: profile ? (appRoleByType[profile.user_type] || profile.user_type) : "Cashier",
+      isSuperuser: Boolean(profile?.is_superuser),
       status: "Active",
     });
   }
@@ -96,6 +96,7 @@ Deno.serve(async (request) => {
     }
     return json({ error: "State endpoint supports GET, PUT, and DELETE" }, 405);
   }
+  if (!profile) return json({ error: "This Supabase user is not linked to a VESTORA restaurant profile" }, 403);
   const tableByResource: Record<string, string> = {
     restaurants: "core_restaurant",
     branches: "core_branch",
