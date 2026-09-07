@@ -17,6 +17,17 @@ export async function supabaseAuthHeaders() {
 
 export async function supabaseFunctionFetch(path, options = {}) {
   if (!supabaseConfigured) throw new Error("Supabase frontend environment is not configured");
-  const headers = { ...(await supabaseAuthHeaders()), ...(options.headers || {}) };
+  const { data: { session } } = await supabase.auth.getSession();
+  const headers = {
+    ...(await supabaseAuthHeaders()),
+    ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+    ...(options.headers || {}),
+  };
   return fetch(`${supabaseUrl}/functions/v1/${String(path).replace(/^\/+/, "")}`, { ...options, headers });
+}
+
+export async function supabaseApiList(resource, query = "") {
+  const response = await supabaseFunctionFetch(`vestora-api/${resource}${query ? `?${query}` : ""}`);
+  if (!response.ok) throw new Error(`Supabase API request failed (${response.status})`);
+  return response.json();
 }
