@@ -1278,7 +1278,13 @@ function App() {
       try {
         const profile = await supabaseProfile();
         loginUser = { ...loginUser, ...profile, storeId: metadata.storeId || "STORE-001" };
-        await hydrateLocalStateFromSupabase();
+        const hydrated = await hydrateLocalStateFromSupabase();
+        if (hydrated && !sessionStorage.getItem("vestora-supabase-hydrated")) {
+          sessionStorage.setItem("vestora-supabase-hydrated", "true");
+          window.location.reload();
+          return;
+        }
+        sessionStorage.removeItem("vestora-supabase-hydrated");
         if (mounted) {
           setCurrentUser((existing) => existing || loginUser);
           localStorage.setItem("vestora-current-user", JSON.stringify(loginUser));
@@ -1885,8 +1891,6 @@ function LoginScreen({ onLogin }) {
       if (!authError && data.user) {
         try {
           const profile = await supabaseProfile();
-          await hydrateLocalStateFromSupabase();
-          await syncLocalStateToSupabase();
           const metadata = data.user.user_metadata || {};
           const profileUser = {
             id: data.user.id,
