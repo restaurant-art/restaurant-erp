@@ -37,12 +37,29 @@ Deno.serve(async (request) => {
   const url = new URL(request.url);
   const resource = url.pathname.split("/").filter(Boolean).at(-1);
   if (resource === "profile") {
+    const appRoleByType: Record<string, string> = {
+      super_admin: "Super Admin",
+      owner: "Restaurant Owner",
+      restaurant_admin: "Restaurant Admin",
+      branch_manager: "Branch Manager",
+      manager: "Manager",
+      cashier: "Cashier",
+      waiter: "Waiter",
+      kitchen_staff: "Chef",
+      chef: "Chef",
+      inventory_manager: "Inventory Manager",
+      purchase_manager: "Purchase Manager",
+      hr_manager: "HR Manager",
+      accountant: "Accountant",
+      delivery_boy: "Delivery Boy",
+      customer: "Customer",
+    };
     return json({
       id: profile.id,
       email: profile.email,
       restaurantId: profile.restaurant_id,
       role: profile.user_type,
-      appRole: profile.user_type,
+      appRole: appRoleByType[profile.user_type] || profile.user_type,
       isSuperuser: Boolean(profile.is_superuser),
       status: "Active",
     });
