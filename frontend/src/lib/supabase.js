@@ -11,6 +11,11 @@ export async function signInWithSupabase(email, password) {
   return supabase.auth.signInWithPassword({ email, password });
 }
 
+export async function updateSupabasePassword(password) {
+  if (!supabase) return { data: null, error: new Error("Supabase frontend environment is not configured") };
+  return supabase.auth.updateUser({ password });
+}
+
 export async function supabaseAuthHeaders() {
   return supabaseAnonKey ? { apikey: supabaseAnonKey } : {};
 }

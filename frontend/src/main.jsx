@@ -39,6 +39,7 @@ import {
   Gauge,
   GripVertical,
   History,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -74,7 +75,7 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
-import { hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseConfigured, supabaseProfile, syncLocalStateToSupabase } from "./lib/supabase";
+import { hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseConfigured, supabaseProfile, syncLocalStateToSupabase, updateSupabasePassword } from "./lib/supabase";
 
 const appBaseUrl = import.meta.env.BASE_URL || "/";
 
@@ -1050,6 +1051,45 @@ function syncOfflineOrders() {
   return 0;
 }
 
+function ChangePasswordDialog({ onClose, notify }) {
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    if (password.length < 8) return setError("Use at least 8 characters");
+    if (password !== confirmation) return setError("Passwords do not match");
+    setSaving(true);
+    setError("");
+    const { error: updateError } = await updateSupabasePassword(password);
+    setSaving(false);
+    if (updateError) return setError(updateError.message || "Unable to change password");
+    notify("Password changed successfully");
+    onClose();
+  }
+
+  return (
+    <div className="shift-modal-backdrop" role="presentation">
+      <form className="shift-modal" onSubmit={submit} role="dialog" aria-modal="true" aria-label="Change password">
+        <div className="shift-modal-head">
+          <div><span>Account security</span><h2>Change password</h2></div>
+          <button type="button" onClick={onClose} title="Close"><X size={18} /></button>
+        </div>
+        <p className="modal-help-text">Set a new password for your UVPRO account.</p>
+        <label>New password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoFocus autoComplete="new-password" /></label>
+        <label>Confirm new password<input type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="new-password" /></label>
+        {error && <p className="form-error">{error}</p>}
+        <div className="shift-actions">
+          <button type="button" onClick={onClose}>Cancel</button>
+          <button type="submit" disabled={saving}>{saving ? "Saving..." : "Change password"}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function App() {
   const [currentUser, setCurrentUser] = useState(() => {
     const saved = localStorage.getItem("vestora-current-user");
@@ -1058,6 +1098,7 @@ function App() {
     return { ...user, role: roleToAuthRole(user.role), appRole: user.appRole || roleLabelForUser(user) };
   });
   const [active, setActive] = useState("dashboard");
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [returnModule, setReturnModule] = useState("dashboard");
   const [superAdminLanding, setSuperAdminLanding] = useState(() => currentUser?.role === "super_admin" && localStorage.getItem("vestora-super-admin-in-store") !== "true");
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -1295,7 +1336,8 @@ function App() {
       }
     };
     supabase.auth.getSession().then(({ data }) => applySession(data.session));
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY" && mounted) setPasswordDialogOpen(true);
       if (session) applySession(session);
       else if (mounted) setCurrentUser(null);
     });
@@ -1866,12 +1908,14 @@ function App() {
             <span className="pill role-pill">{currentRoleLabel}</span>
             <button className="icon-btn" onClick={() => notify("No new notifications")} title="Notifications"><Bell size={18} /></button>
             <button className="icon-btn" onClick={() => setDark(!dark)} title="Toggle theme">{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
+            <button className="icon-btn" onClick={() => setPasswordDialogOpen(true)} title="Change password"><KeyRound size={18} /></button>
             <button className="icon-btn" onClick={handleLogout} title="Logout"><LogOut size={18} /></button>
           </div>
         </header>
         {content}
       </main>
       {toast && <div className="toast">{toast}</div>}
+      {passwordDialogOpen && <ChangePasswordDialog notify={notify} onClose={() => setPasswordDialogOpen(false)} />}
     </div>
   );
 }
