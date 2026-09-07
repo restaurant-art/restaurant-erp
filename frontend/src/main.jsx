@@ -216,7 +216,7 @@ const defaultRecipes = [
     outputUnit: "plate",
     sellingPrice: 180,
     version: 1,
-    changedBy: "UV PRO Super Admin",
+    changedBy: "UVPRO Super Admin",
     changedAt: "2026-07-04",
     ingredients: [
       { name: "Basmati Rice", qty: 250, unit: "g" },
@@ -374,7 +374,7 @@ const settingsSectionConfig = {
     description: "Customer bill, order ready, and campaign messages.",
     action: "Send test",
     fields: [["billTemplate", "Bill template"], ["orderTemplate", "Order ready template"], ["sender", "Sender number"], ["language", "Language"]],
-    defaults: { billTemplate: "Your UV PRO bill is ready", orderTemplate: "Your order is ready", sender: "+91 90000 11111", language: "English" },
+    defaults: { billTemplate: "Your UVPRO bill is ready", orderTemplate: "Your order is ready", sender: "+91 90000 11111", language: "English" },
   },
   "Backup policy": {
     description: "Automatic local and cloud backup schedule.",
@@ -407,7 +407,7 @@ const printerChoices = [
 ];
 
 const demoAccounts = [
-  { email: "super@vestora.test", password: "Super@123", name: "UV PRO Super Admin", role: "super_admin", appRole: "Super Admin", storeId: "GLOBAL" },
+  { email: "super@vestora.test", password: "Super@123", name: "UVPRO Super Admin", role: "super_admin", appRole: "Super Admin", storeId: "GLOBAL" },
   { email: "admin@vestora.test", password: "Admin@123", name: "Restaurant Admin", role: "restaurant_admin", appRole: "Restaurant Admin", storeId: "STORE-001" },
   { email: "branch@vestora.test", password: "Branch@123", name: "Koramangala Branch Manager", role: "restaurant_user", appRole: "Branch Manager", storeId: "STORE-002" },
 ];
@@ -479,7 +479,7 @@ const initialSupplierOrders = [
 ];
 
 const starterUsers = [
-  { id: 1, name: "UV PRO Super Admin", email: "super@vestora.test", password: "Super@123", role: "Super Admin", status: "Active", storeId: "GLOBAL" },
+  { id: 1, name: "UVPRO Super Admin", email: "super@vestora.test", password: "Super@123", role: "Super Admin", status: "Active", storeId: "GLOBAL" },
   { id: 2, name: "Restaurant Admin", email: "admin@vestora.test", password: "Admin@123", role: "Restaurant Admin", status: "Active", storeId: "STORE-001" },
   { id: 3, name: "Counter One", email: "cashier@demo.test", password: "Cashier@123", role: "Cashier", status: "Active", storeId: "STORE-001" },
   { id: 4, name: "Kitchen Lead", email: "kitchen@demo.test", password: "Kitchen@123", role: "Chef", status: "Active", storeId: "STORE-001" },
@@ -1702,7 +1702,7 @@ function App() {
       <aside className={sidebarOpen ? "sidebar" : "sidebar collapsed"}>
         <div className="brand">
           <img src={vestoraLogoPath} alt="" />
-          {sidebarOpen && <div><strong>UV PRO</strong><span>ERP & POS</span></div>}
+          {sidebarOpen && <div><strong>UVPRO</strong><span>ERP & POS</span></div>}
         </div>
         <nav>
           {visibleModules.map((item) => {
@@ -1939,7 +1939,7 @@ function LoginScreen({ onLogin }) {
         <div className="login-brand-panel">
           <img src={vestoraLogoPath} alt="" />
           <div>
-            <span>UV PRO ERP & POS</span>
+            <span>UVPRO ERP & POS</span>
             <h1>Staff sign in</h1>
             <p>Restaurant operations workspace</p>
           </div>
@@ -2231,7 +2231,7 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, on
         <div className="super-admin-brand">
           <img src={vestoraLogoPath} alt="" />
           <div>
-            <strong>UV PRO</strong>
+            <strong>UVPRO</strong>
             <span>Super Admin Store Access</span>
           </div>
         </div>
@@ -2460,7 +2460,7 @@ function SupplierPortal({ currentUser, orders, setOrders, onLogout }) {
   return (
     <div className="supplier-app">
       <header className="supplier-topbar">
-        <div className="supplier-brand"><img src={vestoraLogoPath} alt="" /><div><strong>UV PRO Supplier Portal</strong><span>{currentUser.name}</span></div></div>
+        <div className="supplier-brand"><img src={vestoraLogoPath} alt="" /><div><strong>UVPRO Supplier Portal</strong><span>{currentUser.name}</span></div></div>
         <div className="supplier-actions"><span className="pill role-pill">Supplier</span><button className="icon-btn" onClick={onLogout} title="Logout"><LogOut size={18} /></button></div>
       </header>
       <main className="supplier-main">
@@ -2823,7 +2823,7 @@ function CashierLogin({ cashiers, activeStore, currentShift, onAuthenticated, on
         <header className="cashier-login-head">
           <div className="pos-brand-lockup">
             <img src={vestoraLogoPath} alt="" />
-            <div><p>UV PRO POS</p><h1>Cashier login</h1></div>
+            <div><p>UVPRO POS</p><h1>Cashier login</h1></div>
           </div>
           <div className="cashier-login-actions">
             <button type="button" className="cashier-exit-button" onClick={onExit} title="Exit POS"><PanelLeftClose size={18} /><span>Exit POS</span></button>
@@ -2897,7 +2897,7 @@ function ShiftOpening({ online, onOpenShift, onExit, onLogout, cashier }) {
         <div className="shift-card-head">
           <img src={vestoraLogoPath} alt="" />
           <div>
-            <p>UV PRO POS</p>
+            <p>UVPRO POS</p>
             <h1>Open shift</h1>
             <span className="shift-cashier-name">Cashier: {cashier?.name || "POS User"}</span>
           </div>
@@ -3254,7 +3254,7 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
         <div className="pos-brand-lockup">
           <img src={vestoraLogoPath} alt="" />
           <div>
-            <p>UV PRO POS</p>
+            <p>UVPRO POS</p>
             <h1>POS Billing</h1>
           </div>
         </div>
@@ -4145,7 +4145,7 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
           <div className="kot-meta"><span>Table <strong>{printSlip.order.tableName}</strong></span><span>Seats <strong>{printSlip.order.guestCount || 1}</strong></span><span>Waiter <strong>{printSlip.order.waiterName}</strong></span><span>Time <strong>{new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</strong></span></div>
           <div className="kot-lines">{(printSlip.type === "kot" ? (printSlip.order.kotPrintItems || printSlip.order.items) : printSlip.order.items).map((item) => <p key={item.id}>{item.qty} x {item.name}</p>)}</div>
           {printSlip.type === "reception" && <div className="reception-slip-total"><span>Subtotal</span><strong>{formatMoney(printSlip.order.subtotal)}</strong><small>PAYMENT PENDING · OPEN IN POS RECEPTION QUEUE</small></div>}
-          <small>UV PRO · {printSlip.type === "kot" ? (kotPrinter?.name || "KOT printer") : "RECEPTION"}</small>
+          <small>UVPRO · {printSlip.type === "kot" ? (kotPrinter?.name || "KOT printer") : "RECEPTION"}</small>
         </div>
       )}
     </section>
@@ -5444,7 +5444,7 @@ function MenuManagement({ notify, canManageAll, storeId, productItems, setProduc
       setShowRecordEditor(false);
       notify(`${normalized.length} ${activeSection.toLowerCase()} records imported`);
     } catch {
-      notify("Choose a valid UV PRO JSON export");
+      notify("Choose a valid UVPRO JSON export");
     }
   }
 
@@ -6830,7 +6830,7 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
     }
     const duplicateEmail = users.some((user) => user.email.trim().toLowerCase() === draft.email.trim().toLowerCase() && user.id !== editingId);
     if (duplicateEmail) {
-      notify("This email already has a UV PRO login");
+      notify("This email already has a UVPRO login");
       return;
     }
     const allowedRole = roleChoices.includes(draft.role) ? draft.role : "Cashier";
@@ -7066,7 +7066,7 @@ function KotPrinterSetup({ kotPrinter, setKotPrinter, notify, canManage }) {
         <div className="kot-ticket-head"><strong>KITCHEN ORDER TICKET</strong><span>TEST-KOT</span></div>
         <div className="kot-meta"><span>Type <strong>Test</strong></span><span>Printer <strong>{kotPrinter.name}</strong></span></div>
         <div className="kot-lines"><p>1 Paneer Tikka Bowl</p><p>2 Masala Chaas</p></div>
-        <small>UV PRO KDS TEST PRINT</small>
+        <small>UVPRO KDS TEST PRINT</small>
       </div>
     </div>
   );
@@ -7293,7 +7293,7 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
                     <div>
                       <span>Website appearance</span>
                       <h3>{draft.themePreset || "Custom"} / {draft.theme}</h3>
-                      <p>Choose a preset, tune every important website color, and UV PRO will adjust letter contrast for clear reading.</p>
+                      <p>Choose a preset, tune every important website color, and UVPRO will adjust letter contrast for clear reading.</p>
                     </div>
                     <Sparkles size={34} />
                   </div>
@@ -7366,7 +7366,7 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
 
                   <div className="theme-live-preview" style={themeStyleVariables({ ...draft, mode: draft.theme, preset: draft.themePreset })}>
                     <aside>
-                      <strong>UV PRO</strong>
+                      <strong>UVPRO</strong>
                       <span className="active">Dashboard</span>
                       <span>POS Billing</span>
                       <span>Settings</span>
@@ -8520,7 +8520,7 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
           <h2>Settings</h2>
           <p>Choose a section to view or update its details.</p>
         </div>
-        <span className="settings-location">{activeStore?.name || "UV PRO"} / {activeStore?.branch || "All stores"}</span>
+        <span className="settings-location">{activeStore?.name || "UVPRO"} / {activeStore?.branch || "All stores"}</span>
       </div>
       <div className="settings-card-grid">
         {sectionNames.map((name) => {
