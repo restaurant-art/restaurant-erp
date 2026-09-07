@@ -1,0 +1,4 @@
+project_id = "vqinmequtjkuzrtzkzsk"
+
+[functions.vestora-api]
+verify_jwt = true

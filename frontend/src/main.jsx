@@ -74,6 +74,7 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
+import { signInWithSupabase, supabaseConfigured } from "./lib/supabase";
 
 const appBaseUrl = import.meta.env.BASE_URL || "/";
 
@@ -1819,9 +1820,28 @@ function LoginScreen({ onLogin }) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
 
-  function login(event) {
+  async function login(event) {
     event.preventDefault();
     const loginId = email.trim().toLowerCase();
+    if (supabaseConfigured) {
+      setError("");
+      const { data, error: authError } = await signInWithSupabase(loginId, password);
+      if (!authError && data.user) {
+        const metadata = data.user.user_metadata || {};
+        onLogin({
+          id: data.user.id,
+          email: data.user.email || loginId,
+          name: metadata.name || data.user.email || loginId,
+          role: metadata.role || "cashier",
+          appRole: metadata.appRole || metadata.role || "Cashier",
+          storeId: metadata.storeId || "STORE-001",
+          status: "Active",
+        });
+        return;
+      }
+      setError(authError?.message || "Supabase sign-in failed");
+      return;
+    }
     const savedUsers = loadStoredArray("vestora-users");
     const restaurantAccounts = [
       ...savedUsers.map((user) => ({
