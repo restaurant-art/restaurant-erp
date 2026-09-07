@@ -26,6 +26,16 @@ export async function supabaseFunctionFetch(path, options = {}) {
   return fetch(`${supabaseUrl}/functions/v1/${String(path).replace(/^\/+/, "")}`, { ...options, headers });
 }
 
+export async function supabaseFunctionJson(path, options = {}) {
+  const response = await supabaseFunctionFetch(path, options);
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = body?.error || `Supabase API request failed (${response.status})`;
+    throw new Error(message);
+  }
+  return body;
+}
+
 export async function supabaseApiList(resource, query = "") {
   const response = await supabaseFunctionFetch(`vestora-api/${resource}${query ? `?${query}` : ""}`);
   if (!response.ok) throw new Error(`Supabase API request failed (${response.status})`);
@@ -40,7 +50,7 @@ export async function syncLocalStateToSupabase() {
   await Promise.all(entries.map(([key, raw]) => {
     let value = raw;
     try { value = JSON.parse(raw); } catch { /* Keep non-JSON values as strings. */ }
-    return supabaseFunctionFetch("vestora-api/state", {
+    return supabaseFunctionJson("vestora-api/state", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key, value }),

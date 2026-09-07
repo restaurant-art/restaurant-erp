@@ -74,7 +74,7 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
-import { hydrateLocalStateFromSupabase, signInWithSupabase, supabaseConfigured, syncLocalStateToSupabase } from "./lib/supabase";
+import { hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseConfigured, syncLocalStateToSupabase } from "./lib/supabase";
 
 const appBaseUrl = import.meta.env.BASE_URL || "/";
 
@@ -1252,12 +1252,66 @@ function App() {
   }
 
   function handleLogout() {
+    if (supabaseConfigured) supabase.auth.signOut().catch(() => {});
     localStorage.removeItem("vestora-current-user");
     localStorage.removeItem("vestora-super-admin-in-store");
     localStorage.removeItem("vestora-pos-cashier");
     setPosCashier(null);
     setCurrentUser(null);
   }
+
+  useEffect(() => {
+    if (!supabaseConfigured || !supabase) return undefined;
+    let mounted = true;
+    const applySession = async (session) => {
+      if (!mounted || !session?.user) return;
+      const metadata = session.user.user_metadata || {};
+      const loginUser = {
+        id: session.user.id,
+        email: session.user.email || "",
+        name: metadata.name || session.user.email || "Supabase user",
+        role: metadata.role || "cashier",
+        appRole: metadata.appRole || metadata.role || "Cashier",
+        storeId: metadata.storeId || "STORE-001",
+        status: "Active",
+      };
+      try {
+        await hydrateLocalStateFromSupabase();
+        if (mounted) {
+          setCurrentUser((existing) => existing || loginUser);
+          localStorage.setItem("vestora-current-user", JSON.stringify(loginUser));
+        }
+      } catch {
+        // Keep the local/offline session available if the function is temporarily unavailable.
+        if (mounted) setCurrentUser((existing) => existing || loginUser);
+      }
+    };
+    supabase.auth.getSession().then(({ data }) => applySession(data.session));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) applySession(session);
+      else if (mounted) setCurrentUser(null);
+    });
+    return () => {
+      mounted = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!supabaseConfigured || !currentUser) return undefined;
+    let cancelled = false;
+    const persist = () => {
+      if (!cancelled) syncLocalStateToSupabase().catch(() => {});
+    };
+    persist();
+    const timer = window.setInterval(persist, 15000);
+    window.addEventListener("beforeunload", persist);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("beforeunload", persist);
+    };
+  }, [currentUser]);
 
   function enterStore(store) {
     setSelectedStoreId(store.id);
