@@ -1996,6 +1996,7 @@ function LoginScreen({ onLogin }) {
             <span>UVPRO ERP & POS</span>
             <h1>Staff sign in</h1>
             <p>Restaurant operations workspace</p>
+            <small className="login-tagline">Driven by Excellence. Powered by Vestano Retail</small>
           </div>
         </div>
         <div className="login-form-fields">
