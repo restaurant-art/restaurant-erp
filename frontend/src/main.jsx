@@ -85,7 +85,7 @@ function publicAssetPath(path) {
   return `${cleanBase}${cleanPath}`;
 }
 
-const vestoraLogoPath = publicAssetPath("vestora-mark.png");
+const vestoraLogoPath = publicAssetPath("uvpro-logo-red.png");
 
 const modules = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },

@@ -587,9 +587,9 @@ select:focus {
 .login-brand-panel img {
   width: 76px;
   height: 76px;
-  object-fit: cover;
+  object-fit: contain;
   border-radius: 8px;
-  background: #10231f;
+  background: #ffffff;
   box-shadow: 0 14px 34px rgba(16, 35, 31, 0.2);
 }
 
@@ -851,8 +851,9 @@ select:focus {
 .supplier-brand img {
   width: 46px;
   height: 46px;
-  object-fit: cover;
+  object-fit: contain;
   border-radius: 8px;
+  background: #ffffff;
 }
 
 .supplier-brand strong,
@@ -1074,7 +1075,8 @@ select:focus {
   width: 44px;
   height: 44px;
   border-radius: 8px;
-  object-fit: cover;
+  object-fit: contain;
+  background: #ffffff;
 }
 
 .brand strong,
@@ -2683,8 +2685,9 @@ h3 {
 .cashier-login-head img {
   border-radius: 8px;
   height: 54px;
-  object-fit: cover;
+  object-fit: contain;
   width: 54px;
+  background: #ffffff;
 }
 
 .cashier-login-head p,
@@ -4488,7 +4491,7 @@ h3 {
   height: 46px;
   padding: 2px;
   border-radius: 8px;
-  background: #10231f;
+  background: #ffffff;
 }
 
 .bill-type-row {
@@ -5208,7 +5211,8 @@ h3 {
   width: 54px;
   height: 54px;
   border-radius: 8px;
-  object-fit: cover;
+  object-fit: contain;
+  background: #ffffff;
 }
 
 .logo-upload-row strong,

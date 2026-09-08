@@ -8,8 +8,8 @@
   "theme_color": "#10231f",
   "icons": [
     {
-      "src": "/vestora-mark.png",
-      "sizes": "512x512",
+      "src": "/uvpro-logo-red.png",
+      "sizes": "1448x1086",
       "type": "image/png",
       "purpose": "any maskable"
     }
