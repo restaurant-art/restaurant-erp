@@ -1335,12 +1335,14 @@ function App() {
         if (mounted) setCurrentUser((existing) => existing || loginUser);
       }
     };
-    supabase.auth.getSession().then(({ data }) => applySession(data.session));
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "PASSWORD_RECOVERY" && mounted) setPasswordDialogOpen(true);
       if (session) applySession(session);
       else if (mounted) setCurrentUser(null);
     });
+    // Register the listener before loading the session so recovery links do
+    // not lose the PASSWORD_RECOVERY event during Supabase initialization.
+    supabase.auth.getSession().then(({ data }) => applySession(data.session));
     return () => {
       mounted = false;
       listener.subscription.unsubscribe();

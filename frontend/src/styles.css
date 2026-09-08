@@ -13582,3 +13582,298 @@ button.chart-account-row:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* Final phone layout pass: keep every workspace inside the viewport while
+   preserving horizontal scrolling only for intentionally dense tables/tabs. */
+@media (max-width: 760px) {
+  html,
+  body,
+  #root,
+  .app,
+  .pos-page,
+  .supplier-app,
+  main {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  html,
+  body,
+  #root {
+    overflow-x: hidden;
+  }
+
+  .topbar {
+    width: 100%;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .topbar-left {
+    width: 100%;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .topbar-left > div,
+  .topbar-left h1,
+  .topbar-left p {
+    min-width: 0;
+  }
+
+  .topbar-left h1 {
+    overflow: hidden;
+    font-size: 18px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .topbar-left p {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+
+  .topbar-actions::-webkit-scrollbar,
+  .supplier-actions::-webkit-scrollbar,
+  .head-actions::-webkit-scrollbar,
+  .pos-page-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .topbar-actions > *,
+  .supplier-actions > *,
+  .head-actions > *,
+  .pos-page-actions > * {
+    flex: 0 0 auto;
+  }
+
+  .screen,
+  .pos-screen,
+  .supplier-main {
+    width: 100%;
+    padding: 12px 12px 84px;
+  }
+
+  .panel,
+  .metric,
+  .table-panel {
+    min-width: 0;
+    border-radius: 12px;
+  }
+
+  .panel-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .panel-head > div:first-child {
+    min-width: 0;
+  }
+
+  .panel-head h2 {
+    font-size: 16px;
+  }
+
+  .head-actions {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .head-actions button {
+    min-height: 40px;
+  }
+
+  .toolbar,
+  .finance-head,
+  .finance-actions,
+  .finance-filter-row,
+  .finance-form-actions,
+  .row-actions {
+    width: 100%;
+  }
+
+  .finance-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .finance-actions {
+    flex-wrap: wrap;
+  }
+
+  .finance-actions > * {
+    flex: 1 1 140px;
+  }
+
+  .finance-filter-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .finance-filter-row > *,
+  .finance-filter-row input,
+  .finance-filter-row select,
+  .toolbar input,
+  .toolbar select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .item-grid,
+  .pos-catalog .item-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .item-card {
+    min-width: 0;
+    padding: 11px;
+  }
+
+  .item-card strong {
+    overflow-wrap: anywhere;
+    font-size: 14px;
+  }
+
+  .payment-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .payment-grid button {
+    min-height: 44px;
+    min-width: 0;
+  }
+
+  .pos-page-header {
+    width: 100%;
+  }
+
+  .pos-brand-lockup {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .pos-brand-lockup h1,
+  .pos-brand-lockup p {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .pos-page-actions {
+    width: 100%;
+    align-items: stretch !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .shift-modal-backdrop {
+    align-items: end;
+    padding: 12px;
+  }
+
+  .shift-modal {
+    width: 100%;
+    max-width: none;
+    max-height: 90vh;
+    overflow-y: auto;
+    border-radius: 16px 16px 0 0;
+    padding: 18px;
+  }
+
+  .completed-bill-modal {
+    max-height: 92vh;
+  }
+
+  .login-screen {
+    min-height: 100svh;
+  }
+
+  .login-card {
+    width: 100%;
+  }
+
+  .login-tagline {
+    line-height: 1.4;
+  }
+
+  .supplier-topbar {
+    width: 100%;
+    padding: 10px 12px;
+  }
+
+  .supplier-actions {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .supplier-main {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .table-panel,
+  .finance-table-wrap,
+  .table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .table-panel table,
+  .finance-table,
+  .table-wrap table {
+    min-width: 640px;
+  }
+}
+
+@media (max-width: 420px) {
+  .login-card {
+    padding: 16px;
+  }
+
+  .login-brand-panel h1 {
+    font-size: 24px;
+  }
+
+  .login-brand-panel img {
+    width: 84px;
+    height: 64px;
+  }
+
+  .topbar-actions .store-switcher {
+    max-width: 180px;
+  }
+
+  .sidebar {
+    padding: 6px;
+    gap: 2px;
+  }
+
+  .nav {
+    min-width: 44px;
+  }
+
+  .item-card {
+    min-height: 118px;
+    padding: 10px;
+  }
+
+  .item-card em {
+    font-size: 14px;
+  }
+}
