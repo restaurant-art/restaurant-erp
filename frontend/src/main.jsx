@@ -1926,9 +1926,19 @@ function LoginScreen({ onLogin }) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
 
+  function findDemoAccount(loginId, candidatePassword) {
+    return demoAccounts.find((account) => account.email?.toLowerCase() === loginId && account.password === candidatePassword);
+  }
+
   async function login(event) {
     event.preventDefault();
     const loginId = email.trim().toLowerCase();
+    const demoUser = findDemoAccount(loginId, password);
+    if (demoUser) {
+      setError("");
+      onLogin(demoUser);
+      return;
+    }
     if (supabaseConfigured) {
       setError("");
       const { data, error: authError } = await signInWithSupabase(loginId, password);
