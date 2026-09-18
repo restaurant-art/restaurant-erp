@@ -132,7 +132,11 @@ Deno.serve(async (request) => {
     const name = String(body?.name || "").trim();
     const roleNames: Record<string, string> = { "Restaurant Admin": "restaurant_admin", "Restaurant Owner": "owner", "Cashier": "cashier", "Waiter": "waiter", "Chef": "chef", "Inventory Manager": "inventory_manager", "Accountant": "accountant", "Manager": "manager", "HR Manager": "hr_manager", "Purchase Manager": "purchase_manager", "Supplier": "supplier" };
     if (!name || !email.includes("@") || body?.role === "Super Admin") return json({ error: "Valid staff name, email and store role required" }, 400);
+    if (email === String(user.email || "").toLowerCase()) return json({ error: "You cannot change or deactivate the account currently signed in. Use Account security to change its password." }, 400);
     if (!isPlatformAdmin && ["Restaurant Admin", "Restaurant Owner"].includes(body.role)) return json({ error: "Super Admin permission required to manage administrator logins" }, 403);
+    const { data: protectedProfile, error: protectedProfileError } = await admin.from("core_user").select("user_type,is_superuser").eq("email", email).maybeSingle();
+    if (protectedProfileError) return json({ error: "Unable to verify the protected account" }, 503);
+    if (protectedProfile?.is_superuser || protectedProfile?.user_type === "super_admin") return json({ error: "Super Admin accounts cannot be reassigned as staff users." }, 403);
     const assignedRole = roleNames[body.role] || "cashier";
     let authUser = null;
     for (let page = 1; page <= 100; page++) {

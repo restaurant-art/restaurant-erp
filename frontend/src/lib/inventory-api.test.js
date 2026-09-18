@@ -53,7 +53,7 @@ function endpoint({ linked = true, superAdmin = true, role = "restaurant_admin",
     },
   });
   vm.runInNewContext(compiled, { createClient, Request, Response, URL, Date, Deno: { env: { get: () => "test" }, serve: (handler) => { handle = handler; } } });
-  return (method, body, query = "") => handle(new Request(`https://example.test/functions/v1/vestora-api/state${query}`, {
+  return (method, body, query = "", resource = "state") => handle(new Request(`https://example.test/functions/v1/vestora-api/${resource}${query}`, {
     method, headers: { Origin: "https://uvpro.in", "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify({ ...("expectedUpdatedAt" in body ? { mutationId: crypto.randomUUID() } : {}), ...body }) } : {}),
   }));
 }
@@ -102,6 +102,13 @@ test("tables and floors use the same protected cloud write path", async () => {
 test("a login without a linked profile receives a visible error instead of private-only saves", async () => {
   const response = await endpoint({ linked: false })("PUT", { key: "vestora-inventory-STORE-001", value: [], expectedUpdatedAt: null });
   assert.equal(response.status, 403);
+});
+
+test("an administrator cannot turn the account currently signed in into a staff login", async () => {
+  const request = endpoint({ seed: [{ state_key: "vestora-stores", state_value: [{ id: "A" }], updated_at: "1" }] });
+  const response = await request("POST", { name: "Current administrator", email: "test@example.test", role: "Cashier", status: "Inactive", storeId: "A" }, "", "staff-account");
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /currently signed in/);
 });
 
 test("shared user and settings snapshots cannot publish nested credentials", async () => {
