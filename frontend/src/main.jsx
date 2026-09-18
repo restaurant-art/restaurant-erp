@@ -1283,7 +1283,11 @@ function AuthenticatedApp() {
   const queuedOrders = JSON.parse(localStorage.getItem("vestora-offline-orders") || "[]").length;
   const canManageAll = currentUser?.role === "super_admin";
   const canManage = canManageAll || currentUser?.role === "restaurant_admin";
-  const activeStoreId = canManageAll ? selectedStoreId : normalizeStoreId(currentUser?.storeId);
+  // Some legacy administrator accounts are scoped through the directory and
+  // arrive without a single default branch. They may choose a branch in POS;
+  // all backend requests still enforce their permitted store scope.
+  const assignedStoreId = normalizeStoreId(currentUser?.storeId);
+  const activeStoreId = canManageAll ? selectedStoreId : assignedStoreId === "GLOBAL" ? selectedStoreId : assignedStoreId;
   const activeStore = stores.find((store) => store.id === activeStoreId) || emptyStoreContext;
   useEffect(() => {
     if (supabaseStateReady && sharedShifts.length) localStorage.setItem(`vestora-shifts-${settingsStoreId}`, JSON.stringify(sharedShifts));
@@ -1330,7 +1334,7 @@ function AuthenticatedApp() {
   const scopedRefundLedger = refundLedger.filter((entry) => normalizeStoreId(entry.storeId) === activeStore.id);
   const scopedKdsOrders = kdsOrders.filter((order) => normalizeStoreId(order.storeId) === activeStore.id);
   const scopedTableOrders = tableOrders.filter((order) => normalizeStoreId(order.storeId) === activeStore.id);
-  const activeCashiers = users.filter((user) => normalizeStoreId(user.storeId) === activeStore.id && user.role === "Cashier" && user.status === "Active");
+  const activeCashiers = users.filter((user) => (activeStore.id === "GLOBAL" || normalizeStoreId(user.storeId) === activeStore.id) && user.role === "Cashier" && user.status === "Active");
   const comparisonStores = (canManageAll ? stores.filter((store) => store.name === activeStore.name) : [activeStore])
     .filter((store) => store && store.status !== "Inactive" && (store.branch || store.id === activeStore.id));
   const comparisonSalesLedger = canManageAll ? salesLedger : scopedSalesLedger;
@@ -2033,10 +2037,15 @@ function AuthenticatedApp() {
   const content = {
     dashboard: <Dashboard notify={notify} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} kdsOrders={scopedKdsOrders} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} storeId={activeStore.id} onNavigate={setActive} />,
     pos: !posCashier
-      ? <CashierLogin cashiers={activeCashiers} activeStore={activeStore} currentShift={currentShift} onAuthenticated={(cashier) => {
+      ? <CashierLogin cashiers={activeCashiers} activeStore={activeStore} stores={stores} currentShift={currentShift} onAuthenticated={(cashier) => {
         if (currentShift?.cashierId && String(currentShift.cashierId) !== String(cashier.id)) {
           notify(`${currentShift.cashierName || "Another cashier"} must close the active shift first`);
           return false;
+        }
+        const cashierStoreId = normalizeStoreId(cashier.storeId);
+        if (cashierStoreId !== "GLOBAL") {
+          setSelectedStoreId(cashierStoreId);
+          localStorage.setItem("vestora-selected-store", cashierStoreId);
         }
         setPosCashier(cashier);
         localStorage.setItem("vestora-pos-cashier", JSON.stringify(cashier));
@@ -3246,7 +3255,7 @@ function Dashboard({ notify, salesLedger, refundLedger = [], kdsOrders, comparis
   );
 }
 
-function CashierLogin({ cashiers, activeStore, currentShift, onAuthenticated, onExit, onLogout, onCreateCashier }) {
+function CashierLogin({ cashiers, activeStore, stores = [], currentShift, onAuthenticated, onExit, onLogout, onCreateCashier }) {
   const [selectedCashier, setSelectedCashier] = useState(null);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -3294,10 +3303,11 @@ function CashierLogin({ cashiers, activeStore, currentShift, onAuthenticated, on
               <div className="cashier-account-grid">
                 {cashiers.map((cashier) => {
                   const hasThisShift = currentShift?.cashierId && String(currentShift.cashierId) === String(cashier.id);
+                  const branch = stores.find((store) => store.id === normalizeStoreId(cashier.storeId))?.branch;
                   return (
                     <button type="button" className="cashier-account" key={cashier.id} onClick={() => selectCashier(cashier)}>
                       <span className="cashier-avatar">{cashier.name.trim().slice(0, 1).toUpperCase()}</span>
-                      <span><strong>{cashier.name}</strong><small>{hasThisShift ? "Open shift" : "Cashier"}</small></span>
+                      <span><strong>{cashier.name}</strong><small>{hasThisShift ? "Open shift" : branch ? `Cashier · ${branch}` : "Cashier"}</small></span>
                       <ChevronRight size={19} />
                     </button>
                   );
