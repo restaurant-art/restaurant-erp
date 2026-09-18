@@ -84,8 +84,11 @@ const sharedSuperAdminStateKey = "vestora-stores";
 // Do not include that shared record in the background device-state sync, otherwise
 // an older browser can overwrite the latest directory with its stale local copy.
 const backgroundSyncableStateKey = (key) => syncableStateKey(key) && key !== sharedSuperAdminStateKey && !isInventoryStateKey(key);
+// Table layouts are shared operational data, just like inventory. Give them
+// the same protection so an older browser cannot overwrite newer changes.
+const isVersionedSharedListStateKey = (key) => isInventoryStateKey(key) || /^vestora-(tables|floors)-/.test(key);
 
-const synchronizeInventory = createInventorySync({
+const synchronizeVersionedSharedList = createInventorySync({
   storage: localStorage,
   namespace: supabaseUrl,
   read: async (key) => {
@@ -98,14 +101,21 @@ const synchronizeInventory = createInventorySync({
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ key, value, expectedUpdatedAt }),
   }),
-  changed: (key, value) => window.dispatchEvent(new CustomEvent("vestora-inventory-synced", { detail: { key, value } })),
+  changed: (key, value) => {
+    window.dispatchEvent(new CustomEvent("vestora-cloud-list-synced", { detail: { key, value } }));
+    if (isInventoryStateKey(key)) window.dispatchEvent(new CustomEvent("vestora-inventory-synced", { detail: { key, value } }));
+  },
 });
 
-export async function syncInventoryState(key) {
-  if (!supabaseConfigured) throw new Error("Saved on this computer only. Cloud connection is not configured; use uvpro.in to share inventory.");
+export async function syncVersionedSharedListState(key) {
+  if (!supabaseConfigured) throw new Error("Saved on this computer only. Cloud connection is not configured; use uvpro.in to share data.");
   const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error("Saved on this computer only. Sign in to upload inventory.");
-  return synchronizeInventory(key);
+  if (!session) throw new Error("Saved on this computer only. Sign in to upload shared data.");
+  return synchronizeVersionedSharedList(key);
+}
+
+export async function syncInventoryState(key) {
+  return syncVersionedSharedListState(key);
 }
 
 export async function fetchSharedSuperAdminStores() {
@@ -136,7 +146,7 @@ export async function syncLocalStateKeyToSupabase(key) {
   // Components can mount while the authenticated session is still hydrating.
   // Do not let their starter/local defaults overwrite the shared snapshot.
   if (typeof window !== "undefined" && window.vestoraSupabaseStateReady !== true) return;
-  if (isInventoryStateKey(key)) return syncInventoryState(key);
+  if (isVersionedSharedListStateKey(key)) return syncVersionedSharedListState(key);
   const raw = localStorage.getItem(key);
   if (raw === null) return;
   let value = raw;

@@ -77,6 +77,19 @@ test("old clients cannot overwrite inventory without a version", async () => {
   assert.match((await response.json()).error, /Refresh/);
 });
 
+test("tables and floors use the same protected cloud write path", async () => {
+  const request = endpoint();
+  const tablesKey = "vestora-tables-STORE-001";
+  const floorsKey = "vestora-floors-STORE-001";
+  const table = { id: 9, name: "Family table", floor: "Main", seats: 6, status: "Available" };
+  const saved = await request("PUT", { key: tablesKey, value: [table], expectedUpdatedAt: null });
+  assert.equal(saved.status, 200);
+  const revision = (await saved.json()).updated_at;
+  assert.equal((await request("PUT", { key: tablesKey, value: [], expectedUpdatedAt: null })).status, 409);
+  assert.equal((await request("PUT", { key: floorsKey, value: ["Main", "Garden"], expectedUpdatedAt: null })).status, 200);
+  assert.equal((await request("PUT", { key: tablesKey, value: [{ ...table, seats: 8 }], expectedUpdatedAt: revision })).status, 200);
+});
+
 test("a login without a linked profile receives a visible error instead of private-only saves", async () => {
   const response = await endpoint({ linked: false })("PUT", { key: "vestora-inventory-STORE-001", value: [], expectedUpdatedAt: null });
   assert.equal(response.status, 403);

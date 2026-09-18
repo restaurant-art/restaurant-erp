@@ -154,13 +154,14 @@ Deno.serve(async (request) => {
         ? { state_key: body.key, state_value: stateValue, updated_at: new Date().toISOString() }
         : { user_id: user.id, state_key: body.key, state_value: stateValue, updated_at: new Date().toISOString() };
       const tableName = sharedState ? "vestora_shared_app_state" : "vestora_app_state";
-      // Inventory uses optimistic concurrency. A stale device must re-read and
-      // merge its edits before saving, never overwrite a newer stock snapshot.
-      const inventoryKey = /^vestora-inventory-(?!transactions-)/.test(body.key);
-      if (sharedState && inventoryKey) {
-        if (!("expectedUpdatedAt" in body)) return json({ error: "Refresh this app to save inventory safely" }, 409);
-        if (body.expectedUpdatedAt !== null && typeof body.expectedUpdatedAt !== "string") return json({ error: "Invalid inventory version" }, 400);
-        if (!Array.isArray(stateValue)) return json({ error: "Inventory must be an array" }, 400);
+      // Inventory and table layouts use optimistic concurrency. A stale device
+      // must re-read and merge its edits before saving, never overwrite a newer
+      // stock level, table, or floor created on another computer.
+      const versionedListKey = /^(vestora-inventory-(?!transactions-)|vestora-tables-|vestora-floors-)/.test(body.key);
+      if (sharedState && versionedListKey) {
+        if (!("expectedUpdatedAt" in body)) return json({ error: "Refresh this app to save shared lists safely" }, 409);
+        if (body.expectedUpdatedAt !== null && typeof body.expectedUpdatedAt !== "string") return json({ error: "Invalid shared list version" }, 400);
+        if (!Array.isArray(stateValue)) return json({ error: "Shared list must be an array" }, 400);
         payload.updated_at = new Date(Math.max(Date.now(), (Date.parse(body.expectedUpdatedAt || "") || 0) + 1)).toISOString();
         const write = body.expectedUpdatedAt === null
           ? admin.from(tableName).insert(payload)

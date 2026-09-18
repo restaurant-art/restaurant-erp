@@ -2027,7 +2027,7 @@ function AuthenticatedApp() {
         ? <POS cart={cart} setCart={setCart} items={productItems} storeId={activeStore.id} foodStock={foodStock} onFoodStockChange={updateFoodStock} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onLogout={handleLogout} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
         : <ShiftOpening online={online} onOpenShift={openShift} onExit={exitPOS} onLogout={handleLogout} cashier={posCashier} />,
     kds: <KDS notify={notify} orders={scopedKdsOrders} setOrders={setKdsOrders} kotPrinter={kotPrinter} />,
-    tables: <Tables key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} items={productItems} currentUser={currentUser} tableOrders={scopedTableOrders} onSaveOrder={saveTableOrder} onSendKot={sendTableKot} onSendReception={sendTableToReception} onCancelOrder={cancelTableOrder} onCancelItem={cancelTableOrderItem} kotPrinter={kotPrinter} />,
+    tables: <Tables key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} items={productItems} currentUser={currentUser} tableOrders={scopedTableOrders} onSaveOrder={saveTableOrder} onSendKot={sendTableKot} onSendReception={sendTableToReception} onCancelOrder={cancelTableOrder} onCancelItem={cancelTableOrderItem} kotPrinter={kotPrinter} cloudStateReady={supabaseStateReady} />,
     menu: <MenuManagement key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} productItems={productItems} setProductItems={setProductItems} activeView={menuView} editingItemId={menuItemEditId} onNavigate={openMenuView} />,
     inventory: <Inventory key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} cloudStateReady={supabaseStateReady} />,
     production: <Production key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} activeView={productionView} activeReport={productionReportView} onViewChange={setProductionView} foodStock={foodStock} onFoodStockChange={updateFoodStock} cloudStateReady={supabaseStateReady} />,
@@ -4161,7 +4161,7 @@ function KDS({ notify, orders, setOrders, kotPrinter }) {
   );
 }
 
-function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders = [], onSaveOrder, onSendKot, onSendReception, onCancelOrder, onCancelItem, kotPrinter }) {
+function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders = [], onSaveOrder, onSendKot, onSendReception, onCancelOrder, onCancelItem, kotPrinter, cloudStateReady = false }) {
   const [floors, setFloors] = useState(() => {
     const saved = loadStoredArray(`vestora-floors-${storeId}`);
     return saved.length ? saved : floorOptions;
@@ -4190,6 +4190,7 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
   const [qrTable, setQrTable] = useState(null);
   const [qrImage, setQrImage] = useState("");
   const [qrLoading, setQrLoading] = useState(false);
+  const [tableSync, setTableSync] = useState({ state: "pending", message: "Waiting for the shared table layout..." });
   const visibleTables = tables.filter((table) => table.floor === floor);
   const selectedTable = tables.find((table) => table.id === selected);
   const catalogItems = (items?.length ? items : menuItems).filter((item) => item.status !== "Inactive");
@@ -4208,12 +4209,38 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
   const orderItemCount = orderItems.reduce((sum, item) => sum + Number(item.qty || 0), 0);
 
   useEffect(() => {
-    localStorage.setItem(`vestora-tables-${storeId}`, JSON.stringify(tables));
-  }, [tables, storeId]);
+    const key = `vestora-tables-${storeId}`;
+    localStorage.setItem(key, JSON.stringify(tables));
+    if (!cloudStateReady || !supabaseConfigured) return;
+    let cancelled = false;
+    setTableSync({ state: "saving", message: "Saving table layout to cloud..." });
+    syncLocalStateKeyToSupabase(key)
+      .then(() => { if (!cancelled) setTableSync({ state: "synced", message: "Tables saved to cloud — other devices can refresh to see them." }); })
+      .catch((error) => { if (!cancelled) setTableSync({ state: "error", message: error.message || "Table layout saved only on this device. Retry when online." }); });
+    return () => { cancelled = true; };
+  }, [tables, storeId, cloudStateReady]);
 
   useEffect(() => {
-    localStorage.setItem(`vestora-floors-${storeId}`, JSON.stringify(floors));
-  }, [floors, storeId]);
+    const key = `vestora-floors-${storeId}`;
+    localStorage.setItem(key, JSON.stringify(floors));
+    if (!cloudStateReady || !supabaseConfigured) return;
+    let cancelled = false;
+    setTableSync({ state: "saving", message: "Saving floor layout to cloud..." });
+    syncLocalStateKeyToSupabase(key)
+      .then(() => { if (!cancelled) setTableSync({ state: "synced", message: "Floors saved to cloud — other devices can refresh to see them." }); })
+      .catch((error) => { if (!cancelled) setTableSync({ state: "error", message: error.message || "Floor layout saved only on this device. Retry when online." }); });
+    return () => { cancelled = true; };
+  }, [floors, storeId, cloudStateReady]);
+
+  useEffect(() => {
+    const receive = (event) => {
+      const { key, value } = event.detail || {};
+      if (key === `vestora-tables-${storeId}` && Array.isArray(value)) setTables((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
+      if (key === `vestora-floors-${storeId}` && Array.isArray(value)) setFloors((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
+    };
+    window.addEventListener("vestora-cloud-list-synced", receive);
+    return () => window.removeEventListener("vestora-cloud-list-synced", receive);
+  }, [storeId]);
 
   function createFloor(event) {
     event.preventDefault();
@@ -4566,6 +4593,10 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
 
   return (
     <section className="screen">
+      <div className="panel inventory-sync-status" role="status" aria-live="polite">
+        {tableSync.state === "synced" ? <CircleCheck size={18} /> : <AlertTriangle size={18} />}
+        <span>{cloudStateReady && supabaseConfigured ? tableSync.message : "Table layout is waiting for cloud sign-in before it can be shared."}</span>
+      </div>
       <div className="floorbar">
         <div className="floor-tabs-wrap">
           <div className="segmented floor-tabs">{floors.map((name) => <button key={name} className={floor === name ? "selected" : ""} onClick={() => { setFloor(name); setSelected(null); setGuestCount(1); setEditingId(null); setShowSetup(false); setShowFloorSetup(false); setDraft((current) => ({ ...current, floor: name })); }}>{name}</button>)}</div>
