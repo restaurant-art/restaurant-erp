@@ -598,6 +598,7 @@ const baseDashboard = {
 const roleModuleAccess = {
   "Super Admin": modules.map((module) => module.id),
   "Restaurant Admin": modules.map((module) => module.id),
+  "Restaurant Owner": modules.map((module) => module.id),
   "Branch Manager": ["dashboard", "pos", "kds", "tables", "menu", "inventory", "production", "crm", "offers", "attendance", "reports", "settings"],
   "HR Manager": ["dashboard", "attendance", "reports", "settings"],
   Cashier: ["dashboard", "pos", "tables", "offers", "finance"],
@@ -624,7 +625,7 @@ function formatPreciseMoney(value) {
 
 function roleToAuthRole(role) {
   if (["Super Admin", "super_admin"].includes(role)) return "super_admin";
-  if (["Restaurant Admin", "restaurant_admin"].includes(role)) return "restaurant_admin";
+  if (["Restaurant Admin", "restaurant_admin", "Restaurant Owner", "owner"].includes(role)) return "restaurant_admin";
   if (role === "supplier") return "supplier";
   return "restaurant_user";
 }
@@ -1177,7 +1178,10 @@ function App() {
 
 function CloudSyncBanner() {
   const status = useCloudSyncStatus();
-  return <div className={`cloud-sync-banner cloud-sync-${status.state}`} role="status" aria-live="polite"><span>{status.message}</span><button type="button" onClick={() => syncLocalStateToSupabase().catch(() => {})}>Sync / retry</button></div>;
+  // Routine saving is silent. Only a real cloud error needs attention in the
+  // bottom corner, where the operator can retry without losing local work.
+  if (status.state !== "error") return null;
+  return <div className="cloud-sync-banner cloud-sync-error" role="alert"><span>{status.message}</span><button type="button" onClick={() => syncLocalStateToSupabase().catch(() => {})}>Retry</button></div>;
 }
 
 function AuthenticatedApp() {
@@ -1500,7 +1504,7 @@ function AuthenticatedApp() {
       try {
         const profile = await supabaseProfile();
         if (!isCurrent()) return;
-        loginUser = { ...loginUser, ...profile, storeId: profile.storeId || "GLOBAL" };
+        loginUser = { ...loginUser, ...profile, role: roleToAuthRole(profile.role), storeId: profile.storeId || "GLOBAL" };
         setCloudLoadStage("Loading shared store records and recovering unsent changes…");
         // This includes the authorized directory; a separate directory read
         // delayed startup and its failure was previously hidden.
@@ -8053,7 +8057,9 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
     };
     delete scopedDraft.password;
     try {
-      await syncLocalStateKeyToSupabase("vestora-stores");
+      // The server reads the verified store directory itself. Saving that
+      // directory first made an otherwise authorized owner unable to add a
+      // staff user when directory saving was restricted or temporarily busy.
       const result = await supabaseApiRequest("staff-account", { method: "POST", body: JSON.stringify({ ...scopedDraft, password: draft.password }) });
       scopedDraft.authUserId = result.authUserId;
     } catch (error) { notify(`User was not saved: ${error.message}`, 10000); return; }

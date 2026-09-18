@@ -10,19 +10,21 @@ const base = process.env.SYNC_TEST_URL || 'http://127.0.0.1:4188';
   let version = 1;
   const errors = [];
   const profile = { id: 'qa-user', name: 'QA Admin', role: 'super_admin', appRole: 'Super Admin', isSuperuser: true, storeId: 'QA-A', allowedStoreIds: ['QA-A'] };
+  let staffAccountRequests = 0;
   const authUser = { id: 'qa-user', aud: 'authenticated', role: 'authenticated', email: 'qa@example.test', app_metadata: {}, user_metadata: {}, created_at: new Date().toISOString() };
   const exp = Math.floor(Date.now() / 1000) + 3600;
   const token = Buffer.from('{}').toString('base64url') + '.' + Buffer.from(JSON.stringify({ sub: 'qa-user', exp })).toString('base64url') + '.test';
-  async function open({ failProfile = false, failState = false } = {}) {
+  async function open({ failProfile = false, failState = false, profileOverride = profile } = {}) {
     const context = await browser.newContext();
     await context.route('**/*.supabase.co/**', async (route) => {
       const req = route.request(), url = new URL(req.url());
       let data = [], code = 200;
       if (url.pathname.includes('/auth/v1/user')) data = authUser;
       else if (url.pathname.endsWith('/profile')) {
-        data = failProfile ? { message: 'Invalid JWT' } : profile;
+        data = failProfile ? { message: 'Invalid JWT' } : profileOverride;
         if (failProfile) code = 401;
       }
+      else if (url.pathname.endsWith('/staff-account')) { staffAccountRequests++; data = { authUserId: `staff-${staffAccountRequests}` }; }
       else if (url.pathname.endsWith('/state')) {
         if (failState) { await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Store access could not be verified' }) }); return; }
         if (req.method() === 'PUT') {
@@ -42,7 +44,7 @@ const base = process.env.SYNC_TEST_URL || 'http://127.0.0.1:4188';
       localStorage.setItem('vestora-current-user', JSON.stringify(profile));
       localStorage.setItem('vestora-selected-store', 'QA-A');
       localStorage.setItem('vestora-super-admin-in-store', 'true');
-    }, { token, exp, authUser, profile });
+    }, { token, exp, authUser, profile: profileOverride });
     const page = await context.newPage();
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(base);
@@ -53,8 +55,10 @@ const base = process.env.SYNC_TEST_URL || 'http://127.0.0.1:4188';
       failProfile = false; failState = false;
       await page.getByRole('button', { name: 'Retry connection', exact: true }).click();
     }
-    await page.getByText('Store data saved to cloud', { exact: true }).waitFor({ timeout: 15000 });
-    if (await page.getByRole('button', { name: 'View branch', exact: true }).count()) await page.getByRole('button', { name: 'View branch', exact: true }).click();
+    if (profileOverride.isSuperuser) {
+      await page.getByRole('button', { name: 'View branch', exact: true }).waitFor({ timeout: 15000 });
+      await page.getByRole('button', { name: 'View branch', exact: true }).click();
+    }
     try { await page.getByRole('button', { name: 'Tables', exact: true }).waitFor({ timeout: 15000 }); }
     catch (error) { console.log('Browser errors:', errors); console.log('Page:', await page.locator('body').innerText()); throw error; }
     return page;
@@ -66,6 +70,17 @@ const base = process.env.SYNC_TEST_URL || 'http://127.0.0.1:4188';
     const recoveredState = await open({ failState: true });
     await recoveredState.context().close();
     console.log('PASS: shared-state failure is visible and retry recovers');
+    const owner = await open({ profileOverride: { ...profile, id: 'qa-owner', role: 'owner', appRole: 'Restaurant Owner', isSuperuser: false } });
+    await owner.locator('nav').getByRole('button', { name: 'Admin', exact: true }).click();
+    await owner.getByRole('button', { name: 'User creation', exact: true }).click();
+    await owner.getByLabel('Name', { exact: true }).fill('QA Branch Cashier');
+    await owner.getByLabel('Email', { exact: true }).fill('qa-branch-cashier@example.test');
+    await owner.getByLabel('Password', { exact: true }).fill('test-only-password');
+    await owner.getByRole('button', { name: 'Create new user', exact: true }).click();
+    await owner.getByText('New user created', { exact: true }).waitFor();
+    assert.equal(staffAccountRequests, 1, 'restaurant owners must create staff through the secure account endpoint');
+    await owner.context().close();
+    console.log('PASS: a restaurant owner can create a branch user');
     const a = await open(), b = await open();
     await a.getByRole('button', { name: 'Tables', exact: true }).click();
     await b.getByRole('button', { name: 'Tables', exact: true }).click();
