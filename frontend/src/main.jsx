@@ -77,7 +77,7 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
-import { fetchSharedSuperAdminStores, hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseApiList, supabaseApiRequest, supabaseConfigured, supabaseFunctionJson, supabaseProfile, syncLocalStateKeyToSupabase, syncLocalStateToSupabase, updateSupabasePassword } from "./lib/supabase";
+import { fetchSharedSuperAdminStores, hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseApiList, supabaseApiRequest, supabaseConfigured, supabaseFunctionJson, supabaseProfile, syncInventoryState, syncLocalStateKeyToSupabase, syncLocalStateToSupabase, updateSupabasePassword } from "./lib/supabase";
 
 const appBaseUrl = import.meta.env.BASE_URL || "/";
 const localAuthEnabled = String(import.meta.env.VITE_LOCAL_AUTH_ENABLED || "").toLowerCase() === "true";
@@ -1441,6 +1441,7 @@ function AuthenticatedApp() {
   }
 
   function handleLogout() {
+    window.vestoraSupabaseStateReady = false;
     if (supabaseConfigured) supabase.auth.signOut().catch(() => {});
     localStorage.removeItem("vestora-current-user");
     localStorage.removeItem("vestora-super-admin-in-store");
@@ -1456,6 +1457,7 @@ function AuthenticatedApp() {
     let mounted = true;
     const applySession = async (session) => {
       if (!mounted || !session?.user) return;
+      window.vestoraSupabaseStateReady = false;
       setSupabaseStateReady(false);
       const metadata = session.user.user_metadata || {};
       let loginUser = {
@@ -1468,6 +1470,7 @@ function AuthenticatedApp() {
         status: "Active",
       };
       let profileLoaded = false;
+      let stateLoaded = false;
       try {
         const profile = await supabaseProfile();
         loginUser = { ...loginUser, ...profile, storeId: metadata.storeId || "STORE-001" };
@@ -1507,22 +1510,21 @@ function AuthenticatedApp() {
               return;
             }
           }
-        } catch {
-          // A transient state-read failure must not disable store-directory
-          // writes forever. The profile is authenticated, so the next store
-          // change can still be persisted and the next session can hydrate it.
+          stateLoaded = true;
+        } catch (error) {
+          notify(`Cloud data could not be loaded: ${error.message}. Local records are retained.`, 10000);
         }
       }
 
       if (mounted) {
         setCurrentUser((existing) => existing || loginUser);
         localStorage.setItem("vestora-current-user", JSON.stringify(loginUser));
-        setSupabaseStateReady(profileLoaded);
+        setSupabaseStateReady(profileLoaded && stateLoaded);
       }
     };
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "PASSWORD_RECOVERY" && mounted) setPasswordDialogOpen(true);
-      if (session) applySession(session);
+      if (session) window.setTimeout(() => applySession(session), 0);
       else if (mounted) {
         setCurrentUser(null);
         setSupabaseStateReady(!supabaseConfigured);
@@ -4771,57 +4773,58 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
   const [skuIsManual, setSkuIsManual] = useState(false);
   const [categoryCreatorOpen, setCategoryCreatorOpen] = useState(false);
   const [categoryDraft, setCategoryDraft] = useState("");
-  const inventoryLocalChangeAtRef = useRef(0);
-  const inventoryApplyingRemoteRef = useRef(false);
-  const cloudHydratedRef = useRef(false);
+  const [inventorySync, setInventorySync] = useState({ state: "pending", message: supabaseConfigured ? "Connecting to cloud inventory…" : "Saved on this computer only. Open uvpro.in to use shared inventory." });
+  const inventorySyncMounted = useRef(true);
+  const inventorySyncJob = useRef(null);
+
+  const refreshInventory = () => {
+    if (inventorySyncJob.current) return inventorySyncJob.current;
+    if (supabaseConfigured && !cloudStateReady) {
+      setInventorySync({ state: "pending", message: "Cloud login is not ready. Inventory is saved on this computer; sign in again if this continues." });
+      return Promise.resolve();
+    }
+    setInventorySync({ state: "pending", message: "Saving and checking cloud inventory…" });
+    const job = Promise.all([syncInventoryState(storageKey), syncInventoryState(categoryStorageKey)])
+      .then(() => {
+        if (inventorySyncMounted.current) setInventorySync({ state: "synced", message: "Inventory saved to cloud. Other systems signed into this branch can see it." });
+      })
+      .catch((error) => {
+        if (inventorySyncMounted.current) setInventorySync({ state: "error", message: `Not synced: ${error.message}` });
+      })
+      .finally(() => { inventorySyncJob.current = null; });
+    inventorySyncJob.current = job;
+    return job;
+  };
 
   useEffect(() => {
     localStorage.setItem(storageKey, JSON.stringify(items));
-    if (inventoryApplyingRemoteRef.current) {
-      inventoryApplyingRemoteRef.current = false;
-      return;
-    }
-    inventoryLocalChangeAtRef.current = Date.now();
-    if (cloudStateReady && cloudHydratedRef.current) syncLocalStateKeyToSupabase(storageKey).catch(() => {});
+    const timer = window.setTimeout(refreshInventory, 300);
+    return () => window.clearTimeout(timer);
   }, [items, storageKey, cloudStateReady]);
 
   useEffect(() => {
     localStorage.setItem(categoryStorageKey, JSON.stringify(categories));
-    if (cloudStateReady && cloudHydratedRef.current) syncLocalStateKeyToSupabase(categoryStorageKey).catch(() => {});
+    const timer = window.setTimeout(refreshInventory, 300);
+    return () => window.clearTimeout(timer);
   }, [categories, categoryStorageKey, cloudStateReady]);
 
   useEffect(() => {
-    if (!cloudStateReady || !supabaseConfigured) return undefined;
-    let cancelled = false;
-    const refreshFromCloud = async () => {
-      if (Date.now() - inventoryLocalChangeAtRef.current < 2500) return;
-      try {
-        const [inventoryRows, categoryRows] = await Promise.all([
-          supabaseFunctionJson(`vestora-api/state?key=${encodeURIComponent(storageKey)}`),
-          supabaseFunctionJson(`vestora-api/state?key=${encodeURIComponent(categoryStorageKey)}`),
-        ]);
-        if (cancelled) return;
-        const remoteItems = Array.isArray(inventoryRows?.[0]?.state_value) ? inventoryRows[0].state_value : null;
-        const remoteCategories = Array.isArray(categoryRows?.[0]?.state_value) ? categoryRows[0].state_value : null;
-        if (remoteItems) setItems((current) => {
-          if (JSON.stringify(current) === JSON.stringify(remoteItems)) return current;
-          inventoryApplyingRemoteRef.current = true;
-          return remoteItems;
-        });
-        if (remoteCategories) setCategories((current) => JSON.stringify(current) === JSON.stringify(remoteCategories) ? current : remoteCategories);
-      } catch {
-        // The local inventory remains usable while the shared state endpoint is unavailable.
-      } finally {
-        if (!cancelled) {
-          cloudHydratedRef.current = true;
-        }
-      }
+    inventorySyncMounted.current = true;
+    const receive = (event) => {
+      const { key, value } = event.detail;
+      if (key === storageKey) setItems((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
+      if (key === categoryStorageKey) setCategories((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
     };
-    refreshFromCloud();
-    const timer = window.setInterval(refreshFromCloud, 10000);
+    window.addEventListener("vestora-inventory-synced", receive);
+    window.addEventListener("online", refreshInventory);
+    window.addEventListener("focus", refreshInventory);
+    const timer = window.setInterval(refreshInventory, 5000);
     return () => {
-      cancelled = true;
+      inventorySyncMounted.current = false;
       window.clearInterval(timer);
+      window.removeEventListener("vestora-inventory-synced", receive);
+      window.removeEventListener("online", refreshInventory);
+      window.removeEventListener("focus", refreshInventory);
     };
   }, [cloudStateReady, storageKey, categoryStorageKey]);
 
@@ -4937,7 +4940,8 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
       updatedAt: new Date().toISOString(),
     };
     setItems((current) => editingId ? current.map((item) => item.id === editingId ? nextItem : item) : [nextItem, ...current]);
-    notify(editingId ? `${nextItem.name} updated` : `${nextItem.name} added to inventory`);
+    setInventorySync({ state: "pending", message: "Saved on this computer. Waiting for cloud confirmation…" });
+    notify(`${nextItem.name} saved locally; checking cloud sync`);
     closeEditor();
   };
   const deleteItem = (item) => {
@@ -4964,6 +4968,11 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
 
   return (
     <section className="screen inventory-screen">
+      <div className="panel inventory-sync-status" role="status" aria-live="polite">
+        {inventorySync.state === "synced" ? <CircleCheck size={18} /> : <AlertTriangle size={18} />}
+        <span>{inventorySync.message}</span>
+        <button type="button" onClick={refreshInventory}>Retry / refresh</button>
+      </div>
       <div className="inventory-page-head">
         <div className="inventory-title-block">
           <span className="inventory-title-icon"><Boxes size={24} /></span>
@@ -5188,6 +5197,13 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
     localStorage.setItem(inventoryKey, JSON.stringify(inventory));
     if (cloudStateReady) syncLocalStateKeyToSupabase(inventoryKey).catch(() => {});
   }, [inventory, inventoryKey]);
+  useEffect(() => {
+    const receive = (event) => {
+      if (event.detail.key === inventoryKey) setInventory((current) => JSON.stringify(current) === JSON.stringify(event.detail.value) ? current : event.detail.value);
+    };
+    window.addEventListener("vestora-inventory-synced", receive);
+    return () => window.removeEventListener("vestora-inventory-synced", receive);
+  }, [inventoryKey]);
   useEffect(() => {
     localStorage.setItem(batchKey, JSON.stringify(batches));
     if (cloudStateReady) syncLocalStateKeyToSupabase(batchKey).catch(() => {});

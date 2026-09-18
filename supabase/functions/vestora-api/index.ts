@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
 };
 
 const json = (body: unknown, status = 200) =>
@@ -13,6 +13,15 @@ const json = (body: unknown, status = 200) =>
   });
 
 const sharedSuperAdminStateKeys = new Set(["vestora-stores"]);
+// Business snapshots can contain nested user/settings objects. Their secrets
+// must not become shared merely because the outer storage key is shareable.
+const stripStateSecrets = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(stripStateSecrets);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !/(password|token|credential|secret|access.?key|api.?key)/i.test(key))
+    .map(([key, entry]) => [key, stripStateSecrets(entry)]));
+  return value;
+};
 // Business state is shared across authenticated devices/users in the same
 // VESTORA project. Branch-specific records keep the branch id in their key or
 // in each record and the UI scopes them before display. Session credentials,
@@ -60,6 +69,7 @@ Deno.serve(async (request) => {
   const resource = apiIndex >= 0 ? pathParts[apiIndex + 1] : undefined;
   const recordId = apiIndex >= 0 ? pathParts[apiIndex + 2] : undefined;
   if (resource === "profile") {
+    if (!profile) return json({ error: "This login is not linked to a VESTORA restaurant profile" }, 403);
     const appRoleByType: Record<string, string> = {
       super_admin: "Super Admin",
       owner: "Restaurant Owner",
@@ -92,6 +102,7 @@ Deno.serve(async (request) => {
     return json({ ok: !databaseError, user_id: user.id, database: databaseError ? "unavailable" : "ok" }, databaseError ? 503 : 200);
   }
   if (resource === "state") {
+    if (!profile) return json({ error: "This login is not linked to a VESTORA restaurant profile" }, 403);
     if (request.method === "GET") {
       const key = url.searchParams.get("key");
       const storeId = url.searchParams.get("storeId");
@@ -126,7 +137,7 @@ Deno.serve(async (request) => {
       const body = await request.json().catch(() => null);
       if (!body || typeof body.key !== "string") return json({ error: "A state key is required" }, 400);
       const sharedState = Boolean(profile) && isSharedStateKey(body.key);
-      let stateValue = body.value ?? null;
+      let stateValue = stripStateSecrets(body.value ?? null);
       if (sharedState && mergeSharedArrayKeys.has(body.key) && Array.isArray(stateValue)) {
         const { data: existingState } = await admin
           .from("vestora_shared_app_state")
@@ -143,6 +154,22 @@ Deno.serve(async (request) => {
         ? { state_key: body.key, state_value: stateValue, updated_at: new Date().toISOString() }
         : { user_id: user.id, state_key: body.key, state_value: stateValue, updated_at: new Date().toISOString() };
       const tableName = sharedState ? "vestora_shared_app_state" : "vestora_app_state";
+      // Inventory uses optimistic concurrency. A stale device must re-read and
+      // merge its edits before saving, never overwrite a newer stock snapshot.
+      const inventoryKey = /^vestora-inventory-(?!transactions-)/.test(body.key);
+      if (sharedState && inventoryKey) {
+        if (!("expectedUpdatedAt" in body)) return json({ error: "Refresh this app to save inventory safely" }, 409);
+        if (body.expectedUpdatedAt !== null && typeof body.expectedUpdatedAt !== "string") return json({ error: "Invalid inventory version" }, 400);
+        if (!Array.isArray(stateValue)) return json({ error: "Inventory must be an array" }, 400);
+        payload.updated_at = new Date(Math.max(Date.now(), (Date.parse(body.expectedUpdatedAt || "") || 0) + 1)).toISOString();
+        const write = body.expectedUpdatedAt === null
+          ? admin.from(tableName).insert(payload)
+          : admin.from(tableName).update(payload).eq("state_key", body.key).eq("updated_at", body.expectedUpdatedAt);
+        const { data, error: writeError } = await write.select("state_key, state_value, updated_at").maybeSingle();
+        if (writeError?.code === "23505" || (!writeError && !data)) return json({ error: "Inventory changed on another device; retry with the latest version" }, 409);
+        if (writeError) return json({ error: writeError.message }, 500);
+        return json(data);
+      }
       const { data, error: stateError } = await admin.from(tableName).upsert(payload).select("state_key, state_value, updated_at").single();
       if (stateError) return json({ error: stateError.message }, 500);
       return json(data);

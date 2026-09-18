@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { createInventorySync, isInventoryStateKey } from "./inventory-sync.js";
 
 const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
 const supabaseAnonKey = String(
@@ -45,7 +46,9 @@ export async function supabaseFunctionJson(path, options = {}) {
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     const message = body?.error || `Supabase API request failed (${response.status})`;
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
   return body;
 }
@@ -80,7 +83,30 @@ const sharedSuperAdminStateKey = "vestora-stores";
 // Store and branch directory changes are saved deliberately by the stores effect.
 // Do not include that shared record in the background device-state sync, otherwise
 // an older browser can overwrite the latest directory with its stale local copy.
-const backgroundSyncableStateKey = (key) => syncableStateKey(key) && key !== sharedSuperAdminStateKey;
+const backgroundSyncableStateKey = (key) => syncableStateKey(key) && key !== sharedSuperAdminStateKey && !isInventoryStateKey(key);
+
+const synchronizeInventory = createInventorySync({
+  storage: localStorage,
+  namespace: supabaseUrl,
+  read: async (key) => {
+    const rows = await supabaseFunctionJson(`vestora-api/state?key=${encodeURIComponent(key)}`);
+    if (!Array.isArray(rows)) throw new Error("Unable to read cloud inventory; local data retained.");
+    return rows.find((row) => row.state_key === key) || null;
+  },
+  write: (key, value, expectedUpdatedAt) => supabaseFunctionJson("vestora-api/state", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, value, expectedUpdatedAt }),
+  }),
+  changed: (key, value) => window.dispatchEvent(new CustomEvent("vestora-inventory-synced", { detail: { key, value } })),
+});
+
+export async function syncInventoryState(key) {
+  if (!supabaseConfigured) throw new Error("Saved on this computer only. Cloud connection is not configured; use uvpro.in to share inventory.");
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error("Saved on this computer only. Sign in to upload inventory.");
+  return synchronizeInventory(key);
+}
 
 export async function fetchSharedSuperAdminStores() {
   if (!supabaseConfigured || !supabase) return null;
@@ -110,10 +136,12 @@ export async function syncLocalStateKeyToSupabase(key) {
   // Components can mount while the authenticated session is still hydrating.
   // Do not let their starter/local defaults overwrite the shared snapshot.
   if (typeof window !== "undefined" && window.vestoraSupabaseStateReady !== true) return;
+  if (isInventoryStateKey(key)) return syncInventoryState(key);
   const raw = localStorage.getItem(key);
   if (raw === null) return;
   let value = raw;
   try { value = JSON.parse(raw); } catch { /* Keep non-JSON values as strings. */ }
+  value = JSON.parse(JSON.stringify(value, (field, entry) => /(password|token|credential|secret|access.?key|api.?key)/i.test(field) ? undefined : entry));
 
   if (key === sharedSuperAdminStateKey && supabase) {
     const { error: sharedStateError } = await supabase
@@ -144,20 +172,16 @@ export async function hydrateLocalStateFromSupabase(storeId = "") {
     }
   }
 
-  let response;
-  try {
-    const query = storeId ? `?storeId=${encodeURIComponent(storeId)}` : "";
-    response = await supabaseFunctionFetch(`vestora-api/state${query}`);
-  } catch (error) {
-    if (sharedStateHydrated) return true;
-    throw error;
-  }
+  const query = storeId ? `?storeId=${encodeURIComponent(storeId)}` : "";
+  const response = await supabaseFunctionFetch(`vestora-api/state${query}`);
   if (!response.ok) {
-    if (sharedStateHydrated) return true;
     throw new Error(`Supabase state request failed (${response.status})`);
   }
   const rows = await response.json();
   if (!rows.length) return sharedStateHydrated;
-  rows.forEach(({ state_key: key, state_value: value }) => localStorage.setItem(key, JSON.stringify(value)));
+  // Inventory has its own versioned merge. Never hydrate over browser-only
+  // items (including items created while earlier cloud PUT requests failed).
+  rows.filter(({ state_key: key }) => !isInventoryStateKey(key))
+    .forEach(({ state_key: key, state_value: value }) => localStorage.setItem(key, JSON.stringify(value)));
   return true;
 }

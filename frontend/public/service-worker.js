@@ -1,4 +1,4 @@
-const CACHE_NAME = "vestora-v207";
+const CACHE_NAME = "vestora-v208";
 const assetUrl = (path) => new URL(path, self.registration.scope).toString();
 const SHELL = [
   "",
@@ -28,6 +28,9 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  // Authenticated API responses must never be cached as offline page assets.
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin || url.pathname.includes("/functions/") || url.pathname.includes("/rest/") || event.request.headers.has("authorization")) return;
   event.respondWith(
     fetch(event.request)
       .then((response) => {
