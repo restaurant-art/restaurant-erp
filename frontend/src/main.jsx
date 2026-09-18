@@ -1279,6 +1279,9 @@ function AuthenticatedApp() {
   const activeStoreId = canManageAll ? selectedStoreId : normalizeStoreId(currentUser?.storeId);
   const activeStore = stores.find((store) => store.id === activeStoreId) || emptyStoreContext;
   useEffect(() => {
+    if (supabaseStateReady && sharedShifts.length) localStorage.setItem(`vestora-shifts-${settingsStoreId}`, JSON.stringify(sharedShifts));
+  }, [supabaseStateReady, settingsStoreId, sharedShifts]);
+  useEffect(() => {
     setLastShiftClose(loadStoredObject(`vestora-last-shift-close-${activeStore.id}`));
   }, [activeStore.id]);
   const foodStockStorageKey = `vestora-food-stock-${activeStore.id}`;
@@ -1341,7 +1344,7 @@ function AuthenticatedApp() {
   useEffect(() => {
     localStorage.setItem(`vestora-theme-config-${settingsStoreId}`, JSON.stringify(themeConfig));
     setDark(themeConfig.mode === "Dark");
-  }, [themeConfig, settingsStoreId]);
+  }, [themeConfig, settingsStoreId, supabaseStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-custom-roles", JSON.stringify(customRoles));
@@ -1798,7 +1801,7 @@ function AuthenticatedApp() {
 
   useEffect(() => {
     localStorage.setItem(`vestora-bill-template-${settingsStoreId}`, JSON.stringify(billTemplate));
-  }, [billTemplate, settingsStoreId]);
+  }, [billTemplate, settingsStoreId, supabaseStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-kot-printer", JSON.stringify(kotPrinter));
