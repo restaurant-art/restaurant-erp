@@ -86,6 +86,12 @@ test("old clients cannot overwrite inventory without a version", async () => {
   assert.match((await response.json()).error, /Refresh/);
 });
 
+test("an empty JSON state is forwarded as a valid shared snapshot", async () => {
+  const response = await endpoint()("PUT", { key: "vestora-inventory-STORE-001", value: null, expectedUpdatedAt: null });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).state_value, null);
+});
+
 test("tables and floors use the same protected cloud write path", async () => {
   const request = endpoint();
   const tablesKey = "vestora-tables-STORE-001";
