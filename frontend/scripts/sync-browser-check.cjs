@@ -14,7 +14,7 @@ const base = process.env.SYNC_TEST_URL || 'http://127.0.0.1:4188';
   const authUser = { id: 'qa-user', aud: 'authenticated', role: 'authenticated', email: 'qa@example.test', app_metadata: {}, user_metadata: {}, created_at: new Date().toISOString() };
   const exp = Math.floor(Date.now() / 1000) + 3600;
   const token = Buffer.from('{}').toString('base64url') + '.' + Buffer.from(JSON.stringify({ sub: 'qa-user', exp })).toString('base64url') + '.test';
-  async function open({ failProfile = false, failState = false, profileOverride = profile } = {}) {
+  async function open({ failProfile = false, failState = false, profileOverride = profile, selectedStoreId = 'QA-A', stayOnGlobal = false } = {}) {
     const context = await browser.newContext();
     await context.route('**/*.supabase.co/**', async (route) => {
       const req = route.request(), url = new URL(req.url());
@@ -39,12 +39,12 @@ const base = process.env.SYNC_TEST_URL || 'http://127.0.0.1:4188';
       }
       await route.fulfill({ status: code, contentType: 'application/json', body: JSON.stringify(data), headers: { 'access-control-allow-origin': '*' } });
     });
-    await context.addInitScript(({ token, exp, authUser, profile }) => {
+    await context.addInitScript(({ token, exp, authUser, profile, selectedStoreId }) => {
       localStorage.setItem('sb-vqinmequtjkuzrtzkzsk-auth-token', JSON.stringify({ access_token: token, refresh_token: 'test-only', expires_at: exp, expires_in: 3600, token_type: 'bearer', user: authUser }));
       localStorage.setItem('vestora-current-user', JSON.stringify(profile));
-      localStorage.setItem('vestora-selected-store', 'QA-A');
+      localStorage.setItem('vestora-selected-store', selectedStoreId);
       localStorage.setItem('vestora-super-admin-in-store', 'true');
-    }, { token, exp, authUser, profile: profileOverride });
+    }, { token, exp, authUser, profile: profileOverride, selectedStoreId });
     const page = await context.newPage();
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(base);
@@ -55,7 +55,7 @@ const base = process.env.SYNC_TEST_URL || 'http://127.0.0.1:4188';
       failProfile = false; failState = false;
       await page.getByRole('button', { name: 'Retry connection', exact: true }).click();
     }
-    if (profileOverride.isSuperuser) {
+    if (profileOverride.isSuperuser && !stayOnGlobal) {
       await page.getByRole('button', { name: 'View branch', exact: true }).waitFor({ timeout: 15000 });
       await page.getByRole('button', { name: 'View branch', exact: true }).click();
     }
@@ -81,6 +81,18 @@ const base = process.env.SYNC_TEST_URL || 'http://127.0.0.1:4188';
     assert.equal(staffAccountRequests, 1, 'restaurant owners must create staff through the secure account endpoint');
     await owner.context().close();
     console.log('PASS: a restaurant owner can create a branch user');
+    const globalAdmin = await open({ selectedStoreId: 'GLOBAL', profileOverride: { ...profile, id: 'qa-global-admin', role: 'restaurant_admin', appRole: 'Restaurant Admin', isSuperuser: false, storeId: 'GLOBAL' } });
+    await globalAdmin.locator('nav').getByRole('button', { name: 'Admin', exact: true }).click();
+    await globalAdmin.getByRole('button', { name: 'User creation', exact: true }).click();
+    await globalAdmin.getByLabel('Name', { exact: true }).fill('QA Global Cashier');
+    await globalAdmin.getByLabel('Email', { exact: true }).fill('qa-global-cashier@example.test');
+    await globalAdmin.getByLabel('Password', { exact: true }).fill('test-only-password');
+    await globalAdmin.locator('.user-form select').first().selectOption('QA-A');
+    await globalAdmin.getByRole('button', { name: 'Create new user', exact: true }).click();
+    await globalAdmin.getByText('New user created', { exact: true }).waitFor();
+    assert.equal(staffAccountRequests, 2, 'a global administrator must choose a real branch before creating staff');
+    await globalAdmin.context().close();
+    console.log('PASS: all-stores user creation requires and saves the chosen branch');
     const a = await open(), b = await open();
     await a.getByRole('button', { name: 'Tables', exact: true }).click();
     await b.getByRole('button', { name: 'Tables', exact: true }).click();

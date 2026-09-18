@@ -7918,7 +7918,8 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, onRef
 }
 
 function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageStore, stores, activeStore, activeView, onViewChange, customRoles = [], setCustomRoles }) {
-  const [draft, setDraft] = useState({ name: "", email: "", password: "", role: "Cashier", status: "Active", storeId: activeStore.id });
+  const defaultUserStoreId = activeStore.id === "GLOBAL" ? "" : activeStore.id;
+  const [draft, setDraft] = useState({ name: "", email: "", password: "", role: "Cashier", status: "Active", storeId: defaultUserStoreId });
   const [roleDraft, setRoleDraft] = useState({ id: "", name: "", description: "", status: "Active", modules: ["dashboard", "pos"] });
   const [editingId, setEditingId] = useState(null);
   const [showUserPassword, setShowUserPassword] = useState(false);
@@ -7940,7 +7941,8 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
     ...Object.fromEntries(storeCustomRoles.map((role) => [role.name, role.description || `Custom role with ${role.modules?.length || 0} selected modules.`])),
   };
   const visibleUsers = users.filter((user) => {
-    if (user.storeId === "GLOBAL" || normalizeStoreId(user.storeId) !== activeStore.id) return false;
+    if (user.storeId === "GLOBAL") return false;
+    if (!(canManageAll && activeStore.id === "GLOBAL") && normalizeStoreId(user.storeId) !== activeStore.id) return false;
     if (!canManageAll && user.role === "Super Admin") return false;
     return true;
   });
@@ -7949,7 +7951,7 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
   const protectedRoleNames = new Set(["Super Admin", "Restaurant Admin", "Branch Manager", "Cashier", "Waiter", "Chef", "Accountant", "supplier"]);
 
   function resetUserEditor() {
-    setDraft({ name: "", email: "", password: "", role: "Cashier", status: "Active", storeId: activeStore.id });
+    setDraft({ name: "", email: "", password: "", role: "Cashier", status: "Active", storeId: defaultUserStoreId });
     setEditingId(null);
     setShowUserPassword(false);
   }
@@ -8028,8 +8030,9 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
   }
 
   function canEditUser(user) {
-    if (!canManageUsers || normalizeStoreId(user?.storeId) !== activeStore.id) return false;
-    return canManageAll || !["Super Admin", "Restaurant Admin"].includes(user?.role);
+    if (!canManageUsers) return false;
+    if (canManageAll) return true;
+    return normalizeStoreId(user?.storeId) === activeStore.id && !["Super Admin", "Restaurant Admin"].includes(user?.role);
   }
 
   async function saveUser() {
@@ -8039,6 +8042,11 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
     }
     if (!draft.name || !draft.email || (!editingId && !draft.password)) {
       notify("Enter user name, email, and a password for a new login");
+      return;
+    }
+    const targetStoreId = activeStore.id === "GLOBAL" ? normalizeStoreId(draft.storeId) : activeStore.id;
+    if (!stores.some((store) => store.id === targetStoreId)) {
+      notify("Select a branch for this user");
       return;
     }
     const duplicateEmail = users.some((user) => user.email.trim().toLowerCase() === draft.email.trim().toLowerCase() && user.id !== editingId);
@@ -8053,7 +8061,7 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       email: draft.email.trim().toLowerCase(),
       role: allowedRole,
       status: draft.status || "Active",
-      storeId: activeStore.id,
+      storeId: targetStoreId,
     };
     delete scopedDraft.password;
     try {
@@ -8071,7 +8079,6 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       }
       setUsers((current) => current.map((user) => {
         if (user.id !== editingId) return user;
-        if (normalizeStoreId(user.storeId) !== activeStore.id) return user;
         return { ...user, ...scopedDraft };
       }));
       notify("User updated");
@@ -8087,7 +8094,7 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       notify(canManageAll ? "You can edit users from your store only" : "Super Admin permission required to edit admin accounts");
       return;
     }
-    setDraft({ name: user.name, email: user.email, password: user.password || "", role: user.role, status: user.status, storeId: user.storeId || activeStore.id });
+    setDraft({ name: user.name, email: user.email, password: user.password || "", role: user.role, status: user.status, storeId: user.storeId || defaultUserStoreId });
     setEditingId(user.id);
     onViewChange("create");
   }
@@ -8165,9 +8172,10 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
           <div className="panel user-editor-panel">
             <PanelHead title={editingId ? "Edit user" : "Create user"} icon={UserPlus} actions={["Close"]} onAction={closeUserEditor} />
             <div className="user-form">
-              <p className="permission-note">Create staff accounts for {storeLabel(activeStore)}. Select <strong>Cashier</strong> for POS billing staff.</p>
+              <p className="permission-note">Create staff accounts for {activeStore.id === "GLOBAL" ? "a selected branch" : storeLabel(activeStore)}. Select <strong>Cashier</strong> for POS billing staff.</p>
               <label>Name<input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Employee name" /></label>
               <label>Email<input value={draft.email} onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} placeholder="user@restaurant.com" /></label>
+              {activeStore.id === "GLOBAL" && <label>Branch<select value={draft.storeId} onChange={(event) => setDraft((current) => ({ ...current, storeId: event.target.value }))}><option value="">Select branch</option>{stores.filter((store) => store.status !== "Inactive").map((store) => <option key={store.id} value={store.id}>{store.name} — {store.branch}</option>)}</select></label>}
               <label>Password
                 <span className="password-field">
                   <input value={draft.password} type={showUserPassword ? "text" : "password"} onChange={(event) => setDraft((current) => ({ ...current, password: event.target.value }))} placeholder="Set login password" />
