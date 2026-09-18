@@ -22,24 +22,10 @@ const stripStateSecrets = (value: unknown): unknown => {
     .map(([key, entry]) => [key, stripStateSecrets(entry)]));
   return value;
 };
-// Business state is shared across authenticated devices/users in the same
-// VESTORA project. Branch-specific records keep the branch id in their key or
-// in each record and the UI scopes them before display. Session credentials,
-// passwords, and device-only workflow state never enter this table.
-const isLocalOnlyStateKey = (key: string | null) => Boolean(key && (
-  /^(vestora-(current-user|selected-store|super-admin-in-store|pos-cashier|current-shift|last-shift-close|offline-orders|theme-config|printer-choices|kot-printer|kot-printer-choices|supabase-hydrated-user))$/i.test(key)
-  || /(password|token|credential|secret)/i.test(key)
-));
-const isSharedStateKey = (key: string | null) => Boolean(key && key.startsWith("vestora-") && !isLocalOnlyStateKey(key));
-const isStoreScopedStateKey = (key: string | null) => Boolean(key && /^vestora-(active-settings|attendance-(employees|logs|records|report|settings)|finance-(bank-accounts|expenses|journals|ledgers|receipts|vendor-payments)|finished-goods|floors|food-stock|inventory(?:-categories|)?|inventory-transactions|last-shift-close|leave-requests|menu-(items|setup)|offers|payroll-attendance|production-(batches|categories|wastage)|recipes|tables)-/.test(key));
-const mergeSharedArrayKeys = new Set([
-  "vestora-sales-ledger",
-  "vestora-void-ledger",
-  "vestora-refund-ledger",
-  "vestora-kds-orders",
-  "vestora-table-orders",
-  "vestora-supplier-orders",
-]);
+const globalKeys = new Set(["vestora-stores", "vestora-users", "vestora-custom-roles", "vestora-sales-ledger", "vestora-void-ledger", "vestora-refund-ledger", "vestora-kds-orders", "vestora-table-orders", "vestora-supplier-orders"]);
+const storePrefixes = ["active-settings","attendance-employees","attendance-logs","attendance-records","attendance-report","attendance-settings","finance-bank-accounts","finance-expenses","finance-journals","finance-ledgers","finance-receipts","finance-vendor-payments","finished-goods","floors","food-stock","inventory-categories","inventory-transactions","inventory","last-shift-close","shifts", "shift-history","leave-requests","menu-items","menu-setup","offers","payroll-attendance","production-batches","production-categories","production-wastage","recipes","tables","bill-template","theme-config","supplier-documents","customer-details"];
+const stateStore = (key: string) => { const prefix = storePrefixes.find((name) => key.startsWith(`vestora-${name}-`)); return prefix ? key.slice(`vestora-${prefix}-`.length) : null; };
+const isBusinessKey = (key: string) => globalKeys.has(key) || stateStore(key) !== null;
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -56,12 +42,35 @@ Deno.serve(async (request) => {
   if (error || !user) return json({ error: "Authentication required" }, 401);
 
   const admin = createClient(supabaseUrl, serviceRoleKey);
-  const { data: profile, error: profileError } = await admin
+  const { data: coreProfile, error: profileError } = await admin
     .from("core_user")
-    .select("id, email, restaurant_id, user_type, is_superuser")
+    .select("id, email, restaurant_id, user_type, is_superuser, is_active")
     .eq("email", user.email ?? "")
     .maybeSingle();
   if (profileError) return json({ error: profileError.message }, 500);
+
+
+  // Only admin-controlled assignments grant access. Never trust user_metadata
+  // (which users can change themselves) or a storeId supplied in a request.
+  const assigned = user.app_metadata?.vestora;
+  const profile = coreProfile || (assigned ? { id: user.id, email: user.email, restaurant_id: null, user_type: assigned.role, is_superuser: false, is_active: assigned.active !== false } : null);
+  if (profile?.is_active === false || assigned?.active === false) return json({ error: "This account is inactive" }, 403);
+  const isPlatformAdmin = Boolean(profile?.is_superuser || profile?.user_type === "super_admin");
+  const { data: directoryRow, error: directoryError } = await admin.from("vestora_shared_app_state").select("state_value").eq("state_key", "vestora-stores").maybeSingle();
+  const { data: staffRow, error: staffError } = await admin.from("vestora_shared_app_state").select("state_value").eq("state_key", "vestora-users").maybeSingle();
+  if (directoryError || staffError) return json({ error: "Store access could not be verified" }, 503);
+  const directory = Array.isArray(directoryRow?.state_value) ? directoryRow.state_value : [];
+  const staff = Array.isArray(staffRow?.state_value) ? staffRow.state_value : [];
+  const email = String(user.email || "").toLowerCase();
+  const linkedStaff = staff.find((entry) => String(entry.email || "").toLowerCase() === email && entry.status !== "Inactive");
+  const assignedStore = assigned?.storeId || linkedStaff?.storeId;
+  const allowedStoreIds = directory.filter((store) => isPlatformAdmin || String(store.id) === String(assignedStore || "") || String(store.adminEmail || "").toLowerCase() === email || (profile?.restaurant_id != null && String(store.restaurantId || "") === String(profile.restaurant_id))).map((store) => String(store.id));
+  const canStore = (storeId: string) => isPlatformAdmin || allowedStoreIds.includes(String(storeId));
+  const canKey = (key: string) => isBusinessKey(key) && (!stateStore(key) || canStore(stateStore(key)!));
+  const scopeValue = (key: string, value: unknown) => {
+    if (isPlatformAdmin || stateStore(key) || !Array.isArray(value)) return value;
+    return value.filter((item) => key === "vestora-stores" ? canStore(String(item.id)) : canStore(String(item.storeId || "")));
+  };
 
   const url = new URL(request.url);
   const pathParts = url.pathname.split("/").filter(Boolean);
@@ -92,101 +101,107 @@ Deno.serve(async (request) => {
       email: profile?.email || user.email,
       restaurantId: profile?.restaurant_id || null,
       role: profile?.user_type || "cashier",
-      appRole: profile ? (appRoleByType[profile.user_type] || profile.user_type) : "Cashier",
+      appRole: assigned?.appRole || (profile ? (appRoleByType[profile.user_type] || profile.user_type) : "Cashier"),
       isSuperuser: Boolean(profile?.is_superuser),
       status: "Active",
+      storeId: assignedStore || allowedStoreIds[0] || "GLOBAL",
+      allowedStoreIds,
     });
   }
   if (resource === "health") {
     const { error: databaseError } = await admin.from("django_migrations").select("id").limit(1);
     return json({ ok: !databaseError, user_id: user.id, database: databaseError ? "unavailable" : "ok" }, databaseError ? 503 : 200);
   }
+
+  if (resource === "cashier-login" && request.method === "POST") {
+    if (!profile) return json({ error: "Staff sign-in required" }, 403);
+    const body = await request.json().catch(() => null);
+    const cashier = staff.find((entry) => String(entry.email || "").toLowerCase() === String(body?.email || "").toLowerCase() && entry.role === "Cashier" && entry.status === "Active");
+    if (!cashier || !canStore(String(cashier.storeId))) return json({ error: "Cashier is not available in this store" }, 403);
+    const isolated = createClient(supabaseUrl, anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    const { data, error: loginError } = await isolated.auth.signInWithPassword({ email: cashier.email, password: String(body?.password || "") });
+    if (loginError || !data.user) return json({ error: "Incorrect cashier sign-in details" }, 403);
+    return json(stripStateSecrets(cashier));
+  }
+  if (resource === "staff-account" && request.method === "POST") {
+    if (!profile || (!isPlatformAdmin && !["owner", "restaurant_admin"].includes(profile.user_type))) return json({ error: "Administrator permission required" }, 403);
+    const body = await request.json().catch(() => null);
+    const storeId = String(body?.storeId || "");
+    if (!directory.some((store) => store.id === storeId) || !canStore(storeId)) return json({ error: "Store access denied" }, 403);
+    const email = String(body?.email || "").trim().toLowerCase();
+    const name = String(body?.name || "").trim();
+    const roleNames: Record<string, string> = { "Restaurant Admin": "restaurant_admin", "Restaurant Owner": "owner", "Cashier": "cashier", "Waiter": "waiter", "Chef": "chef", "Inventory Manager": "inventory_manager", "Accountant": "accountant", "Manager": "manager", "HR Manager": "hr_manager", "Purchase Manager": "purchase_manager", "Supplier": "supplier" };
+    if (!name || !email.includes("@") || body?.role === "Super Admin") return json({ error: "Valid staff name, email and store role required" }, 400);
+    if (!isPlatformAdmin && ["Restaurant Admin", "Restaurant Owner"].includes(body.role)) return json({ error: "Super Admin permission required to manage administrator logins" }, 403);
+    const assignedRole = roleNames[body.role] || "cashier";
+    let authUser = null;
+    for (let page = 1; page <= 100; page++) {
+      const { data, error: listError } = await admin.auth.admin.listUsers({ page, perPage: 100 });
+      if (listError) return json({ error: "Unable to verify staff account" }, 503);
+      authUser = data.users.find((entry) => String(entry.email).toLowerCase() === email);
+      if (authUser || data.users.length < 100) break;
+    }
+    if (authUser && !isPlatformAdmin && (!canStore(String(authUser.app_metadata?.vestora?.storeId || "")) || ["owner", "restaurant_admin", "super_admin"].includes(authUser.app_metadata?.vestora?.role))) return json({ error: "This login cannot be reassigned by this administrator" }, 403);
+    const password = String(body.password || "");
+    if ((!authUser || password) && password.length < 8) return json({ error: "Use a password of at least 8 characters" }, 400);
+    const app_metadata = { ...(authUser?.app_metadata || {}), vestora: { storeId, role: assignedRole, appRole: body.role, active: body.status !== "Inactive" } };
+    const result = authUser
+      ? await admin.auth.admin.updateUserById(authUser.id, { app_metadata, user_metadata: { name }, ...(password ? { password } : {}) })
+      : await admin.auth.admin.createUser({ email, password, email_confirm: true, app_metadata, user_metadata: { name } });
+    if (result.error) return json({ error: result.error.message }, 400);
+    return json({ authUserId: result.data.user.id });
+  }
   if (resource === "state") {
     if (!profile) return json({ error: "This login is not linked to a VESTORA restaurant profile" }, 403);
     if (request.method === "GET") {
       const key = url.searchParams.get("key");
-      const storeId = url.searchParams.get("storeId");
-      const isSuperAdmin = Boolean(profile?.is_superuser || profile?.user_type === "super_admin");
-      const useSharedState = isSharedStateKey(key);
-      if (useSharedState) {
-        const { data, error: stateError } = await admin
-          .from("vestora_shared_app_state")
-          .select("state_key, state_value, updated_at")
-          .eq("state_key", key);
-        if (stateError) return json({ error: stateError.message }, 500);
-        return json(data ?? []);
-      }
-
-      let stateQuery = admin.from("vestora_app_state").select("state_key, state_value, updated_at").eq("user_id", user.id);
-      if (key) stateQuery = stateQuery.eq("state_key", key);
-      const { data: userState, error: userStateError } = await stateQuery;
-      if (userStateError) return json({ error: userStateError.message }, 500);
-      if (key) return json(userState ?? []);
-      if (!isSuperAdmin && !storeId) return json(userState ?? []);
-      const { data: sharedState, error: sharedStateError } = await admin
-        .from("vestora_shared_app_state")
-        .select("state_key, state_value, updated_at");
-      if (sharedStateError) return json({ error: sharedStateError.message }, 500);
-      const combined = new Map((userState ?? []).map((row) => [row.state_key, row]));
-      (sharedState ?? [])
-        .filter((row) => row.state_key === "vestora-stores" || !storeId || !isStoreScopedStateKey(row.state_key) || row.state_key.endsWith(`-${storeId}`))
-        .forEach((row) => combined.set(row.state_key, row));
-      return json(Array.from(combined.values()));
+      const requestedStore = url.searchParams.get("storeId");
+      if ((key && !canKey(key)) || (requestedStore && !canStore(requestedStore))) return json({ error: "Store access denied" }, 403);
+      let query = admin.from("vestora_shared_app_state").select("state_key, state_value, updated_at");
+      if (key) query = query.eq("state_key", key);
+      const { data, error: stateError } = await query;
+      if (stateError) return json({ error: stateError.message }, 500);
+      return json((data || []).filter((row) => canKey(row.state_key) && (!requestedStore || !stateStore(row.state_key) || stateStore(row.state_key) === requestedStore)).map((row) => ({ ...row, state_value: stripStateSecrets(scopeValue(row.state_key, row.state_value)) })));
     }
     if (request.method === "PUT") {
       const body = await request.json().catch(() => null);
-      if (!body || typeof body.key !== "string") return json({ error: "A state key is required" }, 400);
-      const sharedState = Boolean(profile) && isSharedStateKey(body.key);
-      let stateValue = stripStateSecrets(body.value ?? null);
-      if (sharedState && mergeSharedArrayKeys.has(body.key) && Array.isArray(stateValue)) {
-        const { data: existingState } = await admin
-          .from("vestora_shared_app_state")
-          .select("state_value")
-          .eq("state_key", body.key)
-          .maybeSingle();
-        if (Array.isArray(existingState?.state_value)) {
-          const incomingIds = new Set(stateValue.map((item: unknown, index: number) => String((item as { id?: unknown })?.id ?? `row-${index}`)));
-          const retainedExisting = existingState.state_value.filter((item: unknown, index: number) => !incomingIds.has(String((item as { id?: unknown })?.id ?? `row-${index}`)));
-          stateValue = [...stateValue, ...retainedExisting];
+      if (!body || typeof body.key !== "string" || !isBusinessKey(body.key)) return json({ error: "A supported business state key is required" }, 400);
+      if (!canKey(body.key)) return json({ error: "Store access denied" }, 403);
+      const managesStaff = isPlatformAdmin || ["owner", "restaurant_admin"].includes(profile.user_type);
+      if (["vestora-users", "vestora-custom-roles"].includes(body.key) && !managesStaff) return json({ error: "Administrator permission required" }, 403);
+      if (!("expectedUpdatedAt" in body)) return json({ error: "Refresh this app to save shared data safely" }, 409);
+      if (body.expectedUpdatedAt !== null && typeof body.expectedUpdatedAt !== "string") return json({ error: "Invalid shared data version" }, 400);
+      if (typeof body.mutationId !== "string" || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(body.mutationId)) return json({ error: "Refresh this app to enable reliable store synchronization" }, 409);
+      let value = stripStateSecrets(body.value ?? null);
+      // Global arrays contain store-tagged records. Retain all records outside
+      // this login's scope and compare the complete row's version atomically.
+      if (!isPlatformAdmin && globalKeys.has(body.key)) {
+        if (!Array.isArray(value)) return json({ error: "Expected a list of store records" }, 400);
+        if (value.some((item) => !canStore(String(body.key === "vestora-stores" ? item.id : item.storeId || "")))) return json({ error: "Cannot change records from another store" }, 403);
+        const { data: previous, error: readError } = await admin.from("vestora_shared_app_state").select("state_value").eq("state_key", body.key).maybeSingle();
+        if (readError) return json({ error: readError.message }, 500);
+        const old = Array.isArray(previous?.state_value) ? previous.state_value : [];
+        if (body.key === "vestora-stores") {
+          if (!managesStaff || value.some((item) => !old.some((entry) => entry.id === item.id)) || value.length !== old.filter((entry) => canStore(String(entry.id))).length) return json({ error: "Super Admin permission required to create or delete stores" }, 403);
+          const protectedFields = ["id", "parentStoreId", "restaurantId", "adminEmail", "status"];
+          if (value.some((item) => protectedFields.some((field) => JSON.stringify(item[field]) !== JSON.stringify(old.find((entry) => entry.id === item.id)?.[field])))) return json({ error: "Super Admin permission required to change store access" }, 403);
         }
+        if (body.key === "vestora-users") {
+          if (value.some((item) => ["Super Admin", "Restaurant Admin", "Restaurant Owner"].includes(item.role) && JSON.stringify(item) !== JSON.stringify(old.find((entry) => String(entry.id) === String(item.id))))) return json({ error: "Super Admin permission required to change administrator accounts" }, 403);
+        }
+        value = [...value, ...old.filter((item) => !canStore(String(body.key === "vestora-stores" ? item.id : item.storeId || "")))];
       }
-      const payload = sharedState
-        ? { state_key: body.key, state_value: stateValue, updated_at: new Date().toISOString() }
-        : { user_id: user.id, state_key: body.key, state_value: stateValue, updated_at: new Date().toISOString() };
-      const tableName = sharedState ? "vestora_shared_app_state" : "vestora_app_state";
-      // Inventory and table layouts use optimistic concurrency. A stale device
-      // must re-read and merge its edits before saving, never overwrite a newer
-      // stock level, table, or floor created on another computer.
-      const versionedListKey = /^(vestora-inventory-(?!transactions-)|vestora-tables-|vestora-floors-)/.test(body.key);
-      if (sharedState && versionedListKey) {
-        if (!("expectedUpdatedAt" in body)) return json({ error: "Refresh this app to save shared lists safely" }, 409);
-        if (body.expectedUpdatedAt !== null && typeof body.expectedUpdatedAt !== "string") return json({ error: "Invalid shared list version" }, 400);
-        if (!Array.isArray(stateValue)) return json({ error: "Shared list must be an array" }, 400);
-        payload.updated_at = new Date(Math.max(Date.now(), (Date.parse(body.expectedUpdatedAt || "") || 0) + 1)).toISOString();
-        const write = body.expectedUpdatedAt === null
-          ? admin.from(tableName).insert(payload)
-          : admin.from(tableName).update(payload).eq("state_key", body.key).eq("updated_at", body.expectedUpdatedAt);
-        const { data, error: writeError } = await write.select("state_key, state_value, updated_at").maybeSingle();
-        if (writeError?.code === "23505" || (!writeError && !data)) return json({ error: "Inventory changed on another device; retry with the latest version" }, 409);
-        if (writeError) return json({ error: writeError.message }, 500);
-        return json(data);
-      }
-      const { data, error: stateError } = await admin.from(tableName).upsert(payload).select("state_key, state_value, updated_at").single();
-      if (stateError) return json({ error: stateError.message }, 500);
-      return json(data);
+      const { data, error: writeError } = await admin.rpc("vestora_write_shared_state", {
+        p_user_id: user.id, p_operation_id: body.mutationId, p_key: body.key,
+        p_value: value, p_request_value: stripStateSecrets(body.value ?? null), p_expected: body.expectedUpdatedAt,
+      });
+      if (data?.conflict) return json({ error: "Data changed on another device; retry with the latest version" }, 409);
+      if (writeError) return json({ error: writeError.message }, 500);
+      return json({ ...data, state_value: scopeValue(body.key, data.state_value) });
     }
-    if (request.method === "DELETE") {
-      const key = url.searchParams.get("key");
-      if (!key) return json({ error: "A state key is required" }, 400);
-      const sharedState = Boolean(profile) && isSharedStateKey(key);
-      let deleteQuery = admin.from(sharedState ? "vestora_shared_app_state" : "vestora_app_state").delete().eq("state_key", key);
-      if (!sharedState) deleteQuery = deleteQuery.eq("user_id", user.id);
-      const { error: deleteError } = await deleteQuery;
-      if (deleteError) return json({ error: deleteError.message }, 500);
-      return json({ ok: true, key });
-    }
-    return json({ error: "State endpoint supports GET, PUT, and DELETE" }, 405);
+    return json({ error: "Method not supported" }, 405);
   }
+
   if (!profile) return json({ error: "This Supabase user is not linked to a VESTORA restaurant profile" }, 403);
   const tableByResource: Record<string, string> = {
     restaurants: "core_restaurant",
@@ -215,7 +230,10 @@ Deno.serve(async (request) => {
   if (!table) return json({ error: "Unknown API resource" }, 404);
 
   const isSuperAdmin = Boolean(profile.is_superuser || profile.user_type === "super_admin");
-  if (table === "vestora_public_orders" && !isSuperAdmin) return json({ error: "Super Admin permission required" }, 403);
+  if (table === "vestora_public_orders" && !isSuperAdmin) {
+    const requestedStore = url.searchParams.get("storeId");
+    if (requestedStore && !canStore(requestedStore)) return json({ error: "Store access denied" }, 403);
+  }
   const tenantTables = ["core_branch", "core_role", "core_user", "core_menucategory", "core_menuitem", "core_table", "core_customer", "core_order", "core_inventoryitem", "core_stockmovement", "core_supplier", "core_purchaseorder", "core_expense", "core_employeeprofile", "core_attendance", "core_supportticket", "core_integrationsetting", "core_printer"];
   const tenantScoped = !isSuperAdmin && tenantTables.includes(table);
   const safeSelect = table === "core_user"
@@ -238,11 +256,12 @@ Deno.serve(async (request) => {
   }
 
   if (recordId && ["PATCH", "DELETE"].includes(request.method)) {
-    let scoped = admin.from(table).select("id").eq("id", recordId);
+    let scoped = admin.from(table).select(table === "vestora_public_orders" ? "id,store_id" : "id").eq("id", recordId);
     if (tenantScoped) scoped = scoped.eq("restaurant_id", profile.restaurant_id);
     const { data: existing, error: lookupError } = await scoped.maybeSingle();
     if (lookupError) return json({ error: lookupError.message }, 500);
     if (!existing) return json({ error: "Record not found" }, 404);
+    if (table === "vestora_public_orders" && !canStore(existing.store_id)) return json({ error: "Store access denied" }, 403);
     if (request.method === "DELETE") {
       const { error: deleteError } = await admin.from(table).delete().eq("id", recordId);
       if (deleteError) return json({ error: deleteError.message }, 400);
@@ -251,6 +270,7 @@ Deno.serve(async (request) => {
     const body = await request.json().catch(() => null);
     if (!body || Array.isArray(body) || typeof body !== "object") return json({ error: "A JSON object is required" }, 400);
     const payload = { ...(body as Record<string, unknown>) };
+    if (table === "vestora_public_orders" && Object.keys(payload).some((key) => !["status"].includes(key))) return json({ error: "Only order status may be updated" }, 400);
     delete payload.id;
     delete payload.restaurant_id;
     delete payload.created_at;
@@ -266,6 +286,7 @@ Deno.serve(async (request) => {
   if (tenantScoped) query = query.eq("restaurant_id", profile.restaurant_id);
   if (recordId) query = query.eq("id", recordId);
   if (table === "vestora_public_orders") {
+    if (!isSuperAdmin) query = query.in("store_id", allowedStoreIds);
     const storeId = url.searchParams.get("storeId");
     if (storeId) query = query.eq("store_id", storeId);
     if (url.searchParams.get("open") === "1") query = query.in("status", ["New", "KOT sent", "Ready for billing"]);

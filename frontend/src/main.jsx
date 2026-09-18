@@ -77,6 +77,8 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
+import { businessStorage as localStorage, stopCloudSync } from "./lib/supabase";
+import { useBusinessState, useCloudSyncStatus } from "./lib/use-business-state";
 import { fetchSharedSuperAdminStores, hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseApiList, supabaseApiRequest, supabaseConfigured, supabaseFunctionJson, supabaseProfile, syncInventoryState, syncLocalStateKeyToSupabase, syncLocalStateToSupabase, updateSupabasePassword } from "./lib/supabase";
 
 const appBaseUrl = import.meta.env.BASE_URL || "/";
@@ -1101,11 +1103,14 @@ function useOnlineStatus() {
   return online;
 }
 
-function syncOfflineOrders() {
+async function syncOfflineOrders() {
   const queued = JSON.parse(localStorage.getItem("vestora-offline-orders") || "[]");
-  if (!queued.length || !navigator.onLine) return queued.length;
-  localStorage.setItem("vestora-offline-orders", "[]");
-  return 0;
+  if (!queued.length || !navigator.onLine || !window.vestoraSupabaseStateReady) return 0;
+  const saved = await syncLocalStateKeyToSupabase("vestora-sales-ledger");
+  const confirmed = new Set((saved || []).map((bill) => bill.id));
+  const remaining = queued.filter((bill) => !confirmed.has(bill.id));
+  localStorage.setItem("vestora-offline-orders", JSON.stringify(remaining));
+  return queued.length - remaining.length;
 }
 
 function ChangePasswordDialog({ onClose, notify }) {
@@ -1170,6 +1175,11 @@ function App() {
   return isCustomerOrderingLink ? <CustomerTableOrdering /> : <AuthenticatedApp />;
 }
 
+function CloudSyncBanner() {
+  const status = useCloudSyncStatus();
+  return <div className={`cloud-sync-banner cloud-sync-${status.state}`} role="status" aria-live="polite"><span>{status.message}</span><button type="button" onClick={() => syncLocalStateToSupabase().catch(() => {})}>Sync / retry</button></div>;
+}
+
 function AuthenticatedApp() {
   const [currentUser, setCurrentUser] = useState(() => {
     const saved = localStorage.getItem("vestora-current-user");
@@ -1200,23 +1210,29 @@ function AuthenticatedApp() {
   const [financeView, setFinanceView] = useState("Expenses");
   const [reportNavOpen, setReportNavOpen] = useState(false);
   const [reportView, setReportView] = useState("Daily sales");
-  const [themeConfig, setThemeConfig] = useState(() => normalizeThemeConfig(loadStoredObject("vestora-theme-config")));
+  const [selectedStoreId, setSelectedStoreId] = useState(() => localStorage.getItem("vestora-selected-store") || "GLOBAL");
+  const settingsStoreId = currentUser?.role === "super_admin" ? selectedStoreId : normalizeStoreId(currentUser?.storeId);
+  const [themeConfig, setThemeConfig] = useBusinessState(`vestora-theme-config-${settingsStoreId}`, () => normalizeThemeConfig(loadStoredObject("vestora-theme-config")));
   const [dark, setDark] = useState(() => themeConfig.mode === "Dark");
   const [cart, setCart] = useState([]);
   const [posCashier, setPosCashier] = useState(() => loadStoredObject("vestora-pos-cashier"));
   const [orderType, setOrderType] = useState("Dine-in");
   const [toast, setToast] = useState("");
-  const [lastShiftClose, setLastShiftClose] = useState(() => loadStoredObject("vestora-last-shift-close"));
-  const [currentShift, setCurrentShift] = useState(() => {
+  const [lastShiftClose, setLastShiftClose] = useBusinessState(`vestora-last-shift-close-${settingsStoreId}`, () => loadStoredObject(`vestora-last-shift-close-${settingsStoreId}`));
+  const [sharedShifts, setSharedShifts] = useBusinessState(`vestora-shifts-${settingsStoreId}`, () => {
     const saved = localStorage.getItem("vestora-current-shift");
-    return saved ? JSON.parse(saved) : null;
+    return saved && posCashier?.storeId === settingsStoreId ? [JSON.parse(saved)] : [];
   });
-  const [users, setUsers] = useState(() => {
+  const currentShift = sharedShifts.find((shift) => !shift.closedAt && String(shift.cashierId) === String(posCashier?.id)) || null;
+  function setCurrentShift(shift) {
+    if (shift) setSharedShifts((current) => [...current.filter((entry) => entry.id !== shift.id), shift]);
+  }
+  const [users, setUsers] = useBusinessState("vestora-users", () => {
     const savedUsers = loadStoredArray("vestora-users");
     return savedUsers.length ? savedUsers : starterUsers;
   });
-  const [customRoles, setCustomRoles] = useState(() => loadStoredArray("vestora-custom-roles"));
-  const [stores, setStores] = useState(() => {
+  const [customRoles, setCustomRoles] = useBusinessState("vestora-custom-roles", () => loadStoredArray("vestora-custom-roles"));
+  const [stores, setStores] = useBusinessState("vestora-stores", () => {
     const savedStores = localStorage.getItem("vestora-stores");
     if (savedStores !== null) {
       try {
@@ -1235,39 +1251,38 @@ function AuthenticatedApp() {
       return cleaned.length === current.length ? current : cleaned;
     });
   }, []);
-  const [selectedStoreId, setSelectedStoreId] = useState(() => localStorage.getItem("vestora-selected-store") || "GLOBAL");
   useEffect(() => {
     if (currentUser?.role !== "super_admin" || stores.length) return;
     setSelectedStoreId("GLOBAL");
     setSuperAdminLanding(true);
     localStorage.removeItem("vestora-super-admin-in-store");
   }, [currentUser?.role, stores.length]);
-  const [billTemplate, setBillTemplate] = useState(() => {
-    const saved = localStorage.getItem("vestora-bill-template");
+  const [billTemplate, setBillTemplate] = useBusinessState(`vestora-bill-template-${settingsStoreId}`, () => {
+    const saved = localStorage.getItem(`vestora-bill-template-${settingsStoreId}`) || localStorage.getItem("vestora-bill-template");
     return saved ? { ...defaultBillTemplate, ...JSON.parse(saved) } : defaultBillTemplate;
   });
   const [kotPrinter, setKotPrinter] = useState(() => {
     const saved = localStorage.getItem("vestora-kot-printer");
     return saved ? { ...defaultKotPrinter, ...JSON.parse(saved) } : defaultKotPrinter;
   });
-  const [salesLedger, setSalesLedger] = useState(() => loadStoredArray("vestora-sales-ledger"));
-  const [voidLedger, setVoidLedger] = useState(() => loadStoredArray("vestora-void-ledger"));
-  const [refundLedger, setRefundLedger] = useState(() => loadStoredArray("vestora-refund-ledger"));
-  const [kdsOrders, setKdsOrders] = useState(() => loadStoredArray("vestora-kds-orders"));
-  const [tableOrders, setTableOrders] = useState(() => loadStoredArray("vestora-table-orders"));
+  const [salesLedger, setSalesLedger] = useBusinessState("vestora-sales-ledger", () => loadStoredArray("vestora-sales-ledger"));
+  const [voidLedger, setVoidLedger] = useBusinessState("vestora-void-ledger", () => loadStoredArray("vestora-void-ledger"));
+  const [refundLedger, setRefundLedger] = useBusinessState("vestora-refund-ledger", () => loadStoredArray("vestora-refund-ledger"));
+  const [kdsOrders, setKdsOrders] = useBusinessState("vestora-kds-orders", () => loadStoredArray("vestora-kds-orders"));
+  const [tableOrders, setTableOrders] = useBusinessState("vestora-table-orders", () => loadStoredArray("vestora-table-orders"));
   const tableOrdersChannelRef = useRef(null);
-  const [supplierOrders, setSupplierOrders] = useState(() => loadStoredArray("vestora-supplier-orders"));
+  const [supplierOrders, setSupplierOrders] = useBusinessState("vestora-supplier-orders", () => loadStoredArray("vestora-supplier-orders"));
   const online = useOnlineStatus();
   const queuedOrders = JSON.parse(localStorage.getItem("vestora-offline-orders") || "[]").length;
   const canManageAll = currentUser?.role === "super_admin";
   const canManage = canManageAll || currentUser?.role === "restaurant_admin";
   const activeStoreId = canManageAll ? selectedStoreId : normalizeStoreId(currentUser?.storeId);
-  const activeStore = stores.find((store) => store.id === activeStoreId) || stores[0] || emptyStoreContext;
+  const activeStore = stores.find((store) => store.id === activeStoreId) || emptyStoreContext;
   useEffect(() => {
     setLastShiftClose(loadStoredObject(`vestora-last-shift-close-${activeStore.id}`));
   }, [activeStore.id]);
   const foodStockStorageKey = `vestora-food-stock-${activeStore.id}`;
-  const [foodStock, setFoodStock] = useState(() => loadStoredArray(foodStockStorageKey));
+  const [foodStock, setFoodStock] = useBusinessState(foodStockStorageKey, () => loadStoredArray(foodStockStorageKey));
   useEffect(() => {
     setFoodStock(loadStoredArray(`vestora-food-stock-${activeStore.id}`));
   }, [activeStore.id]);
@@ -1284,12 +1299,7 @@ function AuthenticatedApp() {
     let cancelled = false;
     const refreshFoodStock = async () => {
       try {
-        const rows = await supabaseFunctionJson(`vestora-api/state?key=${encodeURIComponent(foodStockStorageKey)}`);
-        const remote = Array.isArray(rows?.[0]?.state_value) ? rows[0].state_value : null;
-        if (!cancelled && remote) {
-          localStorage.setItem(foodStockStorageKey, JSON.stringify(remote));
-          setFoodStock((current) => JSON.stringify(current) === JSON.stringify(remote) ? current : remote);
-        }
+        if (!cancelled) await syncLocalStateKeyToSupabase(foodStockStorageKey);
       } catch {
         // POS remains usable with its local copy while cloud state is unavailable.
       }
@@ -1301,7 +1311,7 @@ function AuthenticatedApp() {
       window.clearInterval(timer);
     };
   }, [supabaseStateReady, activeStoreId, foodStockStorageKey]);
-  const [productItems, setProductItems] = useState(() => {
+  const [productItems, setProductItems] = useBusinessState(`vestora-menu-items-${activeStore.id}`, () => {
     const saved = loadStoredArray(`vestora-menu-items-${activeStore.id}`);
     return preparePosProducts(saved);
   });
@@ -1329,8 +1339,9 @@ function AuthenticatedApp() {
   }, [supabaseStateReady]);
 
   useEffect(() => {
-    localStorage.setItem("vestora-theme-config", JSON.stringify({ ...themeConfig, mode: dark ? "Dark" : "Light" }));
-  }, [themeConfig, dark]);
+    localStorage.setItem(`vestora-theme-config-${settingsStoreId}`, JSON.stringify(themeConfig));
+    setDark(themeConfig.mode === "Dark");
+  }, [themeConfig, settingsStoreId]);
 
   useEffect(() => {
     localStorage.setItem("vestora-custom-roles", JSON.stringify(customRoles));
@@ -1442,6 +1453,7 @@ function AuthenticatedApp() {
 
   function handleLogout() {
     window.vestoraSupabaseStateReady = false;
+    stopCloudSync();
     if (supabaseConfigured) supabase.auth.signOut().catch(() => {});
     localStorage.removeItem("vestora-current-user");
     localStorage.removeItem("vestora-super-admin-in-store");
@@ -1455,8 +1467,12 @@ function AuthenticatedApp() {
   useEffect(() => {
     if (!supabaseConfigured || !supabase) return undefined;
     let mounted = true;
+    let applying = false;
+    let loadedUserId = "";
     const applySession = async (session) => {
       if (!mounted || !session?.user) return;
+      if (applying || loadedUserId === session.user.id) return;
+      applying = true;
       window.vestoraSupabaseStateReady = false;
       setSupabaseStateReady(false);
       const metadata = session.user.user_metadata || {};
@@ -1473,7 +1489,7 @@ function AuthenticatedApp() {
       let stateLoaded = false;
       try {
         const profile = await supabaseProfile();
-        loginUser = { ...loginUser, ...profile, storeId: metadata.storeId || "STORE-001" };
+        loginUser = { ...loginUser, ...profile, storeId: profile.storeId || "GLOBAL" };
         profileLoaded = true;
       } catch {
         // Auth metadata still gives the app enough information to render the
@@ -1500,16 +1516,7 @@ function AuthenticatedApp() {
           const hydrationStoreId = (loginUser.role === "super_admin" || loginUser.isSuperuser)
             ? (selectedStoreId === "GLOBAL" ? "" : selectedStoreId)
             : normalizeStoreId(loginUser.storeId || activeStoreId);
-          const hydrationKey = `${session.user.id}:${hydrationStoreId || "all"}`;
-          const hydratedForUser = sessionStorage.getItem("vestora-supabase-hydrated-user") === hydrationKey;
-          if (!hydratedForUser) {
-            const hydrated = await hydrateLocalStateFromSupabase(hydrationStoreId);
-            sessionStorage.setItem("vestora-supabase-hydrated-user", hydrationKey);
-            if (hydrated) {
-              window.location.reload();
-              return;
-            }
-          }
+          await hydrateLocalStateFromSupabase(hydrationStoreId);
           stateLoaded = true;
         } catch (error) {
           notify(`Cloud data could not be loaded: ${error.message}. Local records are retained.`, 10000);
@@ -1517,15 +1524,21 @@ function AuthenticatedApp() {
       }
 
       if (mounted) {
-        setCurrentUser((existing) => existing || loginUser);
+        setCurrentUser(loginUser);
         localStorage.setItem("vestora-current-user", JSON.stringify(loginUser));
+        window.vestoraSupabaseStateReady = profileLoaded && stateLoaded;
         setSupabaseStateReady(profileLoaded && stateLoaded);
       }
+      if (profileLoaded && stateLoaded) loadedUserId = session.user.id;
+      applying = false;
     };
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "PASSWORD_RECOVERY" && mounted) setPasswordDialogOpen(true);
       if (session) window.setTimeout(() => applySession(session), 0);
       else if (mounted) {
+        loadedUserId = "";
+        window.vestoraSupabaseStateReady = false;
+        stopCloudSync();
         setCurrentUser(null);
         setSupabaseStateReady(!supabaseConfigured);
       }
@@ -1545,12 +1558,15 @@ function AuthenticatedApp() {
     const persist = () => {
       if (!cancelled) syncLocalStateToSupabase().catch(() => {});
     };
-    const timer = window.setInterval(persist, 15000);
-    window.addEventListener("beforeunload", persist);
+    persist();
+    const timer = window.setInterval(persist, 5000);
+    window.addEventListener("online", persist);
+    window.addEventListener("focus", persist);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
-      window.removeEventListener("beforeunload", persist);
+      window.removeEventListener("online", persist);
+      window.removeEventListener("focus", persist);
     };
   }, [currentUser, supabaseStateReady]);
 
@@ -1577,7 +1593,7 @@ function AuthenticatedApp() {
   function openShift(openingBalance) {
     const balance = Number(openingBalance);
     const shift = {
-      id: `SHIFT-${Date.now()}`,
+      id: `SHIFT-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       openingBalance: balance,
       openedAt: new Date().toISOString(),
       cashierId: posCashier?.id || "",
@@ -1600,9 +1616,11 @@ function AuthenticatedApp() {
       closedAt: new Date().toISOString(),
     };
     setLastShiftClose(shiftClose);
-    setCurrentShift(null);
+    setCurrentShift(shiftClose);
     const shiftCloseKey = `vestora-last-shift-close-${activeStore.id}`;
     localStorage.setItem(shiftCloseKey, JSON.stringify(shiftClose));
+    const historyKey = `vestora-shift-history-${activeStore.id}`;
+    localStorage.setItem(historyKey, JSON.stringify([...loadStoredArray(historyKey).filter((entry) => entry.id !== shiftClose.id), shiftClose]));
     syncLocalStateKeyToSupabase(shiftCloseKey).catch(() => {});
     localStorage.removeItem("vestora-current-shift");
     localStorage.removeItem("vestora-pos-cashier");
@@ -1626,8 +1644,9 @@ function AuthenticatedApp() {
   }, [posCashier]);
 
   useEffect(() => {
-    if (online && syncOfflineOrders()) notify("Offline bills synced successfully");
-  }, [online]);
+    if (!online || !supabaseStateReady) return;
+    syncOfflineOrders().then((count) => { if (count) notify(`${count} offline bills saved to cloud`); }).catch(() => {});
+  }, [online, supabaseStateReady, salesLedger]);
 
   useEffect(() => {
     localStorage.setItem("vestora-sales-ledger", JSON.stringify(salesLedger));
@@ -1705,14 +1724,7 @@ function AuthenticatedApp() {
       // created in this browser with the previous remote snapshot.
       if (Date.now() - lastLocalStoresWriteAtRef.current < 4000) return;
       try {
-        const sharedStores = await fetchSharedSuperAdminStores();
-        if (cancelled || !Array.isArray(sharedStores)) return;
-        const cleanedStores = removeDummyStores(sharedStores);
-        setStores((current) => {
-          if (JSON.stringify(current) === JSON.stringify(cleanedStores)) return current;
-          localStorage.setItem("vestora-stores", JSON.stringify(cleanedStores));
-          return cleanedStores;
-        });
+        if (!cancelled) await syncLocalStateKeyToSupabase("vestora-stores");
       } catch {
         // A later focus or interval refresh will retry without disrupting POS.
       }
@@ -1785,9 +1797,8 @@ function AuthenticatedApp() {
   }, [activeStore.id]);
 
   useEffect(() => {
-    localStorage.setItem("vestora-bill-template", JSON.stringify(billTemplate));
-    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-bill-template").catch(() => {});
-  }, [billTemplate, currentUser, supabaseStateReady]);
+    localStorage.setItem(`vestora-bill-template-${settingsStoreId}`, JSON.stringify(billTemplate));
+  }, [billTemplate, settingsStoreId]);
 
   useEffect(() => {
     localStorage.setItem("vestora-kot-printer", JSON.stringify(kotPrinter));
@@ -1862,7 +1873,7 @@ function AuthenticatedApp() {
       notify("Add an item or increase a quantity before printing an add-on KOT");
       return { ...order, kotNoChanges: true };
     }
-    const kotId = `KOT-${Date.now()}`;
+    const kotId = `KOT-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
     const kotQuantities = Object.fromEntries((order.items || []).map((item) => [item.id, Number(item.qty || 0)]));
     const sentOrder = saveTableOrder({ ...order, kotId, kotIds: [...(order.kotIds || []), kotId], kotQuantities, status: "KOT sent", kotSentAt: new Date().toISOString() });
     const ticket = {
@@ -1899,7 +1910,7 @@ function AuthenticatedApp() {
 
   function recordVoidItem(item, billingType) {
     const voidEntry = {
-      id: `VOID-${Date.now()}`,
+      id: `VOID-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       storeId: activeStore.id,
       storeName: activeStore.name,
       branch: activeStore.branch,
@@ -1919,7 +1930,7 @@ function AuthenticatedApp() {
   function recordTableCancellation({ order, item = null, reason, type }) {
     const isOrder = type === "order";
     const voidEntry = {
-      id: `VOID-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+      id: `VOID-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
       storeId: activeStore.id,
       storeName: activeStore.name,
       branch: activeStore.branch,
@@ -1943,7 +1954,7 @@ function AuthenticatedApp() {
     const cancelled = saveTableOrder({ ...order, status: "Cancelled", cancelReason: reason, cancelledAt: new Date().toISOString() });
     recordTableCancellation({ order: cancelled, reason, type: "order" });
     if (order.kotId) {
-      setKdsOrders((current) => [{ id: `KOT-CANCEL-${Date.now()}`, storeId: activeStore.id, table: order.tableName, waiter: order.waiterName, age: "Just now", status: "New", items: [`CANCEL ORDER ${order.orderNumber} - ${reason}`], createdAt: new Date().toISOString(), tableOrderId: order.id }, ...current]);
+      setKdsOrders((current) => [{ id: `KOT-CANCEL-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, storeId: activeStore.id, table: order.tableName, waiter: order.waiterName, age: "Just now", status: "New", items: [`CANCEL ORDER ${order.orderNumber} - ${reason}`], createdAt: new Date().toISOString(), tableOrderId: order.id }, ...current]);
     }
     notify(`${order.tableName} order cancelled`);
     return cancelled;
@@ -1957,7 +1968,7 @@ function AuthenticatedApp() {
     const updated = saveTableOrder({ ...order, items: nextItems, itemCount, subtotal, kotQuantities, updatedAt: new Date().toISOString() });
     recordTableCancellation({ order, item, reason, type: "item" });
     if (order.kotId) {
-      setKdsOrders((current) => [{ id: `KOT-CANCEL-${Date.now()}`, storeId: activeStore.id, table: order.tableName, waiter: order.waiterName, age: "Just now", status: "New", items: [`CANCEL ${item.qty} ${item.name} - ${reason}`], createdAt: new Date().toISOString(), tableOrderId: order.id }, ...current]);
+      setKdsOrders((current) => [{ id: `KOT-CANCEL-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, storeId: activeStore.id, table: order.tableName, waiter: order.waiterName, age: "Just now", status: "New", items: [`CANCEL ${item.qty} ${item.name} - ${reason}`], createdAt: new Date().toISOString(), tableOrderId: order.id }, ...current]);
     }
     notify(`${item.name} cancelled from ${order.tableName}`);
     return updated;
@@ -1965,7 +1976,7 @@ function AuthenticatedApp() {
 
   function recordRefund(refund) {
     const refundEntry = {
-      id: `REF-${Date.now()}`,
+      id: `REF-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       storeId: activeStore.id,
       storeName: activeStore.name,
       branch: activeStore.branch,
@@ -1982,13 +1993,18 @@ function AuthenticatedApp() {
     return <LoginScreen onLogin={handleLogin} />;
   }
 
+  if (supabaseConfigured && !supabaseStateReady) {
+    return <div className="login-screen"><div className="panel"><h2>Loading your store data</h2><p>{toast || "Connecting to the shared store records…"}</p><button onClick={() => window.location.reload()}>Retry connection</button><button onClick={handleLogout}>Sign out</button></div></div>;
+  }
+
   if (currentUser.role === "supplier") {
-    return <SupplierPortal currentUser={currentUser} orders={supplierOrders} setOrders={setSupplierOrders} onLogout={() => { localStorage.removeItem("vestora-current-user"); setCurrentUser(null); }} />;
+    return <><CloudSyncBanner /><SupplierPortal currentUser={currentUser} orders={supplierOrders} setOrders={setSupplierOrders} onLogout={handleLogout} /></>;
   }
 
   if (currentUser.role === "super_admin" && superAdminLanding) {
     return (
       <>
+        <CloudSyncBanner />
         <SuperAdminStoreLanding
           stores={stores}
           setStores={setStores}
@@ -1996,13 +2012,7 @@ function AuthenticatedApp() {
           activeStore={activeStore}
           onEnterStore={enterStore}
           onUpdatePassword={() => setPasswordDialogOpen(true)}
-          onLogout={() => {
-            localStorage.removeItem("vestora-current-user");
-            localStorage.removeItem("vestora-super-admin-in-store");
-            localStorage.removeItem("vestora-pos-cashier");
-            setPosCashier(null);
-            setCurrentUser(null);
-          }}
+          onLogout={handleLogout}
           notify={notify}
           toast={toast}
         />
@@ -2031,7 +2041,7 @@ function AuthenticatedApp() {
     menu: <MenuManagement key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} productItems={productItems} setProductItems={setProductItems} activeView={menuView} editingItemId={menuItemEditId} onNavigate={openMenuView} />,
     inventory: <Inventory key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} cloudStateReady={supabaseStateReady} />,
     production: <Production key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} activeView={productionView} activeReport={productionReportView} onViewChange={setProductionView} foodStock={foodStock} onFoodStockChange={updateFoodStock} cloudStateReady={supabaseStateReady} />,
-    crm: <CRM notify={notify} canManageAll={canManage} salesLedger={scopedSalesLedger} />,
+    crm: <CRM notify={notify} canManageAll={canManage} storeId={activeStore.id} salesLedger={scopedSalesLedger} />,
     attendance: <AttendanceModule key={activeStore.id} notify={notify} activeStore={activeStore} users={users} canManage={canManage} canManageAll={canManageAll} activeView={attendanceView} onViewChange={setAttendanceView} onOpenAdmin={() => openAdminView("create")} />,
     offers: <OffersPromotions key={activeStore.id} storeId={activeStore.id} productItems={productItems} notify={notify} canManage={canManage} activeView={offersView} onViewChange={setOffersView} />,
   finance: <Finance notify={notify} canManageAll={canManage} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} storeId={activeStore.id} view={financeView} />,
@@ -2043,6 +2053,7 @@ function AuthenticatedApp() {
   if (activeModule === "pos") {
     return (
       <div className={dark ? "pos-page dark" : "pos-page"} style={themeVariables}>
+        <CloudSyncBanner />
         {content}
         {toast && <div className="toast">{toast}</div>}
       </div>
@@ -2051,6 +2062,7 @@ function AuthenticatedApp() {
 
   return (
     <div className={`${dark ? "app dark" : "app"} ${sidebarOpen ? "sidebar-expanded" : "sidebar-collapsed"}`} style={themeVariables}>
+      <CloudSyncBanner />
       <aside id="primary-navigation" className={sidebarOpen ? "sidebar" : "sidebar collapsed"}>
         <div className="brand">
           <img src={vestoraLogoPath} alt="" />
@@ -2234,7 +2246,7 @@ function AuthenticatedApp() {
             ) : <span className="pill store-pill">{activeStore.branch} store</span>}
             <span className="pill role-pill">{currentRoleLabel}</span>
             <button className="icon-btn" onClick={() => notify("No new notifications")} title="Notifications"><Bell size={18} /></button>
-            <button className="icon-btn" onClick={() => setDark(!dark)} title="Toggle theme">{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
+            <button className="icon-btn" onClick={() => setThemeConfig((current) => ({ ...current, mode: dark ? "Light" : "Dark" }))} title="Toggle theme">{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
             <button className="icon-btn" onClick={handleLogout} title="Logout"><LogOut size={18} /></button>
           </div>
         </header>
@@ -2365,9 +2377,9 @@ function LoginScreen({ onLogin }) {
           id: data.user.id,
           email: data.user.email || loginId,
           name: metadata.name || data.user.email || loginId,
-          role: metadata.role || profile.role || (isSuperAdmin ? "super_admin" : "cashier"),
-          appRole: metadata.appRole || profile.appRole || profile.role || (isSuperAdmin ? "Super Admin" : "Cashier"),
-          storeId: metadata.storeId || profile.storeId || "GLOBAL",
+          role: profile.role || "cashier",
+          appRole: profile.appRole || "Cashier",
+          storeId: profile.storeId || "GLOBAL",
           status: profile.status || "Active",
         };
         onLogin(profileUser);
@@ -2466,7 +2478,7 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, on
       return;
     }
     const store = {
-      id: editingStoreId || `STORE-${Date.now()}`,
+      id: editingStoreId || `STORE-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       name: storeName.trim(),
       parentStoreId: storeFormMode === "branch" ? parentStore?.parentStoreId || parentStore?.id || "" : "",
       legalName: storeDraft.legalName.trim() || parentStore?.legalName || "",
@@ -2522,7 +2534,7 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, on
       return;
     }
     const branches = newBranchDrafts.map((branch, index) => ({
-      id: `BRANCH-${Date.now()}-${index + 1}`,
+      id: `BRANCH-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${index + 1}`,
       name: store.name,
       parentStoreId: store.id,
       legalName: store.legalName,
@@ -2858,7 +2870,7 @@ function SupplierPortal({ currentUser, orders, setOrders, onLogout }) {
   const [activeTab, setActiveTab] = useState("orders");
   const [selectedId, setSelectedId] = useState(supplierOrders[0]?.id || "");
   const [supplierToast, setSupplierToast] = useState("");
-  const [documents, setDocuments] = useState([
+  const [documents, setDocuments] = useBusinessState(`vestora-supplier-documents-${currentUser.storeId}`, [
     ["GST certificate", "Not uploaded"],
     ["FSSAI certificate", "Not uploaded"],
     ["Bank details", "Not uploaded"],
@@ -3063,7 +3075,7 @@ function ExcelReportSheet({ title, range, columns, rows, columnTotals = {} }) {
 function Dashboard({ notify, salesLedger, refundLedger = [], kdsOrders, comparisonStores = [], comparisonSalesLedger = [], storeId, onNavigate }) {
   const [range, setRange] = useState("Weekly");
   const [analysisUpdatedAt, setAnalysisUpdatedAt] = useState(new Date());
-  const [inventorySnapshot, setInventorySnapshot] = useState(() => {
+  const [inventorySnapshot, setInventorySnapshot] = useBusinessState(`vestora-inventory-${storeId}`, () => {
     const saved = loadStoredArray(`vestora-inventory-${storeId}`);
     return stripUntouchedDefaultRecords(saved, defaultInventoryItems, ["updatedAt"]);
   });
@@ -3249,13 +3261,12 @@ function CashierLogin({ cashiers, activeStore, currentShift, onAuthenticated, on
     setError("");
   }
 
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
     if (!selectedCashier) return;
-    if (password !== selectedCashier.password) {
-      setError("Incorrect password. Try again.");
-      return;
-    }
+    try {
+      await supabaseApiRequest("cashier-login", { method: "POST", body: JSON.stringify({ email: selectedCashier.email, password }) });
+    } catch (error) { setError(error.message); return; }
     if (onAuthenticated(selectedCashier) === false) {
       setError(`${currentShift?.cashierName || "Another cashier"} has an open shift.`);
     }
@@ -3426,7 +3437,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
   const [selectedOfferId, setSelectedOfferId] = useState("");
   const [couponEntry, setCouponEntry] = useState("");
   const [appliedOffer, setAppliedOffer] = useState(null);
-  const [posOffers] = useState(() => {
+  const [posOffers] = useBusinessState(`vestora-offers-${storeId}`, () => {
     const savedOffers = loadStoredArray(`vestora-offers-${storeId}`);
     return savedOffers.length ? savedOffers : localOfferCatalog;
   });
@@ -3631,7 +3642,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
         return false;
       }
     }
-    const bill = { id: `BILL-${Date.now()}`, orderNumber, cashier: currentUser?.name || "POS User", customerName: customerName.trim(), customerMobile, orderType, tableOrderId: sourceTableOrder?.id || "", tableName: sourceTableOrder?.tableName || "", waiter: sourceTableOrder?.waiterName || "", guestCount: Number(sourceTableOrder?.guestCount || 0), items: cart, subtotal, cgst, sgst, tax, discount: totalDiscount, appliedOffer, total, payment: selectedPayment, splitPayments, itemCount: cart.reduce((sum, item) => sum + item.qty, 0), syncStatus: online ? "Synced" : "Pending sync", completedAt: new Date().toISOString() };
+    const bill = { id: `BILL-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, orderNumber, cashier: currentUser?.name || "POS User", customerName: customerName.trim(), customerMobile, orderType, tableOrderId: sourceTableOrder?.id || "", tableName: sourceTableOrder?.tableName || "", waiter: sourceTableOrder?.waiterName || "", guestCount: Number(sourceTableOrder?.guestCount || 0), items: cart, subtotal, cgst, sgst, tax, discount: totalDiscount, appliedOffer, total, payment: selectedPayment, splitPayments, itemCount: cart.reduce((sum, item) => sum + item.qty, 0), syncStatus: online ? "Synced" : "Pending sync", completedAt: new Date().toISOString() };
     if (!online) {
       const queued = JSON.parse(localStorage.getItem("vestora-offline-orders") || "[]");
       localStorage.setItem("vestora-offline-orders", JSON.stringify([...queued, bill]));
@@ -4162,14 +4173,14 @@ function KDS({ notify, orders, setOrders, kotPrinter }) {
 }
 
 function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders = [], onSaveOrder, onSendKot, onSendReception, onCancelOrder, onCancelItem, kotPrinter, cloudStateReady = false }) {
-  const [floors, setFloors] = useState(() => {
+  const [floors, setFloors] = useBusinessState(`vestora-floors-${storeId}`, () => {
     const saved = loadStoredArray(`vestora-floors-${storeId}`);
     return saved.length ? saved : floorOptions;
   });
   const [floor, setFloor] = useState(() => floors[0] || "Main");
-  const [tables, setTables] = useState(() => {
+  const [tables, setTables] = useBusinessState(`vestora-tables-${storeId}`, () => {
     const saved = loadStoredArray(`vestora-tables-${storeId}`);
-    return saved.length ? saved : initialTables;
+    return saved;
   });
   const [selected, setSelected] = useState(null);
   const [showSetup, setShowSetup] = useState(false);
@@ -4190,7 +4201,7 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
   const [qrTable, setQrTable] = useState(null);
   const [qrImage, setQrImage] = useState("");
   const [qrLoading, setQrLoading] = useState(false);
-  const [tableSync, setTableSync] = useState({ state: "pending", message: "Waiting for the shared table layout..." });
+  const tableSync = useCloudSyncStatus();
   const visibleTables = tables.filter((table) => table.floor === floor);
   const selectedTable = tables.find((table) => table.id === selected);
   const catalogItems = (items?.length ? items : menuItems).filter((item) => item.status !== "Inactive");
@@ -4211,25 +4222,11 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
   useEffect(() => {
     const key = `vestora-tables-${storeId}`;
     localStorage.setItem(key, JSON.stringify(tables));
-    if (!cloudStateReady || !supabaseConfigured) return;
-    let cancelled = false;
-    setTableSync({ state: "saving", message: "Saving table layout to cloud..." });
-    syncLocalStateKeyToSupabase(key)
-      .then(() => { if (!cancelled) setTableSync({ state: "synced", message: "Tables saved to cloud — other devices can refresh to see them." }); })
-      .catch((error) => { if (!cancelled) setTableSync({ state: "error", message: error.message || "Table layout saved only on this device. Retry when online." }); });
-    return () => { cancelled = true; };
   }, [tables, storeId, cloudStateReady]);
 
   useEffect(() => {
     const key = `vestora-floors-${storeId}`;
     localStorage.setItem(key, JSON.stringify(floors));
-    if (!cloudStateReady || !supabaseConfigured) return;
-    let cancelled = false;
-    setTableSync({ state: "saving", message: "Saving floor layout to cloud..." });
-    syncLocalStateKeyToSupabase(key)
-      .then(() => { if (!cancelled) setTableSync({ state: "synced", message: "Floors saved to cloud — other devices can refresh to see them." }); })
-      .catch((error) => { if (!cancelled) setTableSync({ state: "error", message: error.message || "Floor layout saved only on this device. Retry when online." }); });
-    return () => { cancelled = true; };
   }, [floors, storeId, cloudStateReady]);
 
   useEffect(() => {
@@ -4363,7 +4360,7 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
       return;
     }
     const existing = addonTableOrder || {
-      id: `TABLE-ORDER-${Date.now()}`,
+      id: `TABLE-ORDER-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       orderNumber: `ORD-${Date.now().toString().slice(-6)}`,
       tableId: selectedTable.id,
       tableName: selectedTable.name,
@@ -4549,7 +4546,7 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
       setSelected(editingId);
       notify(`${name} updated`);
     } else {
-      const nextId = Math.max(0, ...tables.map((table) => table.id)) + 1;
+      const nextId = crypto.randomUUID();
       const created = { id: nextId, ...tableData };
       setTables((current) => [...current, created]);
       setSelected(nextId);
@@ -4794,8 +4791,8 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
   const blankDraft = { name: "", sku: "", category: "Dry goods", stock: "", unit: "kg", reorder: "", cost: "" };
   const savedItems = stripUntouchedDefaultRecords(loadStoredArray(storageKey), defaultInventoryItems, ["updatedAt"]);
   const savedCategories = loadStoredArray(categoryStorageKey);
-  const [items, setItems] = useState(() => savedItems);
-  const [categories, setCategories] = useState(() => Array.from(new Set([...defaultCategories, ...savedCategories, ...(savedItems.length ? savedItems : defaultInventoryItems).map((item) => item.category).filter(Boolean)])));
+  const [items, setItems] = useBusinessState(storageKey, () => savedItems);
+  const [categories, setCategories] = useBusinessState(categoryStorageKey, () => Array.from(new Set([...defaultCategories, ...savedCategories, ...(savedItems.length ? savedItems : defaultInventoryItems).map((item) => item.category).filter(Boolean)])));
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
   const [editorOpen, setEditorOpen] = useState(false);
@@ -4962,7 +4959,7 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
     }
     const nextItem = {
       ...draft,
-      id: editingId || `INV-${Date.now()}`,
+      id: editingId || `INV-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       name: draft.name.trim(),
       sku: resolvedSku,
       stock: Number(draft.stock),
@@ -5089,15 +5086,15 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
   const savedRecipeCategories = loadStoredArray(categoryKey);
   const productionTabs = ["Recipes", "Planning", "Batches", "Food Stock", "Wastage", "Reports"];
   const [activeTab, setActiveTab] = useState(productionTabs.includes(activeView) ? activeView : "Recipes");
-  const [recipes, setRecipes] = useState(() => savedRecipes);
-  const [recipeCategories, setRecipeCategories] = useState(() => Array.from(new Set([...productionCategories, ...savedRecipeCategories, ...(savedRecipes.length ? savedRecipes : defaultRecipes).map((recipe) => recipe.category).filter(Boolean)])));
-  const [inventory, setInventory] = useState(() => stripUntouchedDefaultRecords(loadStoredArray(inventoryKey), defaultInventoryItems, ["updatedAt"]));
-  const [batches, setBatches] = useState(() => {
+  const [recipes, setRecipes] = useBusinessState(recipeKey, () => savedRecipes);
+  const [recipeCategories, setRecipeCategories] = useBusinessState(categoryKey, () => Array.from(new Set([...productionCategories, ...savedRecipeCategories, ...(savedRecipes.length ? savedRecipes : defaultRecipes).map((recipe) => recipe.category).filter(Boolean)])));
+  const [inventory, setInventory] = useBusinessState(inventoryKey, () => stripUntouchedDefaultRecords(loadStoredArray(inventoryKey), defaultInventoryItems, ["updatedAt"]));
+  const [batches, setBatches] = useBusinessState(batchKey, () => {
     return stripUntouchedDefaultRecords(loadStoredArray(batchKey), defaultProductionBatches, ["materialsIssued", "endTime"]);
   });
-  const [wastageEntries, setWastageEntries] = useState(() => loadStoredArray(wastageKey));
-  const [transactions, setTransactions] = useState(() => loadStoredArray(transactionKey));
-  const [finishedGoods, setFinishedGoods] = useState(() => loadStoredArray(finishedGoodsKey));
+  const [wastageEntries, setWastageEntries] = useBusinessState(wastageKey, () => loadStoredArray(wastageKey));
+  const [transactions, setTransactions] = useBusinessState(transactionKey, () => loadStoredArray(transactionKey));
+  const [finishedGoods, setFinishedGoods] = useBusinessState(finishedGoodsKey, () => loadStoredArray(finishedGoodsKey));
   const [categoryCreatorOpen, setCategoryCreatorOpen] = useState(false);
   const [categoryDraft, setCategoryDraft] = useState("");
   const [selectedRecipeId, setSelectedRecipeId] = useState(recipes[0]?.id || "");
@@ -5364,7 +5361,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
     const existing = recipes.find((recipe) => recipe.id === recipeDraft.id);
     const savedRecipe = {
       ...recipeDraft,
-      id: recipeDraft.id || `REC-${Date.now()}`,
+      id: recipeDraft.id || `REC-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       outputQty,
       sellingPrice,
       version: existing ? Number(existing.version || 1) + 1 : 1,
@@ -5427,10 +5424,10 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
           updatedAt: now,
         } : record);
       }
-      return [{ id: `FOOD-${Date.now()}`, item, unit, produced: quantity, sold: 0, available: quantity, threshold, updatedAt: now }, ...current];
+      return [{ id: `FOOD-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, item, unit, produced: quantity, sold: 0, available: quantity, threshold, updatedAt: now }, ...current];
     });
-    setFinishedGoods((current) => [{ id: `FG-MANUAL-${Date.now()}`, item, qty: quantity, unit, batchNo: "Manual food stock", cost: 0, date: today }, ...current]);
-    setTransactions((current) => [{ id: `TRN-FOOD-${Date.now()}`, type: "Receipt", batchNo: "Manual food stock", item, qty: `${quantity} ${unit}`, cost: 0, date: today }, ...current]);
+    setFinishedGoods((current) => [{ id: `FG-MANUAL-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, item, qty: quantity, unit, batchNo: "Manual food stock", cost: 0, date: today }, ...current]);
+    setTransactions((current) => [{ id: `TRN-FOOD-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, type: "Receipt", batchNo: "Manual food stock", item, qty: `${quantity} ${unit}`, cost: 0, date: today }, ...current]);
     setFoodStockDraft((current) => ({ ...current, qty: "" }));
     notify(`${quantity} ${unit} of ${item} added to food stock${existing ? "" : " · POS tracking enabled"}`);
   }
@@ -5464,7 +5461,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
     });
     const newBatch = {
       ...plan,
-      id: `BATCH-${Date.now()}`,
+      id: `BATCH-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       recipeName: plannedRecipe.name,
       status: "In Progress",
       outputQty: 0,
@@ -5478,7 +5475,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
     setSelectedBatchId(newBatch.id);
     switchProductionTab("Batches");
     setTransactions((current) => [
-      ...planRows.map((row, index) => ({ id: `TRN-ISSUE-${Date.now()}-${index}`, type: "Issue", batchNo: newBatch.batchNo, recipeName: newBatch.recipeName, item: row.name, qty: formatProductionQty(row.requiredBase, row.unit), qtyBase: row.requiredBase, unit: row.unit, cost: row.cost, date: today })),
+      ...planRows.map((row, index) => ({ id: `TRN-ISSUE-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${index}`, type: "Issue", batchNo: newBatch.batchNo, recipeName: newBatch.recipeName, item: row.name, qty: formatProductionQty(row.requiredBase, row.unit), qtyBase: row.requiredBase, unit: row.unit, cost: row.cost, date: today })),
       ...current,
     ]);
     notify(`${newBatch.batchNo} started. Raw materials deducted from stock`);
@@ -5513,7 +5510,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
     const finishedBatch = { ...batch, status: "Completed", endTime: batch.endTime || new Date().toTimeString().slice(0, 5), outputQty: Number(batch.qty || 0), cost: requirements.reduce((sum, row) => sum + row.cost, 0), materialsIssued: true };
     setInventory(nextInventory);
     setBatches((current) => current.map((item) => item.id === batch.id ? finishedBatch : item));
-    setFinishedGoods((current) => [{ id: `FG-${Date.now()}`, item: batch.recipeName, qty: batch.qty, unit: recipe?.outputUnit || "plate", batchNo: batch.batchNo, cost: finishedBatch.cost, date: today }, ...current]);
+    setFinishedGoods((current) => [{ id: `FG-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, item: batch.recipeName, qty: batch.qty, unit: recipe?.outputUnit || "plate", batchNo: batch.batchNo, cost: finishedBatch.cost, date: today }, ...current]);
     onFoodStockChange?.((current) => {
       const matching = foodStockRecordFor(current, batch.recipeName);
       const quantity = Number(batch.qty || 0);
@@ -5525,11 +5522,11 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
           updatedAt: new Date().toISOString(),
         } : record);
       }
-      return [{ id: `FOOD-${Date.now()}`, item: batch.recipeName, unit: recipe?.outputUnit || "plate", produced: quantity, sold: 0, available: quantity, threshold: 5, updatedAt: new Date().toISOString() }, ...current];
+      return [{ id: `FOOD-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, item: batch.recipeName, unit: recipe?.outputUnit || "plate", produced: quantity, sold: 0, available: quantity, threshold: 5, updatedAt: new Date().toISOString() }, ...current];
     });
     setTransactions((current) => [
-      { id: `TRN-FG-${Date.now()}`, type: "Receipt", batchNo: batch.batchNo, item: batch.recipeName, qty: `${batch.qty} ${recipe?.outputUnit || "plate"}`, cost: finishedBatch.cost, date: today },
-      ...(shouldIssueMaterials ? requirements.map((row, index) => ({ id: `TRN-${Date.now()}-${index}`, type: "Issue", batchNo: batch.batchNo, recipeName: batch.recipeName, item: row.name, qty: formatProductionQty(row.requiredBase, row.unit), qtyBase: row.requiredBase, unit: row.unit, cost: row.cost, date: today })) : []),
+      { id: `TRN-FG-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, type: "Receipt", batchNo: batch.batchNo, item: batch.recipeName, qty: `${batch.qty} ${recipe?.outputUnit || "plate"}`, cost: finishedBatch.cost, date: today },
+      ...(shouldIssueMaterials ? requirements.map((row, index) => ({ id: `TRN-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${index}`, type: "Issue", batchNo: batch.batchNo, recipeName: batch.recipeName, item: row.name, qty: formatProductionQty(row.requiredBase, row.unit), qtyBase: row.requiredBase, unit: row.unit, cost: row.cost, date: today })) : []),
       ...current,
     ]);
     notify(`${batch.batchNo} finished. Finished goods increased`);
@@ -5558,7 +5555,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
       }));
       setTransactions((current) => [
         ...returnedRequirements.map((row, index) => ({
-          id: `TRN-RETURN-${Date.now()}-${index}`,
+          id: `TRN-RETURN-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${index}`,
           type: "Return",
           batchNo: batch.batchNo,
           recipeName: batch.recipeName,
@@ -5594,7 +5591,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
       notify("Select a unit that matches the inventory item");
       return;
     }
-    const entry = { ...wastageDraft, id: `WST-${Date.now()}`, qty: quantity, cost: Number(wastageCost.toFixed(2)), approval: "Pending" };
+    const entry = { ...wastageDraft, id: `WST-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, qty: quantity, cost: Number(wastageCost.toFixed(2)), approval: "Pending" };
     setWastageEntries((current) => [entry, ...current]);
     setWastageDraft({ item: "", reason: "Kitchen Waste", qty: 1, unit: "kg", cost: 0, person: "", approval: "Pending", date: today });
     notify("Wastage saved for approval");
@@ -5630,7 +5627,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
         const remainingBase = toBaseQuantity(item.stock, item.unit) - wastageBase;
         return { ...item, stock: Number(fromBaseQuantity(remainingBase, item.unit).toFixed(3)) };
       }));
-      setTransactions((current) => [{ id: `TRN-WST-${Date.now()}`, type: "Wastage", batchNo: "-", item: entry.item, qty: `${entry.qty} ${entry.unit}`, qtyBase: wastageBase, unit: entry.unit, cost: entry.cost, date: entry.date }, ...current]);
+      setTransactions((current) => [{ id: `TRN-WST-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, type: "Wastage", batchNo: "-", item: entry.item, qty: `${entry.qty} ${entry.unit}`, qtyBase: wastageBase, unit: entry.unit, cost: entry.cost, date: entry.date }, ...current]);
     }
     setWastageEntries((current) => current.map((item) => item.id === entry.id ? { ...item, approval, reviewedAt: new Date().toISOString() } : item));
     notify(`${entry.item} wastage ${approval.toLowerCase()}`);
@@ -5856,14 +5853,15 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
   );
 }
 
-function CRM({ notify, canManageAll, salesLedger = [] }) {
+function CRM({ notify, canManageAll, storeId, salesLedger = [] }) {
+  const [overrides, setOverrides] = useBusinessState(`vestora-customer-details-${storeId}`, []);
   const customers = new Map();
   salesLedger.forEach((bill) => {
     const name = String(bill.customerName || "").trim();
     const mobile = String(bill.customerMobile || "").replace(/\D/g, "").slice(-10);
     if (!name && !mobile) return;
     const key = mobile || name.toLowerCase();
-    const current = customers.get(key) || { name: name || "Customer", mobile, points: 0, itemCounts: new Map() };
+    const current = customers.get(key) || { id: key, name: name || "Customer", mobile, points: 0, itemCounts: new Map() };
     current.name = name || current.name;
     current.mobile = mobile || current.mobile;
     current.points += Math.round(Number(bill.total || 0));
@@ -5871,12 +5869,25 @@ function CRM({ notify, canManageAll, salesLedger = [] }) {
     customers.set(key, current);
   });
   const rows = Array.from(customers.values())
+    .filter((customer) => !overrides.find((entry) => entry.id === customer.id)?.deleted)
     .map((customer) => {
       const favourite = Array.from(customer.itemCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
-      return [customer.name, customer.mobile ? `+91 ${customer.mobile}` : "Not provided", String(customer.points), favourite];
+      const saved = overrides.find((entry) => entry.id === customer.id);
+      return Object.assign(saved?.values ? [...saved.values] : [customer.name, customer.mobile ? `+91 ${customer.mobile}` : "Not provided", String(customer.points), favourite], { recordId: customer.id });
     })
     .sort((a, b) => Number(b[2]) - Number(a[2]));
-  return <DataTable title="Customer CRM" icon={Users} columns={["Customer", "Mobile", "Loyalty", "Favourite"]} rows={rows} notify={notify} canManageAll={canManageAll} emptyMessage="No customer details yet. Complete a bill with customer name or mobile to add it here." />;
+  function updateCustomerRows(next) {
+    setOverrides((current) => {
+      const changes = new Map(current.map((entry) => [entry.id, entry]));
+      for (const row of rows) {
+        const replacement = next.find((entry) => entry.recordId === row.recordId);
+        if (!replacement) changes.set(row.recordId, { id: row.recordId, deleted: true });
+        else if (JSON.stringify(row) !== JSON.stringify(replacement)) changes.set(row.recordId, { id: row.recordId, values: [...replacement] });
+      }
+      return [...changes.values()];
+    });
+  }
+  return <DataTable title="Customer CRM" icon={Users} columns={["Customer", "Mobile", "Loyalty", "Favourite"]} rows={rows} onRowsChange={updateCustomerRows} notify={notify} canManageAll={canManageAll} emptyMessage="No customer details yet. Complete a bill with customer name or mobile to add it here." />;
 }
 
 function ProductItemsManager({ items, setItems, notify, canManageAll, menuCategories = [], onCreateCategory, mode = "items", editingItemId = "", onNavigate }) {
@@ -5959,7 +5970,7 @@ function ProductItemsManager({ items, setItems, notify, canManageAll, menuCatego
     }
     const savedItem = {
       ...draft,
-      id: draft.id || `ITEM-${Date.now()}`,
+      id: draft.id || `ITEM-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       name: draft.name.trim(),
       category: draft.category.trim() || "Mains",
       barcode,
@@ -6114,7 +6125,7 @@ function ProductItemsManager({ items, setItems, notify, canManageAll, menuCatego
 function MenuManagement({ notify, canManageAll, storeId, productItems, setProductItems, activeView = "items", editingItemId = "", onNavigate }) {
   const sectionNames = Object.keys(menuSectionConfig);
   const [activeSection, setActiveSection] = useState(sectionNames[0]);
-  const [records, setRecords] = useState(() => {
+  const [records, setRecords] = useBusinessState(`vestora-menu-setup-${storeId}`, () => {
     const saved = localStorage.getItem(`vestora-menu-setup-${storeId}`);
     return saved ? JSON.parse(saved) : Object.fromEntries(sectionNames.map((name) => [name, menuSectionConfig[name].rows]));
   });
@@ -6186,7 +6197,7 @@ function MenuManagement({ notify, canManageAll, storeId, productItems, setProduc
       while (currentCategories.some((entry) => String(entry.code || "").toUpperCase() === code)) code = `${codeBase}${suffix++}`;
       return {
         ...current,
-        Categories: [{ id: Date.now(), name: cleanedName, code, status: "Active" }, ...currentCategories],
+        Categories: [{ id: crypto.randomUUID(), name: cleanedName, code, status: "Active" }, ...currentCategories],
       };
     });
   }
@@ -6201,7 +6212,7 @@ function MenuManagement({ notify, canManageAll, storeId, productItems, setProduc
       notify("Enter menu setup details");
       return;
     }
-    const saved = { ...draft, id: selectedId || Date.now() };
+    const saved = { ...draft, id: selectedId || crypto.randomUUID() };
     setRecords((current) => {
       const currentRows = current[activeSection] || [];
       const exists = currentRows.some((row) => row.id === saved.id);
@@ -6244,7 +6255,7 @@ function MenuManagement({ notify, canManageAll, storeId, productItems, setProduc
       const imported = JSON.parse(await file.text());
       if (!Array.isArray(imported) || !imported.length) throw new Error("No records found");
       const normalized = imported.map((entry, index) => ({
-        id: entry.id || Date.now() + index,
+        id: entry.id || crypto.randomUUID(),
         ...Object.fromEntries(config.fields.map(([field]) => [field, String(entry[field] ?? "").trim()])),
       }));
       setRecords((current) => ({ ...current, [activeSection]: normalized }));
@@ -6405,7 +6416,7 @@ function financeLedgerOptionLabel(ledger) {
 }
 
 function newFinanceJournalLine(account = "", debit = "", credit = "", description = "", side = "") {
-  return { id: `JLINE-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, account, debit, credit, description, side };
+  return { id: `JLINE-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${Math.random().toString(36).slice(2, 7)}`, account, debit, credit, description, side };
 }
 
 function blankFinanceJournalDraft() {
@@ -6456,7 +6467,7 @@ function financeLedgerHierarchy(ledgers, balances = {}) {
 function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId, view = "Expenses" }) {
   const expenseStorageKey = `vestora-finance-expenses-${storeId}`;
   const emptyExpense = () => ({ category: "", debitAccount: "", creditAccount: "Cash", amount: "", paidFrom: "Cash", status: "Posted", date: localDateKey(), reference: "", note: "" });
-  const [expenses, setExpenses] = useState(() => loadStoredArray(expenseStorageKey));
+  const [expenses, setExpenses] = useBusinessState(expenseStorageKey, () => loadStoredArray(expenseStorageKey));
   const [expenseDraft, setExpenseDraft] = useState(emptyExpense);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -6503,7 +6514,7 @@ function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId
       return;
     }
     const record = {
-      id: editingExpenseId || `EXP-${Date.now()}`,
+      id: editingExpenseId || `EXP-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       category,
       debitAccount: expenseDraft.debitAccount || expenseAccountForPurpose(category),
       creditAccount: expenseDraft.creditAccount || expenseDraft.paidFrom || "Cash",
@@ -6656,7 +6667,7 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
       : view === "Vendor Payments"
         ? { vendor: "", purpose: "Supplier settlement", invoice: "", dueAmount: "", amount: "", debitAccount: "Accounts payable", creditAccount: "Bank", method: "Bank", status: "Paid", date: localDateKey(), reference: "", note: "" }
       : blankFinanceJournalDraft();
-  const [records, setRecords] = useState(() => storageKey ? loadStoredArray(storageKey) : []);
+  const [records, setRecords] = useBusinessState(storageKey, () => storageKey ? loadStoredArray(storageKey) : []);
   const [draft, setDraft] = useState(blank);
   const [editingId, setEditingId] = useState("");
   const [formOpen, setFormOpen] = useState(false);
@@ -6667,7 +6678,7 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
   const [ledgerDraft, setLedgerDraft] = useState(blankFinanceJournalDraft);
   const ledgerStorageKey = financeLedgerStorageKey(storeId);
   const [ledgerMasterOpen, setLedgerMasterOpen] = useState(false);
-  const [ledgerMasters, setLedgerMasters] = useState(() => loadFinanceLedgers(storeId));
+  const [ledgerMasters, setLedgerMasters] = useBusinessState(ledgerStorageKey, () => loadFinanceLedgers(storeId));
   const [ledgerMasterDraft, setLedgerMasterDraft] = useState(() => {
     const ledgers = loadFinanceLedgers(storeId);
     return { code: nextFinanceLedgerCode("Asset", ledgers), name: "", type: "Asset", group: "Current asset", status: "Active" };
@@ -6681,7 +6692,11 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     vendors: loadStoredArray(`vestora-finance-vendor-payments-${storeId}`),
     journals: loadStoredArray(`vestora-finance-journals-${storeId}`),
   });
-  const [reportRecords, setReportRecords] = useState(loadFinanceReportRecords);
+  const [reportReceipts] = useBusinessState(`vestora-finance-receipts-${storeId}`, []);
+  const [reportBanks] = useBusinessState(`vestora-finance-bank-accounts-${storeId}`, []);
+  const [reportVendors] = useBusinessState(`vestora-finance-vendor-payments-${storeId}`, []);
+  const [reportJournals] = useBusinessState(`vestora-finance-journals-${storeId}`, []);
+  const reportRecords = { receipts: reportReceipts, banks: reportBanks, vendors: reportVendors, journals: reportJournals };
 
   useEffect(() => {
     setRecords(storageKey ? loadStoredArray(storageKey) : []);
@@ -6698,7 +6713,6 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     setLedgerMasterDraft({ code: nextFinanceLedgerCode("Asset", nextLedgers), name: "", type: "Asset", group: "Current asset", status: "Active" });
     setCollapsedLedgerNodes(new Set());
     setFilters({ query: "", method: "All", status: "All", from: "", to: "" });
-    setReportRecords(loadFinanceReportRecords());
   }, [storeId, view]);
 
   const isReports = view === "Finance Reports";
@@ -6780,7 +6794,7 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
       || lines.map((line) => line.description).find(Boolean)
       || "Journal entry";
     return {
-      id: existingId || `JRN-${Date.now()}`,
+      id: existingId || `JRN-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       date: sourceDraft.date || localDateKey(),
       purpose: narration,
       debitAccount: debitLine?.account || "",
@@ -6804,7 +6818,6 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
       localStorage.setItem(storageKey, JSON.stringify(next));
       syncLocalStateKeyToSupabase(storageKey).catch(() => {});
     }
-    if (reportBucket) setReportRecords((reportCurrent) => ({ ...reportCurrent, [reportBucket]: next }));
     return next;
   });
   const resetForm = () => { setDraft(blank()); setEditingId(""); setFormOpen(false); };
@@ -6821,7 +6834,7 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     if (!name || !ledgerMasterDraft.type || !ledgerMasterDraft.group) return notify("Enter ledger name, type, and group");
     if (ledgerMasters.some((ledger) => ledger.name.toLowerCase() === name.toLowerCase())) return notify("Ledger name already exists");
     const record = {
-      id: `LEDGER-${Date.now()}`,
+      id: `LEDGER-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       code: ledgerMasterDraft.code || nextFinanceLedgerCode(ledgerMasterDraft.type, ledgerMasters),
       name,
       type: ledgerMasterDraft.type,
@@ -6862,14 +6875,14 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     let record;
     if (view === "Receipts") {
       if (!draft.customer.trim() || !draft.purpose?.trim() || !draft.debitAccount?.trim() || !draft.creditAccount?.trim() || !Number.isFinite(amount) || amount <= 0) return notify("Enter customer, purpose, accounts, and receipt amount");
-      record = { ...draft, id: editingId || `RCT-${Date.now()}`, customer: draft.customer.trim(), purpose: draft.purpose.trim(), debitAccount: draft.debitAccount.trim(), creditAccount: draft.creditAccount.trim(), method: draft.debitAccount.trim(), amount, reference: draft.reference.trim(), note: draft.note.trim(), updatedAt: new Date().toISOString() };
+      record = { ...draft, id: editingId || `RCT-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, customer: draft.customer.trim(), purpose: draft.purpose.trim(), debitAccount: draft.debitAccount.trim(), creditAccount: draft.creditAccount.trim(), method: draft.debitAccount.trim(), amount, reference: draft.reference.trim(), note: draft.note.trim(), updatedAt: new Date().toISOString() };
     } else if (view === "Bank Accounts") {
       if (!draft.accountName.trim() || !draft.bankName.trim()) return notify("Enter account and bank name");
-      record = { ...draft, id: editingId || `BANK-${Date.now()}`, accountName: draft.accountName.trim(), bankName: draft.bankName.trim(), accountNumber: draft.accountNumber.trim(), openingBalance: Number.isFinite(amount) ? amount : 0, note: draft.note.trim(), updatedAt: new Date().toISOString() };
+      record = { ...draft, id: editingId || `BANK-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, accountName: draft.accountName.trim(), bankName: draft.bankName.trim(), accountNumber: draft.accountNumber.trim(), openingBalance: Number.isFinite(amount) ? amount : 0, note: draft.note.trim(), updatedAt: new Date().toISOString() };
     } else if (view === "Vendor Payments") {
       const dueAmount = Number(draft.dueAmount);
       if (!draft.vendor.trim() || !draft.purpose?.trim() || !draft.debitAccount?.trim() || !draft.creditAccount?.trim() || !Number.isFinite(amount) || amount <= 0) return notify("Enter vendor, purpose, accounts, and payment amount");
-      record = { ...draft, id: editingId || `VND-${Date.now()}`, vendor: draft.vendor.trim(), purpose: draft.purpose.trim(), invoice: draft.invoice.trim(), dueAmount: Number.isFinite(dueAmount) ? dueAmount : 0, amount, debitAccount: draft.debitAccount.trim(), creditAccount: draft.creditAccount.trim(), method: draft.creditAccount.trim(), reference: draft.reference.trim(), note: draft.note.trim(), updatedAt: new Date().toISOString() };
+      record = { ...draft, id: editingId || `VND-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, vendor: draft.vendor.trim(), purpose: draft.purpose.trim(), invoice: draft.invoice.trim(), dueAmount: Number.isFinite(dueAmount) ? dueAmount : 0, amount, debitAccount: draft.debitAccount.trim(), creditAccount: draft.creditAccount.trim(), method: draft.creditAccount.trim(), reference: draft.reference.trim(), note: draft.note.trim(), updatedAt: new Date().toISOString() };
     } else {
       record = prepareJournalRecord(draft, editingId);
       if (!record) return notify("Select ledger accounts, enter at least two valid lines, and match debit and credit totals");
@@ -6893,7 +6906,6 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     const nextJournals = [record, ...loadStoredArray(journalKey)];
     localStorage.setItem(journalKey, JSON.stringify(nextJournals));
     syncLocalStateKeyToSupabase(journalKey).catch(() => {});
-    setReportRecords((current) => ({ ...current, journals: nextJournals }));
     setLedgerDraft(blankFinanceJournalDraft());
     setLedgerFormOpen(false);
     notify("Ledger entry posted");
@@ -7029,7 +7041,6 @@ function BillTemplateEditor({ billTemplate, setBillTemplate, notify }) {
 
   function saveBillFormat() {
     const normalizedTemplate = { ...defaultBillTemplate, ...billTemplate, fontSize: billFontSize };
-    localStorage.setItem("vestora-bill-template", JSON.stringify(normalizedTemplate));
     setBillTemplate(normalizedTemplate);
     notify("Bill format saved");
   }
@@ -7300,7 +7311,7 @@ function OffersPromotions({ notify, canManage, storeId, productItems = [], activ
   const offersStorageKey = `vestora-offers-${storeId}`;
   const availableProducts = productItems.filter((item) => item.status !== "Inactive");
   const [selectedView, setSelectedView] = useState(activeView);
-  const [offers, setOffers] = useState(() => {
+  const [offers, setOffers] = useBusinessState(offersStorageKey, () => {
     const savedOffers = loadStoredArray(offersStorageKey);
     return savedOffers.length ? savedOffers : localOfferCatalog;
   });
@@ -7397,7 +7408,7 @@ function OffersPromotions({ notify, canManage, storeId, productItems = [], activ
     const existingOffer = offers.find((offer) => offer.id === editingOfferId);
     const offer = {
       ...(existingOffer || {}),
-      id: editingOfferId || `OFF-${Date.now()}`,
+      id: editingOfferId || `OFF-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       name,
       type: offerDraft.type,
       discount: offerDraft.type === "BOGO" ? `Buy ${buyProduct.name}, get ${freeProduct.name} free` : offerDraft.type === "Combo" ? `Save ₹${Number(offerDraft.discountValue || 0)} on ${comboProducts.map((item) => item.name).join(" + ")}` : offerDraft.type === "Coupon" ? `₹${Number(offerDraft.discountValue || 0)} off · ${couponCode}` : formatOfferDiscount(offerDraft.type, offerDraft.discountValue),
@@ -7494,7 +7505,7 @@ function OffersPromotions({ notify, canManage, storeId, productItems = [], activ
       <div className="offers-content-grid offers-list-only">
         <div className="panel offers-list-panel">
           <PanelHead title={selectedView} icon={Sparkles} actions={["Create offer"]} onAction={openCreateOffer} />
-          <div className="offers-list-meta"><span>{visibleOffers.length} offer{visibleOffers.length === 1 ? "" : "s"} shown</span><span>Local demo data</span></div>
+          <div className="offers-list-meta"><span>{visibleOffers.length} offer{visibleOffers.length === 1 ? "" : "s"} shown</span><span>Shared store offers</span></div>
           <div className="offers-list">
             {visibleOffers.map((offer) => {
               const OfferIcon = offerIconForType(offer.type);
@@ -7553,8 +7564,8 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, onRef
   const [reportDate, setReportDate] = useState("");
   const [reportFilter, setReportFilter] = useState("All");
   const [refundDraft, setRefundDraft] = useState({ billId: "", amount: "", payment: "Cash", reason: "" });
-  const reportInventory = stripUntouchedDefaultRecords(loadStoredArray(`vestora-inventory-${storeId}`), defaultInventoryItems, ["updatedAt"]);
-  const reportRecipes = stripUntouchedDefaultRecords(loadStoredArray(`vestora-recipes-${storeId}`), defaultRecipes, ["changedAt", "changedBy"]);
+  const [reportInventory] = useBusinessState(`vestora-inventory-${storeId}`, () => stripUntouchedDefaultRecords(loadStoredArray(`vestora-inventory-${storeId}`), defaultInventoryItems, ["updatedAt"]));
+  const [reportRecipes] = useBusinessState(`vestora-recipes-${storeId}`, () => stripUntouchedDefaultRecords(loadStoredArray(`vestora-recipes-${storeId}`), defaultRecipes, ["changedAt", "changedBy"]));
 
   useEffect(() => {
     if (reports.includes(activeView)) setSelectedReport(activeView);
@@ -7997,7 +8008,7 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
     }
     const savedRole = {
       ...roleDraft,
-      id: roleDraft.id || `ROLE-${Date.now()}`,
+      id: roleDraft.id || `ROLE-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       name,
       description: roleDraft.description.trim(),
       status: roleDraft.status || "Active",
@@ -8024,13 +8035,13 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
     return canManageAll || !["Super Admin", "Restaurant Admin"].includes(user?.role);
   }
 
-  function saveUser() {
+  async function saveUser() {
     if (!canManageUsers) {
       notify("Admin permission required to create or edit users");
       return;
     }
-    if (!draft.name || !draft.email || !draft.password) {
-      notify("Enter user name, email, and password");
+    if (!draft.name || !draft.email || (!editingId && !draft.password)) {
+      notify("Enter user name, email, and a password for a new login");
       return;
     }
     const duplicateEmail = users.some((user) => user.email.trim().toLowerCase() === draft.email.trim().toLowerCase() && user.id !== editingId);
@@ -8043,11 +8054,16 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       ...draft,
       name: draft.name.trim(),
       email: draft.email.trim().toLowerCase(),
-      password: draft.password,
       role: allowedRole,
       status: draft.status || "Active",
       storeId: activeStore.id,
     };
+    delete scopedDraft.password;
+    try {
+      await syncLocalStateKeyToSupabase("vestora-stores");
+      const result = await supabaseApiRequest("staff-account", { method: "POST", body: JSON.stringify({ ...scopedDraft, password: draft.password }) });
+      scopedDraft.authUserId = result.authUserId;
+    } catch (error) { notify(`User was not saved: ${error.message}`, 10000); return; }
     if (editingId) {
       const targetUser = users.find((user) => user.id === editingId);
       if (!canEditUser(targetUser)) {
@@ -8061,7 +8077,7 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       }));
       notify("User updated");
     } else {
-      setUsers((current) => [...current, { ...scopedDraft, id: Date.now() }]);
+      setUsers((current) => [...current, { ...scopedDraft, id: crypto.randomUUID() }]);
       notify("New user created");
     }
     closeUserEditor();
@@ -8077,12 +8093,15 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
     onViewChange("create");
   }
 
-  function deleteUser(id) {
+  async function deleteUser(id) {
     const user = users.find((item) => item.id === id);
     if (!canEditUser(user)) {
       notify(canManageAll ? "You can delete users from your store only" : "Super Admin permission required to delete admin accounts");
       return;
     }
+    try {
+      await supabaseApiRequest("staff-account", { method: "POST", body: JSON.stringify({ ...user, password: "", status: "Inactive" }) });
+    } catch (error) { notify(`User was not removed: ${error.message}`, 10000); return; }
     setUsers((current) => current.filter((user) => user.id !== id));
     notify("User deleted");
   }
@@ -8312,7 +8331,7 @@ function buildSettingsDefaults(activeStore, billTemplate) {
 function SettingsManagement({ notify, canManage, activeStore, setStores, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, themeConfig, setThemeConfig, setDark, activeSection, onBack }) {
   const defaultSettings = buildSettingsDefaults(activeStore, billTemplate);
   const settingsStorageKey = `vestora-active-settings-${activeStore?.id || "global"}`;
-  const [settings, setSettings] = useState(() => {
+  const [settings, setSettings] = useBusinessState(settingsStorageKey, () => {
     const saved = localStorage.getItem(settingsStorageKey) || localStorage.getItem("vestora-active-settings");
     return saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings;
   });
@@ -8666,6 +8685,7 @@ const defaultAttendanceSettings = {
 };
 
 function attendanceSettingsWithSafetyDefaults(saved = {}) {
+  saved = saved || {};
   const savedThreshold = Number(saved.confidenceThreshold || 0);
   const needsSafetyUpgrade = Number(saved.faceSafetyVersion || 0) < 2;
   return {
@@ -8833,14 +8853,14 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
   const settingsKey = `vestora-attendance-settings-${activeStore.id}`;
   const leaveRequestsKey = `vestora-leave-requests-${activeStore.id}`;
   const activeTab = activeView === "Attendance Logs" ? "Attendance Records" : (attendanceTabs.includes(activeView) ? activeView : defaultAttendanceTab);
-  const [employees, setEmployees] = useState(() => {
+  const [employees, setEmployees] = useBusinessState(employeesKey, () => {
     const saved = loadStoredArray(employeesKey);
     return buildAttendanceEmployees(users, activeStore, saved);
   });
-  const [logs, setLogs] = useState(() => loadStoredArray(logsKey));
-  const [leaveRequests, setLeaveRequests] = useState(() => loadStoredArray(leaveRequestsKey));
+  const [logs, setLogs] = useBusinessState(logsKey, () => loadStoredArray(logsKey));
+  const [leaveRequests, setLeaveRequests] = useBusinessState(leaveRequestsKey, () => loadStoredArray(leaveRequestsKey));
   const [leaveForm, setLeaveForm] = useState({ employeeId: "", type: "Casual leave", from: "", to: "", reason: "" });
-  const [settings, setSettings] = useState(() => attendanceSettingsWithSafetyDefaults(loadStoredObject(settingsKey)));
+  const [settings, setSettings] = useBusinessState(settingsKey, () => attendanceSettingsWithSafetyDefaults(loadStoredObject(settingsKey)));
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
   const [manualEmployeeId, setManualEmployeeId] = useState("");
   const [employeeFilter, setEmployeeFilter] = useState("");
@@ -9141,7 +9161,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
       return;
     }
     const log = {
-      id: `ATT-${Date.now()}`,
+      id: `ATT-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       employeeId: employee.id,
       employeeName: employee.name,
       employeeCode: employee.code,
@@ -9196,7 +9216,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
       return;
     }
     setLeaveRequests((current) => [{
-      id: `LEAVE-${Date.now()}`,
+      id: `LEAVE-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       employeeId: employee.id,
       employeeName: employee.name,
       employeeCode: employee.code,
@@ -9975,10 +9995,15 @@ function DataModule({ title, icon: Icon, rows, notify, canManageAll }) {
   );
 }
 
-function DataTable({ title, icon, columns, rows, notify, canManageAll, allowAdd = false, addLabel = "Add item", addRowDefaults = [], emptyMessage = "No records found" }) {
+function DataTable({ title, icon, columns, rows, onRowsChange, notify, canManageAll, allowAdd = false, addLabel = "Add item", addRowDefaults = [], emptyMessage = "No records found" }) {
   const Icon = icon;
   const [filterOn, setFilterOn] = useState(false);
-  const [tableRows, setTableRows] = useState(rows);
+  const [localRows, setLocalRows] = useState(rows);
+  const tableRows = onRowsChange ? rows : localRows;
+  const setTableRows = (update) => {
+    const next = typeof update === "function" ? update(tableRows) : update;
+    if (onRowsChange) onRowsChange(next); else setLocalRows(next);
+  };
   const [editingIndex, setEditingIndex] = useState(null);
   const [rowDraft, setRowDraft] = useState([]);
   const [addingRow, setAddingRow] = useState(false);
@@ -9997,7 +10022,7 @@ function DataTable({ title, icon, columns, rows, notify, canManageAll, allowAdd 
 
   function saveRow() {
     if (editingIndex === null) return;
-    setTableRows((current) => current.map((row, index) => index === editingIndex ? rowDraft : row));
+    setTableRows((current) => current.map((row, index) => index === editingIndex ? Object.assign([...rowDraft], { recordId: row.recordId }) : row));
     notify(`${rowDraft[0]} updated`);
     setEditingIndex(null);
     setRowDraft([]);
