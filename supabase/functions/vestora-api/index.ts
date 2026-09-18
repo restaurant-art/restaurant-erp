@@ -12,6 +12,26 @@ const json = (body: unknown, status = 200) =>
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 
+const sharedSuperAdminStateKeys = new Set(["vestora-stores"]);
+// Business state is shared across authenticated devices/users in the same
+// VESTORA project. Branch-specific records keep the branch id in their key or
+// in each record and the UI scopes them before display. Session credentials,
+// passwords, and device-only workflow state never enter this table.
+const isLocalOnlyStateKey = (key: string | null) => Boolean(key && (
+  /^(vestora-(current-user|selected-store|super-admin-in-store|pos-cashier|current-shift|last-shift-close|offline-orders|theme-config|printer-choices|kot-printer|kot-printer-choices|supabase-hydrated-user))$/i.test(key)
+  || /(password|token|credential|secret)/i.test(key)
+));
+const isSharedStateKey = (key: string | null) => Boolean(key && key.startsWith("vestora-") && !isLocalOnlyStateKey(key));
+const isStoreScopedStateKey = (key: string | null) => Boolean(key && /^vestora-(active-settings|attendance-(employees|logs|records|report|settings)|finance-(bank-accounts|expenses|journals|ledgers|receipts|vendor-payments)|finished-goods|floors|food-stock|inventory(?:-categories|)?|inventory-transactions|last-shift-close|leave-requests|menu-(items|setup)|offers|payroll-attendance|production-(batches|categories|wastage)|recipes|tables)-/.test(key));
+const mergeSharedArrayKeys = new Set([
+  "vestora-sales-ledger",
+  "vestora-void-ledger",
+  "vestora-refund-ledger",
+  "vestora-kds-orders",
+  "vestora-table-orders",
+  "vestora-supplier-orders",
+]);
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -74,23 +94,66 @@ Deno.serve(async (request) => {
   if (resource === "state") {
     if (request.method === "GET") {
       const key = url.searchParams.get("key");
+      const storeId = url.searchParams.get("storeId");
+      const isSuperAdmin = Boolean(profile?.is_superuser || profile?.user_type === "super_admin");
+      const useSharedState = isSharedStateKey(key);
+      if (useSharedState) {
+        const { data, error: stateError } = await admin
+          .from("vestora_shared_app_state")
+          .select("state_key, state_value, updated_at")
+          .eq("state_key", key);
+        if (stateError) return json({ error: stateError.message }, 500);
+        return json(data ?? []);
+      }
+
       let stateQuery = admin.from("vestora_app_state").select("state_key, state_value, updated_at").eq("user_id", user.id);
       if (key) stateQuery = stateQuery.eq("state_key", key);
-      const { data, error: stateError } = await stateQuery;
-      if (stateError) return json({ error: stateError.message }, 500);
-      return json(data ?? []);
+      const { data: userState, error: userStateError } = await stateQuery;
+      if (userStateError) return json({ error: userStateError.message }, 500);
+      if (key) return json(userState ?? []);
+      if (!isSuperAdmin && !storeId) return json(userState ?? []);
+      const { data: sharedState, error: sharedStateError } = await admin
+        .from("vestora_shared_app_state")
+        .select("state_key, state_value, updated_at");
+      if (sharedStateError) return json({ error: sharedStateError.message }, 500);
+      const combined = new Map((userState ?? []).map((row) => [row.state_key, row]));
+      (sharedState ?? [])
+        .filter((row) => row.state_key === "vestora-stores" || !storeId || !isStoreScopedStateKey(row.state_key) || row.state_key.endsWith(`-${storeId}`))
+        .forEach((row) => combined.set(row.state_key, row));
+      return json(Array.from(combined.values()));
     }
     if (request.method === "PUT") {
       const body = await request.json().catch(() => null);
       if (!body || typeof body.key !== "string") return json({ error: "A state key is required" }, 400);
-      const { data, error: stateError } = await admin.from("vestora_app_state").upsert({ user_id: user.id, state_key: body.key, state_value: body.value ?? null, updated_at: new Date().toISOString() }).select("state_key, state_value, updated_at").single();
+      const sharedState = Boolean(profile) && isSharedStateKey(body.key);
+      let stateValue = body.value ?? null;
+      if (sharedState && mergeSharedArrayKeys.has(body.key) && Array.isArray(stateValue)) {
+        const { data: existingState } = await admin
+          .from("vestora_shared_app_state")
+          .select("state_value")
+          .eq("state_key", body.key)
+          .maybeSingle();
+        if (Array.isArray(existingState?.state_value)) {
+          const incomingIds = new Set(stateValue.map((item: unknown, index: number) => String((item as { id?: unknown })?.id ?? `row-${index}`)));
+          const retainedExisting = existingState.state_value.filter((item: unknown, index: number) => !incomingIds.has(String((item as { id?: unknown })?.id ?? `row-${index}`)));
+          stateValue = [...stateValue, ...retainedExisting];
+        }
+      }
+      const payload = sharedState
+        ? { state_key: body.key, state_value: stateValue, updated_at: new Date().toISOString() }
+        : { user_id: user.id, state_key: body.key, state_value: stateValue, updated_at: new Date().toISOString() };
+      const tableName = sharedState ? "vestora_shared_app_state" : "vestora_app_state";
+      const { data, error: stateError } = await admin.from(tableName).upsert(payload).select("state_key, state_value, updated_at").single();
       if (stateError) return json({ error: stateError.message }, 500);
       return json(data);
     }
     if (request.method === "DELETE") {
       const key = url.searchParams.get("key");
       if (!key) return json({ error: "A state key is required" }, 400);
-      const { error: deleteError } = await admin.from("vestora_app_state").delete().eq("user_id", user.id).eq("state_key", key);
+      const sharedState = Boolean(profile) && isSharedStateKey(key);
+      let deleteQuery = admin.from(sharedState ? "vestora_shared_app_state" : "vestora_app_state").delete().eq("state_key", key);
+      if (!sharedState) deleteQuery = deleteQuery.eq("user_id", user.id);
+      const { error: deleteError } = await deleteQuery;
       if (deleteError) return json({ error: deleteError.message }, 500);
       return json({ ok: true, key });
     }
@@ -118,11 +181,13 @@ Deno.serve(async (request) => {
     announcements: "core_announcement",
     integrations: "core_integrationsetting",
     printers: "core_printer",
+    "public-orders": "vestora_public_orders",
   };
   const table = resource ? tableByResource[resource] : undefined;
   if (!table) return json({ error: "Unknown API resource" }, 404);
 
   const isSuperAdmin = Boolean(profile.is_superuser || profile.user_type === "super_admin");
+  if (table === "vestora_public_orders" && !isSuperAdmin) return json({ error: "Super Admin permission required" }, 403);
   const tenantTables = ["core_branch", "core_role", "core_user", "core_menucategory", "core_menuitem", "core_table", "core_customer", "core_order", "core_inventoryitem", "core_stockmovement", "core_supplier", "core_purchaseorder", "core_expense", "core_employeeprofile", "core_attendance", "core_supportticket", "core_integrationsetting", "core_printer"];
   const tenantScoped = !isSuperAdmin && tenantTables.includes(table);
   const safeSelect = table === "core_user"
@@ -131,6 +196,7 @@ Deno.serve(async (request) => {
 
   if (request.method === "POST") {
     if (table === "core_user") return json({ error: "Create users through Supabase Auth and the profile-linking flow" }, 405);
+    if (table === "vestora_public_orders") return json({ error: "Public orders are created through the customer ordering endpoint" }, 405);
     const body = await request.json().catch(() => null);
     if (!body || Array.isArray(body) || typeof body !== "object") return json({ error: "A JSON object is required" }, 400);
     const payload = { ...(body as Record<string, unknown>) };
@@ -171,6 +237,12 @@ Deno.serve(async (request) => {
   let query = admin.from(table).select(safeSelect);
   if (tenantScoped) query = query.eq("restaurant_id", profile.restaurant_id);
   if (recordId) query = query.eq("id", recordId);
+  if (table === "vestora_public_orders") {
+    const storeId = url.searchParams.get("storeId");
+    if (storeId) query = query.eq("store_id", storeId);
+    if (url.searchParams.get("open") === "1") query = query.in("status", ["New", "KOT sent", "Ready for billing"]);
+    query = query.order("created_at", { ascending: false }).limit(100);
+  }
   const branch = url.searchParams.get("branch");
   if (branch && ["core_branch", "core_menucategory", "core_menuitem", "core_table", "core_customer", "core_order", "core_inventoryitem", "core_stockmovement", "core_supplier", "core_purchaseorder", "core_expense", "core_employeeprofile", "core_attendance", "core_supportticket", "core_printer"].includes(table)) {
     query = query.eq("branch_id", branch);

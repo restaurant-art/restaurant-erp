@@ -13,3 +13,15 @@ Migration order:
 3. Port orders, inventory, finance, and attendance mutations.
 4. Replace localStorage stores with the migrated API.
 5. Deploy the Edge Function and rebuild GitHub Pages.
+
+## Super Admin login
+
+Super Admin credentials are managed by Supabase Auth, not the frontend demo account.
+
+1. Add `VITE_SUPABASE_URL` and either `VITE_SUPABASE_ANON_KEY` or `VITE_SUPABASE_PUBLISHABLE_KEY` to `frontend/.env`.
+2. Apply the migrations, including `20260915123000_sync_auth_email.sql`.
+3. In Supabase Dashboard, go to **Authentication → Users → Add user** and create `restaurant@vestanoretail.com` as the Super Admin email and set its initial password.
+4. Set the user metadata to `role: super_admin`, `appRole: Super Admin`, and `storeId: GLOBAL`.
+5. Ensure the matching `core_user` row uses the same email, has `user_type = 'super_admin'`, and `is_superuser = true`.
+
+The Super Admin login email is controlled only in Supabase Auth. Store users cannot change it. To change the password, use **Forgot Super Admin password?** on the login screen; Supabase sends the reset link only to `restaurant@vestanoretail.com`.

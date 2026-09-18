@@ -2,3 +2,6 @@ project_id = "vqinmequtjkuzrtzkzsk"
 
 [functions.vestora-api]
 verify_jwt = true
+
+[functions.vestora-public-order]
+verify_jwt = false

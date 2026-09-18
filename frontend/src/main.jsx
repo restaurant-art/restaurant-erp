@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import QRCode from "qrcode";
 import {
   Area,
   AreaChart,
@@ -53,6 +54,7 @@ import {
   Plus,
   Printer,
   ReceiptText,
+  QrCode,
   Save,
   Search,
   Settings,
@@ -75,9 +77,12 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
-import { hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseConfigured, supabaseProfile, syncLocalStateToSupabase, updateSupabasePassword } from "./lib/supabase";
+import { fetchSharedSuperAdminStores, hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseApiList, supabaseApiRequest, supabaseConfigured, supabaseFunctionJson, supabaseProfile, syncLocalStateKeyToSupabase, syncLocalStateToSupabase, updateSupabasePassword } from "./lib/supabase";
 
 const appBaseUrl = import.meta.env.BASE_URL || "/";
+const localAuthEnabled = String(import.meta.env.VITE_LOCAL_AUTH_ENABLED || "").toLowerCase() === "true";
+const localAuthEmail = String(import.meta.env.VITE_LOCAL_AUTH_EMAIL || "").trim().toLowerCase();
+const localAuthPassword = String(import.meta.env.VITE_LOCAL_AUTH_PASSWORD || "");
 
 function publicAssetPath(path) {
   const cleanBase = appBaseUrl.endsWith("/") ? appBaseUrl : `${appBaseUrl}/`;
@@ -96,6 +101,7 @@ const modules = [
   { id: "inventory", label: "Inventory", icon: Boxes },
   { id: "production", label: "Production", icon: DatabaseZap },
   { id: "crm", label: "CRM", icon: Users },
+  { id: "offers", label: "Offers & Promotions", icon: Percent },
   { id: "attendance", label: "Attendance", icon: Camera },
   { id: "finance", label: "Finance", icon: BadgeIndianRupee },
   { id: "reports", label: "Reports", icon: FileBarChart },
@@ -104,13 +110,45 @@ const modules = [
 ];
 
 const menuItems = [
-  { id: 1, name: "Paneer Tikka Bowl", category: "Mains", price: 249, tax: 5, fav: true, barcode: "890100100001" },
-  { id: 2, name: "Hyderabadi Biryani", category: "Mains", price: 329, tax: 5, fav: true, barcode: "890100100002" },
-  { id: 3, name: "Tandoori Platter", category: "Mains", price: 429, tax: 5, barcode: "890100100003" },
-  { id: 4, name: "Masala Chaas", category: "Beverages", price: 79, tax: 5, barcode: "890100100004" },
-  { id: 5, name: "Filter Coffee", category: "Beverages", price: 99, tax: 5, barcode: "890100100005" },
-  { id: 6, name: "Gulab Jamun", category: "Dessert", price: 119, tax: 5, barcode: "890100100006" },
+  { id: "ITEM-UVP-001", name: "Chicken Biryani", category: "Mains", barcode: "", price: 190, tax: 5, fav: true, status: "Active", image: publicAssetPath("menu/hyderabadi-biryani.jpg") },
+  { id: "ITEM-UVP-002", name: "Paneer Tikka Bowl", category: "Mains", barcode: "", price: 220, tax: 5, fav: true, status: "Active", image: publicAssetPath("menu/paneer-tikka-bowl.jpg") },
+  { id: "ITEM-UVP-003", name: "Tandoori Platter", category: "Mains", barcode: "", price: 349, tax: 5, fav: false, status: "Active", image: publicAssetPath("menu/tandoori-platter.jpg") },
+  { id: "ITEM-UVP-004", name: "Masala Chaas", category: "Beverages", barcode: "", price: 69, tax: 5, fav: false, status: "Active", image: publicAssetPath("menu/masala-chaas.jpg") },
+  { id: "ITEM-UVP-005", name: "Filter Coffee", category: "Beverages", barcode: "", price: 55, tax: 5, fav: true, status: "Active", image: publicAssetPath("menu/filter-coffee.jpg") },
+  { id: "ITEM-UVP-006", name: "Gulab Jamun", category: "Dessert", barcode: "", price: 89, tax: 5, fav: false, status: "Active", image: publicAssetPath("menu/gulab-jamun.jpg") },
 ];
+const dummyPosProductBarcodes = new Set([
+  "890100100001",
+  "890100100002",
+  "890100100003",
+  "890100100004",
+  "890100100005",
+  "890100100006",
+]);
+
+function removeDummyPosProducts(items) {
+  if (!Array.isArray(items)) return [];
+  return items.filter((item) => !dummyPosProductBarcodes.has(String(item.barcode || "").trim()));
+}
+
+function preparePosProducts(items) {
+  const correctedItems = removeDummyPosProducts(items).map((item) => {
+    const normalizedName = String(item.name || "").trim().toLowerCase();
+    if (["vhicken biriyani", "vhicken biryani", "chicken biriyani"].includes(normalizedName)) {
+      return {
+        ...item,
+        name: "Chicken Biryani",
+        image: item.image || publicAssetPath("menu/hyderabadi-biryani.jpg"),
+      };
+    }
+    return item;
+  });
+  const existingNames = new Set(correctedItems.map((item) => String(item.name || "").trim().toLowerCase()));
+  return [
+    ...correctedItems,
+    ...menuItems.filter((item) => !existingNames.has(item.name.toLowerCase())),
+  ];
+}
 
 const menuItemPhotos = {
   "paneer tikka bowl": publicAssetPath("menu/paneer-tikka-bowl.jpg"),
@@ -256,10 +294,14 @@ const defaultRecipes = [
   },
 ];
 
-const defaultStores = [
-  { id: "STORE-001", name: "Demo Spice House", branch: "Indiranagar", owner: "Restaurant Admin", status: "Active" },
-  { id: "STORE-002", name: "Demo Spice House", branch: "Koramangala", owner: "Branch Manager", status: "Active" },
-];
+const defaultStores = [];
+const emptyStoreContext = { id: "GLOBAL", name: "UVPRO", branch: "All stores", owner: "", status: "Active" };
+const dummyStoreIds = new Set(["STORE-001", "STORE-002"]);
+
+function removeDummyStores(stores) {
+  if (!Array.isArray(stores)) return [];
+  return stores.filter((store) => !dummyStoreIds.has(String(store?.id || "")));
+}
 
 const menuSectionConfig = {
   Categories: {
@@ -383,6 +425,12 @@ const settingsSectionConfig = {
     fields: [["frequency", "Frequency"], ["time", "Backup time"], ["retention", "Retention"], ["destination", "Destination"]],
     defaults: { frequency: "Daily", time: "12:30 AM", retention: "90 days", destination: "Local + Cloudflare R2" },
   },
+  "QR ordering": {
+    description: "Generate this store's customer ordering QR code.",
+    action: "Generate QR",
+    fields: [],
+    defaults: {},
+  },
   "Theme and language": {
     description: "Display mode, custom website colors, default language, and currency preferences.",
     action: "Apply theme",
@@ -396,6 +444,7 @@ const storeSettingsSections = [
   "Print bill format",
   "Printer setup",
   "Payment providers",
+  "QR ordering",
   "Theme and language",
 ];
 
@@ -407,15 +456,9 @@ const printerChoices = [
   "Windows default printer",
 ];
 
-const demoAccounts = [
-  { email: "super@vestora.test", password: "Super@123", name: "UVPRO Super Admin", role: "super_admin", appRole: "Super Admin", storeId: "GLOBAL" },
-  { email: "admin@vestora.test", password: "Admin@123", name: "Restaurant Admin", role: "restaurant_admin", appRole: "Restaurant Admin", storeId: "STORE-001" },
-  { email: "branch@vestora.test", password: "Branch@123", name: "Koramangala Branch Manager", role: "restaurant_user", appRole: "Branch Manager", storeId: "STORE-002" },
-];
+const bootstrapSuperAdminAccounts = [];
 
-const supplierAccounts = [
-  { id: "SUP-001", email: "supplier@freshfarm.test", mobile: "9876543210", password: "Supplier@123", otp: "123456", name: "Fresh Farm Supplies", role: "supplier" },
-];
+const supplierAccounts = [];
 
 const initialSupplierOrders = [
   {
@@ -479,13 +522,7 @@ const initialSupplierOrders = [
   },
 ];
 
-const starterUsers = [
-  { id: 1, name: "UVPRO Super Admin", email: "super@vestora.test", password: "Super@123", role: "Super Admin", status: "Active", storeId: "GLOBAL" },
-  { id: 2, name: "Restaurant Admin", email: "admin@vestora.test", password: "Admin@123", role: "Restaurant Admin", status: "Active", storeId: "STORE-001" },
-  { id: 3, name: "Counter One", email: "cashier@demo.test", password: "Cashier@123", role: "Cashier", status: "Active", storeId: "STORE-001" },
-  { id: 4, name: "Kitchen Lead", email: "kitchen@demo.test", password: "Kitchen@123", role: "Chef", status: "Active", storeId: "STORE-001" },
-  { id: 5, name: "Koramangala Branch Manager", email: "branch@vestora.test", password: "Branch@123", role: "Branch Manager", status: "Active", storeId: "STORE-002" },
-];
+const starterUsers = [];
 
 const defaultBillTemplate = {
   restaurantName: "Demo Spice House",
@@ -559,9 +596,9 @@ const baseDashboard = {
 const roleModuleAccess = {
   "Super Admin": modules.map((module) => module.id),
   "Restaurant Admin": modules.map((module) => module.id),
-  "Branch Manager": ["dashboard", "pos", "kds", "tables", "menu", "inventory", "production", "crm", "attendance", "reports", "settings"],
+  "Branch Manager": ["dashboard", "pos", "kds", "tables", "menu", "inventory", "production", "crm", "offers", "attendance", "reports", "settings"],
   "HR Manager": ["dashboard", "attendance", "reports", "settings"],
-  Cashier: ["dashboard", "pos", "tables", "finance"],
+  Cashier: ["dashboard", "pos", "tables", "offers", "finance"],
   Waiter: ["tables", "kds"],
   Chef: ["kds", "inventory", "production"],
   Accountant: ["dashboard", "finance", "reports"],
@@ -598,11 +635,11 @@ function roleLabelForUser(user) {
 }
 
 function normalizeStoreId(storeId) {
-  return storeId && storeId !== "GLOBAL" ? storeId : "STORE-001";
+  return storeId && storeId !== "GLOBAL" ? storeId : "GLOBAL";
 }
 
 function storeLabel(store) {
-  if (!store) return "Demo Spice House / Indiranagar";
+  if (!store) return "UVPRO / All stores";
   return `${store.name} / ${store.branch}`;
 }
 
@@ -620,6 +657,26 @@ function loadStoredArray(key) {
   } catch {
     return [];
   }
+}
+
+function normalizeFoodItemName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replaceAll("biriyani", "biryani")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function foodStockRecordFor(records, item) {
+  const itemKey = normalizeFoodItemName(item?.name || item);
+  return (records || []).find((record) => normalizeFoodItemName(record.item) === itemKey);
+}
+
+function foodStockThreshold(record) {
+  const threshold = Number(record?.threshold);
+  return Number.isFinite(threshold) && threshold >= 0 ? threshold : 5;
 }
 
 function stripUntouchedDefaultRecords(records, defaults, markerFields = []) {
@@ -1054,6 +1111,8 @@ function syncOfflineOrders() {
 function ChangePasswordDialog({ onClose, notify }) {
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmation, setShowConfirmation] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -1077,9 +1136,19 @@ function ChangePasswordDialog({ onClose, notify }) {
           <div><span>Account security</span><h2>Change password</h2></div>
           <button type="button" onClick={onClose} title="Close"><X size={18} /></button>
         </div>
-        <p className="modal-help-text">Set a new password for your UVPRO account.</p>
-        <label>New password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoFocus autoComplete="new-password" /></label>
-        <label>Confirm new password<input type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="new-password" /></label>
+        <p className="modal-help-text">Set a new password for the account verified through the email reset link.</p>
+        <label>New password
+          <span className="password-field">
+            <input type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoFocus autoComplete="new-password" />
+            <button type="button" onClick={() => setShowPassword((value) => !value)} title={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button>
+          </span>
+        </label>
+        <label>Confirm new password
+          <span className="password-field">
+            <input type={showConfirmation ? "text" : "password"} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="new-password" />
+            <button type="button" onClick={() => setShowConfirmation((value) => !value)} title={showConfirmation ? "Hide password" : "Show password"}>{showConfirmation ? <EyeOff size={18} /> : <Eye size={18} />}</button>
+          </span>
+        </label>
         {error && <p className="form-error">{error}</p>}
         <div className="shift-actions">
           <button type="button" onClick={onClose}>Cancel</button>
@@ -1091,17 +1160,29 @@ function ChangePasswordDialog({ onClose, notify }) {
 }
 
 function App() {
+  const params = new URLSearchParams(window.location.search);
+  // Keep older printed QR codes working even if they predate the explicit
+  // `order=1` flag. Staff links do not use these public ordering parameters.
+  const isCustomerOrderingLink = params.get("order") === "1"
+    || params.has("store")
+    || params.has("storeId")
+    || window.location.pathname.endsWith("/order");
+  return isCustomerOrderingLink ? <CustomerTableOrdering /> : <AuthenticatedApp />;
+}
+
+function AuthenticatedApp() {
   const [currentUser, setCurrentUser] = useState(() => {
     const saved = localStorage.getItem("vestora-current-user");
     if (!saved) return null;
     const user = JSON.parse(saved);
     return { ...user, role: roleToAuthRole(user.role), appRole: user.appRole || roleLabelForUser(user) };
   });
+  const [supabaseStateReady, setSupabaseStateReady] = useState(() => !supabaseConfigured);
   const [active, setActive] = useState("dashboard");
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [returnModule, setReturnModule] = useState("dashboard");
   const [superAdminLanding, setSuperAdminLanding] = useState(() => currentUser?.role === "super_admin" && localStorage.getItem("vestora-super-admin-in-store") !== "true");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia("(max-width: 760px)").matches);
   const [adminMenuOpen, setAdminMenuOpen] = useState(false);
   const [adminView, setAdminView] = useState("all");
   const [menuNavOpen, setMenuNavOpen] = useState(false);
@@ -1113,6 +1194,8 @@ function App() {
   const [productionReportView, setProductionReportView] = useState("Daily Production");
   const [attendanceNavOpen, setAttendanceNavOpen] = useState(false);
   const [attendanceView, setAttendanceView] = useState("Add Face ID");
+  const [offersNavOpen, setOffersNavOpen] = useState(false);
+  const [offersView, setOffersView] = useState("Happy hour offer");
   const [financeNavOpen, setFinanceNavOpen] = useState(false);
   const [financeView, setFinanceView] = useState("Expenses");
   const [reportNavOpen, setReportNavOpen] = useState(false);
@@ -1138,14 +1221,27 @@ function App() {
     if (savedStores !== null) {
       try {
         const parsedStores = JSON.parse(savedStores);
-        if (Array.isArray(parsedStores)) return parsedStores;
+        if (Array.isArray(parsedStores)) return removeDummyStores(parsedStores);
       } catch {
         // Fall through to the starter directory only when saved data is invalid.
       }
     }
     return defaultStores;
   });
-  const [selectedStoreId, setSelectedStoreId] = useState(() => localStorage.getItem("vestora-selected-store") || "STORE-001");
+  const lastLocalStoresWriteAtRef = useRef(0);
+  useEffect(() => {
+    setStores((current) => {
+      const cleaned = removeDummyStores(current);
+      return cleaned.length === current.length ? current : cleaned;
+    });
+  }, []);
+  const [selectedStoreId, setSelectedStoreId] = useState(() => localStorage.getItem("vestora-selected-store") || "GLOBAL");
+  useEffect(() => {
+    if (currentUser?.role !== "super_admin" || stores.length) return;
+    setSelectedStoreId("GLOBAL");
+    setSuperAdminLanding(true);
+    localStorage.removeItem("vestora-super-admin-in-store");
+  }, [currentUser?.role, stores.length]);
   const [billTemplate, setBillTemplate] = useState(() => {
     const saved = localStorage.getItem("vestora-bill-template");
     return saved ? { ...defaultBillTemplate, ...JSON.parse(saved) } : defaultBillTemplate;
@@ -1166,10 +1262,48 @@ function App() {
   const canManageAll = currentUser?.role === "super_admin";
   const canManage = canManageAll || currentUser?.role === "restaurant_admin";
   const activeStoreId = canManageAll ? selectedStoreId : normalizeStoreId(currentUser?.storeId);
-  const activeStore = stores.find((store) => store.id === activeStoreId) || stores[0] || defaultStores[0];
+  const activeStore = stores.find((store) => store.id === activeStoreId) || stores[0] || emptyStoreContext;
+  useEffect(() => {
+    setLastShiftClose(loadStoredObject(`vestora-last-shift-close-${activeStore.id}`));
+  }, [activeStore.id]);
+  const foodStockStorageKey = `vestora-food-stock-${activeStore.id}`;
+  const [foodStock, setFoodStock] = useState(() => loadStoredArray(foodStockStorageKey));
+  useEffect(() => {
+    setFoodStock(loadStoredArray(`vestora-food-stock-${activeStore.id}`));
+  }, [activeStore.id]);
+  function updateFoodStock(updater) {
+    setFoodStock((current) => {
+      const next = typeof updater === "function" ? updater(current) : updater;
+      localStorage.setItem(foodStockStorageKey, JSON.stringify(next));
+      syncLocalStateKeyToSupabase(foodStockStorageKey).catch(() => {});
+      return next;
+    });
+  }
+  useEffect(() => {
+    if (!supabaseStateReady || !supabaseConfigured || !activeStoreId || activeStoreId === "GLOBAL") return undefined;
+    let cancelled = false;
+    const refreshFoodStock = async () => {
+      try {
+        const rows = await supabaseFunctionJson(`vestora-api/state?key=${encodeURIComponent(foodStockStorageKey)}`);
+        const remote = Array.isArray(rows?.[0]?.state_value) ? rows[0].state_value : null;
+        if (!cancelled && remote) {
+          localStorage.setItem(foodStockStorageKey, JSON.stringify(remote));
+          setFoodStock((current) => JSON.stringify(current) === JSON.stringify(remote) ? current : remote);
+        }
+      } catch {
+        // POS remains usable with its local copy while cloud state is unavailable.
+      }
+    };
+    refreshFoodStock();
+    const timer = window.setInterval(refreshFoodStock, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [supabaseStateReady, activeStoreId, foodStockStorageKey]);
   const [productItems, setProductItems] = useState(() => {
     const saved = loadStoredArray(`vestora-menu-items-${activeStore.id}`);
-    return saved.length ? saved : menuItems;
+    return preparePosProducts(saved);
   });
   const scopedSalesLedger = salesLedger.filter((bill) => normalizeStoreId(bill.storeId) === activeStore.id);
   const scopedVoidLedger = voidLedger.filter((entry) => normalizeStoreId(entry.storeId) === activeStore.id);
@@ -1191,17 +1325,22 @@ function App() {
   const themeVariables = themeStyleVariables(themeConfig);
 
   useEffect(() => {
+    window.vestoraSupabaseStateReady = supabaseStateReady;
+  }, [supabaseStateReady]);
+
+  useEffect(() => {
     localStorage.setItem("vestora-theme-config", JSON.stringify({ ...themeConfig, mode: dark ? "Dark" : "Light" }));
   }, [themeConfig, dark]);
 
   useEffect(() => {
     localStorage.setItem("vestora-custom-roles", JSON.stringify(customRoles));
-  }, [customRoles]);
+    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-custom-roles").catch(() => {});
+  }, [customRoles, currentUser, supabaseStateReady]);
 
-  function notify(message) {
+  function notify(message, duration = 2600) {
     setToast(message);
     window.clearTimeout(window.vestoraToastTimer);
-    window.vestoraToastTimer = window.setTimeout(() => setToast(""), 2600);
+    window.vestoraToastTimer = window.setTimeout(() => setToast(""), duration);
   }
 
   function handleLogin(user) {
@@ -1232,6 +1371,7 @@ function App() {
     if (moduleId !== "menu") setMenuNavOpen(false);
   if (moduleId !== "production") setProductionNavOpen(false);
   if (moduleId !== "attendance") setAttendanceNavOpen(false);
+  if (moduleId !== "offers") setOffersNavOpen(false);
   if (moduleId !== "finance") setFinanceNavOpen(false);
   if (moduleId !== "reports") setReportNavOpen(false);
     setActive(moduleId);
@@ -1276,6 +1416,14 @@ function App() {
     window.scrollTo(0, 0);
   }
 
+  function openOffersView(view) {
+    setOffersView(view);
+    setOffersNavOpen(true);
+    setReturnModule("offers");
+    setActive("offers");
+    window.scrollTo(0, 0);
+  }
+
   function openReportView(view) {
     setReportView(view);
     setReportNavOpen(true);
@@ -1297,7 +1445,9 @@ function App() {
     localStorage.removeItem("vestora-current-user");
     localStorage.removeItem("vestora-super-admin-in-store");
     localStorage.removeItem("vestora-pos-cashier");
+    sessionStorage.removeItem("vestora-supabase-hydrated-user");
     setPosCashier(null);
+    setSupabaseStateReady(!supabaseConfigured);
     setCurrentUser(null);
   }
 
@@ -1306,6 +1456,7 @@ function App() {
     let mounted = true;
     const applySession = async (session) => {
       if (!mounted || !session?.user) return;
+      setSupabaseStateReady(false);
       const metadata = session.user.user_metadata || {};
       let loginUser = {
         id: session.user.id,
@@ -1316,29 +1467,66 @@ function App() {
         storeId: metadata.storeId || "STORE-001",
         status: "Active",
       };
+      let profileLoaded = false;
       try {
         const profile = await supabaseProfile();
         loginUser = { ...loginUser, ...profile, storeId: metadata.storeId || "STORE-001" };
-        const hydrated = await hydrateLocalStateFromSupabase();
-        if (hydrated && !sessionStorage.getItem("vestora-supabase-hydrated")) {
-          sessionStorage.setItem("vestora-supabase-hydrated", "true");
-          window.location.reload();
-          return;
-        }
-        sessionStorage.removeItem("vestora-supabase-hydrated");
-        if (mounted) {
-          setCurrentUser((existing) => existing || loginUser);
-          localStorage.setItem("vestora-current-user", JSON.stringify(loginUser));
-        }
+        profileLoaded = true;
       } catch {
-        // Keep the local/offline session available if the function is temporarily unavailable.
-        if (mounted) setCurrentUser((existing) => existing || loginUser);
+        // Auth metadata still gives the app enough information to render the
+        // signed-in session, but cloud writes remain disabled without a
+        // verified profile.
+      }
+
+      if (profileLoaded) {
+        try {
+          // The store directory is shared platform data. Every authenticated
+          // VESTORA user needs the same directory on every device; only
+          // Super Admins can change it.
+          const sharedStores = await fetchSharedSuperAdminStores();
+          if (Array.isArray(sharedStores)) {
+            const cleanedStores = removeDummyStores(sharedStores);
+            localStorage.setItem("vestora-stores", JSON.stringify(cleanedStores));
+            setStores(cleanedStores);
+          }
+        } catch {
+          // The authenticated state hydration below remains the fallback if
+          // the direct shared-directory read is temporarily unavailable.
+        }
+        try {
+          const hydrationStoreId = (loginUser.role === "super_admin" || loginUser.isSuperuser)
+            ? (selectedStoreId === "GLOBAL" ? "" : selectedStoreId)
+            : normalizeStoreId(loginUser.storeId || activeStoreId);
+          const hydrationKey = `${session.user.id}:${hydrationStoreId || "all"}`;
+          const hydratedForUser = sessionStorage.getItem("vestora-supabase-hydrated-user") === hydrationKey;
+          if (!hydratedForUser) {
+            const hydrated = await hydrateLocalStateFromSupabase(hydrationStoreId);
+            sessionStorage.setItem("vestora-supabase-hydrated-user", hydrationKey);
+            if (hydrated) {
+              window.location.reload();
+              return;
+            }
+          }
+        } catch {
+          // A transient state-read failure must not disable store-directory
+          // writes forever. The profile is authenticated, so the next store
+          // change can still be persisted and the next session can hydrate it.
+        }
+      }
+
+      if (mounted) {
+        setCurrentUser((existing) => existing || loginUser);
+        localStorage.setItem("vestora-current-user", JSON.stringify(loginUser));
+        setSupabaseStateReady(profileLoaded);
       }
     };
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "PASSWORD_RECOVERY" && mounted) setPasswordDialogOpen(true);
       if (session) applySession(session);
-      else if (mounted) setCurrentUser(null);
+      else if (mounted) {
+        setCurrentUser(null);
+        setSupabaseStateReady(!supabaseConfigured);
+      }
     });
     // Register the listener before loading the session so recovery links do
     // not lose the PASSWORD_RECOVERY event during Supabase initialization.
@@ -1350,12 +1538,11 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!supabaseConfigured || !currentUser) return undefined;
+    if (!supabaseConfigured || !currentUser || !supabaseStateReady) return undefined;
     let cancelled = false;
     const persist = () => {
       if (!cancelled) syncLocalStateToSupabase().catch(() => {});
     };
-    persist();
     const timer = window.setInterval(persist, 15000);
     window.addEventListener("beforeunload", persist);
     return () => {
@@ -1363,7 +1550,7 @@ function App() {
       window.clearInterval(timer);
       window.removeEventListener("beforeunload", persist);
     };
-  }, [currentUser]);
+  }, [currentUser, supabaseStateReady]);
 
   function enterStore(store) {
     setSelectedStoreId(store.id);
@@ -1412,7 +1599,9 @@ function App() {
     };
     setLastShiftClose(shiftClose);
     setCurrentShift(null);
-    localStorage.setItem("vestora-last-shift-close", JSON.stringify(shiftClose));
+    const shiftCloseKey = `vestora-last-shift-close-${activeStore.id}`;
+    localStorage.setItem(shiftCloseKey, JSON.stringify(shiftClose));
+    syncLocalStateKeyToSupabase(shiftCloseKey).catch(() => {});
     localStorage.removeItem("vestora-current-shift");
     localStorage.removeItem("vestora-pos-cashier");
     setPosCashier(null);
@@ -1421,7 +1610,12 @@ function App() {
   }
 
   useEffect(() => {
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register(publicAssetPath("service-worker.js"));
+    if (!("serviceWorker" in navigator)) return;
+    if (["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+      navigator.serviceWorker.getRegistrations().then((registrations) => registrations.forEach((registration) => registration.unregister()));
+      return;
+    }
+    navigator.serviceWorker.register(publicAssetPath("service-worker.js"), { updateViaCache: "none" });
   }, []);
 
   useEffect(() => {
@@ -1435,23 +1629,28 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem("vestora-sales-ledger", JSON.stringify(salesLedger));
-  }, [salesLedger]);
+    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-sales-ledger").catch(() => {});
+  }, [salesLedger, currentUser, supabaseStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-void-ledger", JSON.stringify(voidLedger));
-  }, [voidLedger]);
+    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-void-ledger").catch(() => {});
+  }, [voidLedger, currentUser, supabaseStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-refund-ledger", JSON.stringify(refundLedger));
-  }, [refundLedger]);
+    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-refund-ledger").catch(() => {});
+  }, [refundLedger, currentUser, supabaseStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-kds-orders", JSON.stringify(kdsOrders));
-  }, [kdsOrders]);
+    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-kds-orders").catch(() => {});
+  }, [kdsOrders, currentUser, supabaseStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-table-orders", JSON.stringify(tableOrders));
-  }, [tableOrders]);
+    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-table-orders").catch(() => {});
+  }, [tableOrders, currentUser, supabaseStateReady]);
 
   useEffect(() => {
     const receiveTableOrders = (orders) => {
@@ -1482,11 +1681,102 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem("vestora-users", JSON.stringify(users));
-  }, [users]);
+    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-users").catch(() => {});
+  }, [users, currentUser, supabaseStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-stores", JSON.stringify(stores));
-  }, [stores]);
+    if (supabaseConfigured && currentUser && supabaseStateReady) {
+      lastLocalStoresWriteAtRef.current = Date.now();
+      syncLocalStateKeyToSupabase("vestora-stores").catch(() => {});
+    }
+  }, [stores, currentUser, supabaseStateReady]);
+
+  useEffect(() => {
+    const isSuperAdmin = currentUser?.role === "super_admin" || currentUser?.isSuperuser === true || currentUser?.appRole === "Super Admin";
+    if (!supabaseConfigured || !supabase || !isSuperAdmin || !supabaseStateReady) return undefined;
+    let cancelled = false;
+
+    const refreshSharedStores = async () => {
+      // Give the local save effect time to finish before accepting a remote
+      // snapshot. This prevents an in-flight read from replacing a store just
+      // created in this browser with the previous remote snapshot.
+      if (Date.now() - lastLocalStoresWriteAtRef.current < 4000) return;
+      try {
+        const sharedStores = await fetchSharedSuperAdminStores();
+        if (cancelled || !Array.isArray(sharedStores)) return;
+        const cleanedStores = removeDummyStores(sharedStores);
+        setStores((current) => {
+          if (JSON.stringify(current) === JSON.stringify(cleanedStores)) return current;
+          localStorage.setItem("vestora-stores", JSON.stringify(cleanedStores));
+          return cleanedStores;
+        });
+      } catch {
+        // A later focus or interval refresh will retry without disrupting POS.
+      }
+    };
+
+    refreshSharedStores();
+    const timer = window.setInterval(refreshSharedStores, 10000);
+    window.addEventListener("focus", refreshSharedStores);
+    document.addEventListener("visibilitychange", refreshSharedStores);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshSharedStores);
+      document.removeEventListener("visibilitychange", refreshSharedStores);
+    };
+  }, [currentUser?.role, currentUser?.isSuperuser, currentUser?.appRole, supabaseStateReady]);
+
+  useEffect(() => {
+    if (!supabaseConfigured || !currentUser || !supabaseStateReady || !activeStore.id || activeStore.id === "GLOBAL") return undefined;
+    let cancelled = false;
+    const refreshPublicOrders = async () => {
+      try {
+        const rows = await supabaseApiList("public-orders", `storeId=${encodeURIComponent(activeStore.id)}&open=1`);
+        if (cancelled || !Array.isArray(rows)) return;
+        const incoming = rows.map((row) => ({
+          id: row.id,
+          orderNumber: row.order_number || `QR-${String(row.id).slice(-6)}`,
+          storeId: row.store_id,
+          storeName: activeStore.name,
+          branch: activeStore.branch,
+          tableId: row.table_id,
+          tableName: row.table_name,
+          floor: row.floor || "Main",
+          waiterId: "",
+          waiterName: "QR customer",
+          guestCount: Number(row.guest_count || 1),
+          customerName: row.customer_name || "Guest",
+          customerNote: row.customer_note || "",
+          source: "QR",
+          status: row.status === "KOT sent" ? "KOT sent" : row.status === "Ready for billing" ? "Ready for billing" : "QR order received",
+          createdAt: row.created_at,
+          updatedAt: row.updated_at || row.created_at,
+          items: Array.isArray(row.items) ? row.items : [],
+          itemCount: Number(row.item_count || 0),
+          subtotal: Number(row.subtotal || 0),
+        }));
+        setTableOrders((current) => {
+          const next = [...current];
+          incoming.forEach((order) => {
+            const index = next.findIndex((entry) => String(entry.id) === String(order.id));
+            if (index < 0) next.unshift(order);
+            else next[index] = { ...next[index], ...order, kotId: next[index].kotId, kotIds: next[index].kotIds, kotQuantities: next[index].kotQuantities };
+          });
+          return next;
+        });
+      } catch {
+        // QR ordering remains available to customers; staff polling retries.
+      }
+    };
+    refreshPublicOrders();
+    const timer = window.setInterval(refreshPublicOrders, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeStore.id, activeStore.name, activeStore.branch, currentUser?.id, supabaseStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-selected-store", activeStore.id);
@@ -1494,7 +1784,8 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem("vestora-bill-template", JSON.stringify(billTemplate));
-  }, [billTemplate]);
+    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-bill-template").catch(() => {});
+  }, [billTemplate, currentUser, supabaseStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-kot-printer", JSON.stringify(kotPrinter));
@@ -1502,7 +1793,7 @@ function App() {
 
   useEffect(() => {
     const saved = loadStoredArray(`vestora-menu-items-${activeStore.id}`);
-    setProductItems(saved.length ? saved : menuItems);
+    setProductItems(preparePosProducts(saved));
   }, [activeStore.id]);
 
   useEffect(() => {
@@ -1515,7 +1806,8 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem("vestora-supplier-orders", JSON.stringify(supplierOrders));
-  }, [supplierOrders]);
+    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-supplier-orders").catch(() => {});
+  }, [supplierOrders, currentUser, supabaseStateReady]);
 
   useEffect(() => {
     if (currentUser && currentUser.role !== "supplier" && active !== activeModule) setActive(activeModule);
@@ -1537,6 +1829,14 @@ function App() {
     }
   }
 
+  function persistPublicOrderStatus(order, status) {
+    if (order?.source !== "QR" || !order.id || !supabaseConfigured || !currentUser) return;
+    supabaseApiRequest(`public-orders/${encodeURIComponent(order.id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }).catch(() => {});
+  }
+
   function saveTableOrder(order) {
     const savedOrder = { ...order, storeId: activeStore.id, storeName: activeStore.name, branch: activeStore.branch };
     setTableOrders((current) => {
@@ -1546,6 +1846,7 @@ function App() {
       tableOrdersChannelRef.current?.postMessage(nextOrders);
       return nextOrders;
     });
+    persistPublicOrderStatus(savedOrder, savedOrder.status);
     return savedOrder;
   }
 
@@ -1685,22 +1986,26 @@ function App() {
 
   if (currentUser.role === "super_admin" && superAdminLanding) {
     return (
-      <SuperAdminStoreLanding
-        stores={stores}
-        setStores={setStores}
-        users={users}
-        activeStore={activeStore}
-        onEnterStore={enterStore}
-        onLogout={() => {
-          localStorage.removeItem("vestora-current-user");
-          localStorage.removeItem("vestora-super-admin-in-store");
-          localStorage.removeItem("vestora-pos-cashier");
-          setPosCashier(null);
-          setCurrentUser(null);
-        }}
-        notify={notify}
-        toast={toast}
-      />
+      <>
+        <SuperAdminStoreLanding
+          stores={stores}
+          setStores={setStores}
+          users={users}
+          activeStore={activeStore}
+          onEnterStore={enterStore}
+          onUpdatePassword={() => setPasswordDialogOpen(true)}
+          onLogout={() => {
+            localStorage.removeItem("vestora-current-user");
+            localStorage.removeItem("vestora-super-admin-in-store");
+            localStorage.removeItem("vestora-pos-cashier");
+            setPosCashier(null);
+            setCurrentUser(null);
+          }}
+          notify={notify}
+          toast={toast}
+        />
+        {passwordDialogOpen && <ChangePasswordDialog notify={notify} onClose={() => setPasswordDialogOpen(false)} />}
+      </>
     );
   }
 
@@ -1717,15 +2022,16 @@ function App() {
         return true;
       }} onExit={exitPOS} onLogout={handleLogout} onCreateCashier={() => openAdminView("create")} />
       : currentShift
-        ? <POS cart={cart} setCart={setCart} items={productItems} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onLogout={handleLogout} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
+        ? <POS cart={cart} setCart={setCart} items={productItems} storeId={activeStore.id} foodStock={foodStock} onFoodStockChange={updateFoodStock} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onLogout={handleLogout} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
         : <ShiftOpening online={online} onOpenShift={openShift} onExit={exitPOS} onLogout={handleLogout} cashier={posCashier} />,
     kds: <KDS notify={notify} orders={scopedKdsOrders} setOrders={setKdsOrders} kotPrinter={kotPrinter} />,
     tables: <Tables key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} items={productItems} currentUser={currentUser} tableOrders={scopedTableOrders} onSaveOrder={saveTableOrder} onSendKot={sendTableKot} onSendReception={sendTableToReception} onCancelOrder={cancelTableOrder} onCancelItem={cancelTableOrderItem} kotPrinter={kotPrinter} />,
     menu: <MenuManagement key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} productItems={productItems} setProductItems={setProductItems} activeView={menuView} editingItemId={menuItemEditId} onNavigate={openMenuView} />,
-    inventory: <Inventory key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} />,
-    production: <Production key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} activeView={productionView} activeReport={productionReportView} onViewChange={setProductionView} />,
+    inventory: <Inventory key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} cloudStateReady={supabaseStateReady} />,
+    production: <Production key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} activeView={productionView} activeReport={productionReportView} onViewChange={setProductionView} foodStock={foodStock} onFoodStockChange={updateFoodStock} cloudStateReady={supabaseStateReady} />,
     crm: <CRM notify={notify} canManageAll={canManage} salesLedger={scopedSalesLedger} />,
     attendance: <AttendanceModule key={activeStore.id} notify={notify} activeStore={activeStore} users={users} canManage={canManage} canManageAll={canManageAll} activeView={attendanceView} onViewChange={setAttendanceView} onOpenAdmin={() => openAdminView("create")} />,
+    offers: <OffersPromotions key={activeStore.id} storeId={activeStore.id} productItems={productItems} notify={notify} canManage={canManage} activeView={offersView} onViewChange={setOffersView} />,
   finance: <Finance notify={notify} canManageAll={canManage} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} storeId={activeStore.id} view={financeView} />,
     reports: <Reports notify={notify} storeId={activeStore.id} salesLedger={scopedSalesLedger} voidLedger={scopedVoidLedger} refundLedger={scopedRefundLedger} onRefund={recordRefund} lastShiftClose={lastShiftClose} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} activeView={reportView} onReportChange={setReportView} />,
     admin: <Admin notify={notify} users={users} setUsers={setUsers} currentUser={currentUser} canManageAll={canManageAll} canManageStore={canManage} stores={stores} activeStore={activeStore} activeView={adminView} onViewChange={openAdminView} customRoles={customRoles} setCustomRoles={setCustomRoles} />,
@@ -1743,7 +2049,7 @@ function App() {
 
   return (
     <div className={`${dark ? "app dark" : "app"} ${sidebarOpen ? "sidebar-expanded" : "sidebar-collapsed"}`} style={themeVariables}>
-      <aside className={sidebarOpen ? "sidebar" : "sidebar collapsed"}>
+      <aside id="primary-navigation" className={sidebarOpen ? "sidebar" : "sidebar collapsed"}>
         <div className="brand">
           <img src={vestoraLogoPath} alt="" />
           {sidebarOpen && <div><strong>UVPRO</strong><span>ERP & POS</span></div>}
@@ -1792,10 +2098,11 @@ function App() {
                     {sidebarOpen && <><span>{item.label}</span><ChevronDown className={productionNavOpen ? "sidebar-chevron open" : "sidebar-chevron"} size={16} /></>}
                   </button>
                   {sidebarOpen && productionNavOpen && <div className="sidebar-subnav">
-                    <button className={productionView === "Recipes" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Recipes")}><ClipboardList size={15} /> Recipes</button>
-                    <button className={productionView === "Planning" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Planning")}><CalendarClock size={15} /> Planning</button>
-                    <button className={productionView === "Batches" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Batches")}><PackageSearch size={15} /> Batches</button>
-                    <button className={productionView === "Wastage" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Wastage")}><Trash2 size={15} /> Wastage</button>
+                     <button className={productionView === "Recipes" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Recipes")}><ClipboardList size={15} /> Recipes</button>
+                     <button className={productionView === "Planning" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Planning")}><CalendarClock size={15} /> Planning</button>
+                     <button className={productionView === "Batches" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Batches")}><PackageSearch size={15} /> Batches</button>
+                     <button className={productionView === "Food Stock" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Food Stock")}><Boxes size={15} /> Food Stock</button>
+                     <button className={productionView === "Wastage" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Wastage")}><Trash2 size={15} /> Wastage</button>
                     <div className="sidebar-subnav-report-group">
                       <button className={productionView === "Reports" ? "sidebar-subnav-item sidebar-subnav-toggle active" : "sidebar-subnav-item sidebar-subnav-toggle"} onClick={() => { if (productionView !== "Reports") openProductionView("Reports"); setProductionReportsOpen((open) => productionView === "Reports" ? !open : true); }} aria-expanded={productionReportsOpen}><ReceiptText size={15} /> Reports<ChevronDown className={productionReportsOpen ? "sidebar-chevron open" : "sidebar-chevron"} size={14} /></button>
                       {productionReportsOpen && <div className="sidebar-nested-subnav">{productionReportNames.map((report) => <button key={report} className={productionView === "Reports" && productionReportView === report ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionReport(report)}>{report}</button>)}</div>}
@@ -1820,6 +2127,21 @@ function App() {
                     <button className={attendanceView === "Leave Requests" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Leave Requests")}><CalendarClock size={15} /> Leave requests</button>
                     <button className={attendanceView === "Payroll Summary" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Payroll Summary")}><FileDown size={15} /> Payroll summary</button>
                     <button className={attendanceView === "Settings" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Settings")}><SlidersHorizontal size={15} /> Settings</button>
+                  </div>}
+                </div>
+              );
+            }
+            if (item.id === "offers") {
+              const offersActive = activeModule === "offers";
+              return (
+                <div className="sidebar-admin-group" key={item.id}>
+                  <button className={offersActive ? "nav active" : "nav"} onClick={() => { if (!offersActive) openModule("offers"); setOffersNavOpen((open) => offersActive ? !open : true); }} title={item.label} aria-expanded={sidebarOpen && offersNavOpen}>
+                    <Icon size={18} />
+                    {sidebarOpen && <><span>{item.label}</span><ChevronDown className={offersNavOpen ? "sidebar-chevron open" : "sidebar-chevron"} size={16} /></>}
+                  </button>
+                  {sidebarOpen && offersNavOpen && <div className="sidebar-subnav offers-sidebar-subnav">
+                    <button className={offersView === "Happy hour offer" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openOffersView("Happy hour offer")}><Clock size={15} /> Happy hour offer</button>
+                    {["BOGO offers", "Combo discounts", "Weekend offers", "Coupons"].map((offer) => <button key={offer} className={offersView === offer ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openOffersView(offer)}><Sparkles size={15} /> {offer}</button>)}
                   </div>}
                 </div>
               );
@@ -1886,15 +2208,16 @@ function App() {
           </button>
         </nav>
       </aside>
+      {sidebarOpen && <button className="sidebar-backdrop" type="button" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
       <main>
         <header className="topbar">
           <div className="topbar-left">
-            <button className="icon-btn" onClick={() => setSidebarOpen(!sidebarOpen)} title="Toggle sidebar">
+            <button className="icon-btn" onClick={() => setSidebarOpen(!sidebarOpen)} title="Toggle sidebar" aria-expanded={sidebarOpen} aria-controls="primary-navigation">
               {sidebarOpen ? <PanelLeftClose size={19} /> : <Menu size={19} />}
             </button>
             <div>
               <p>{storeLabel(activeStore)}</p>
-        <h1>{activeModule === "attendance" ? `Attendance - ${attendanceView}` : activeModule === "finance" ? `Finance - ${financeView}` : modules.find((item) => item.id === activeModule)?.label}</h1>
+        <h1>{activeModule === "attendance" ? `Attendance - ${attendanceView}` : activeModule === "offers" ? `Offers & Promotions - ${offersView}` : activeModule === "finance" ? `Finance - ${financeView}` : modules.find((item) => item.id === activeModule)?.label}</h1>
             </div>
           </div>
           <div className="topbar-actions">
@@ -1910,7 +2233,6 @@ function App() {
             <span className="pill role-pill">{currentRoleLabel}</span>
             <button className="icon-btn" onClick={() => notify("No new notifications")} title="Notifications"><Bell size={18} /></button>
             <button className="icon-btn" onClick={() => setDark(!dark)} title="Toggle theme">{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
-            <button className="icon-btn" onClick={() => setPasswordDialogOpen(true)} title="Change password"><KeyRound size={18} /></button>
             <button className="icon-btn" onClick={handleLogout} title="Logout"><LogOut size={18} /></button>
           </div>
         </header>
@@ -1922,71 +2244,137 @@ function App() {
   );
 }
 
+function CustomerTableOrdering() {
+  const params = new URLSearchParams(window.location.search);
+  const storeId = params.get("store") || params.get("storeId") || "";
+  const qrTableId = params.get("table") || params.get("tableId") || "";
+  const [catalog, setCatalog] = useState([]);
+  const [tables, setTables] = useState([]);
+  const [table, setTable] = useState(null);
+  const [selectedTableId, setSelectedTableId] = useState(qrTableId);
+  const [cart, setCart] = useState([]);
+  const [customerName, setCustomerName] = useState("");
+  const [customerNote, setCustomerNote] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [orderNumber, setOrderNumber] = useState("");
+  const subtotal = cart.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.qty || 0), 0);
+
+  useEffect(() => {
+    if (!storeId) {
+      setError("This store QR code is incomplete.");
+      setLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    supabaseFunctionJson(`vestora-public-order/menu?storeId=${encodeURIComponent(storeId)}${qrTableId ? `&tableId=${encodeURIComponent(qrTableId)}` : ""}`)
+      .then((payload) => {
+        if (cancelled) return;
+        setCatalog(Array.isArray(payload?.items) ? payload.items.filter((item) => (item.status || "Active") === "Active") : []);
+        setTables(Array.isArray(payload?.tables) ? payload.tables : []);
+        setTable(payload?.table || null);
+        if (qrTableId && !payload?.table) setError("This table is no longer available for ordering.");
+      })
+      .catch((requestError) => { if (!cancelled) setError(requestError.message || "Unable to load the menu."); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [storeId, qrTableId]);
+
+  function addItem(item) {
+    setCart((current) => {
+      const existing = current.find((entry) => String(entry.id) === String(item.id));
+      return existing
+        ? current.map((entry) => String(entry.id) === String(item.id) ? { ...entry, qty: entry.qty + 1 } : entry)
+        : [...current, { ...item, qty: 1 }];
+    });
+  }
+
+  function changeQty(itemId, delta) {
+    setCart((current) => current.map((item) => String(item.id) === String(itemId) ? { ...item, qty: Math.max(0, item.qty + delta) } : item).filter((item) => item.qty > 0));
+  }
+
+  async function submitOrder(event) {
+    event.preventDefault();
+    if (!cart.length) return setError("Choose at least one item.");
+    if (!selectedTableId) return setError("Choose your table before sending the order.");
+    setSubmitting(true);
+    setError("");
+    try {
+      const result = await supabaseFunctionJson("vestora-public-order/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storeId, tableId: selectedTableId, guestCount: 1, customerName: customerName.trim() || "Guest", customerNote: customerNote.trim(), items: cart.map(({ id, name, price, qty, notes }) => ({ id, name, price, qty, notes: notes || "" })) }),
+      });
+      setOrderNumber(result?.orderNumber || "");
+      setCart([]);
+    } catch (requestError) {
+      setError(requestError.message || "Unable to send your order.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (loading) return <div className="customer-order-screen"><div className="customer-order-card"><span className="customer-order-kicker">UVPRO TABLE ORDERING</span><h1>Loading menu...</h1></div></div>;
+  if (orderNumber) return <div className="customer-order-screen"><div className="customer-order-card customer-order-success"><CircleCheck size={54} /><span className="customer-order-kicker">ORDER RECEIVED</span><h1>Thank you!</h1><p>Your order <strong>{orderNumber}</strong> has been sent to the restaurant.</p><small>Table {table?.name || selectedTableId} · Please wait for the team to serve you.</small></div></div>;
+
+  return (
+      <div className="customer-order-screen">
+      <div className="customer-order-card customer-order-header"><span className="customer-order-kicker">UVPRO MENU · NO LOGIN REQUIRED</span><h1>{table?.name || "Choose your items"}</h1><p>{table ? "View this store's available items, choose what you want, and send your order." : "View this store's available items, choose what you want, then select your table to send the order."}</p></div>
+      {error && <div className="customer-order-error">{error}</div>}
+      {!error && <form className="customer-order-layout" onSubmit={submitOrder}>
+        <div className="customer-menu-grid">{catalog.map((item) => <button type="button" className="customer-menu-item" key={item.id} onClick={() => addItem(item)}><span>{item.category}</span><strong>{item.name}</strong><em>{formatMoney(item.price)}</em><small>＋ Add</small></button>)}</div>
+        <aside className="customer-cart-card"><h2>Your order</h2>{!table && <label>Select your table<select value={selectedTableId} onChange={(event) => setSelectedTableId(event.target.value)}><option value="">Choose table</option>{tables.map((entry) => <option key={entry.id} value={entry.id}>{entry.name} · {entry.floor}</option>)}</select></label>}<div className="customer-cart-lines">{cart.length ? cart.map((item) => <div className="customer-cart-line" key={item.id}><div><strong>{item.name}</strong><small>{formatMoney(item.price)} each</small></div><span><button type="button" onClick={() => changeQty(item.id, -1)}>-</button><b>{item.qty}</b><button type="button" onClick={() => changeQty(item.id, 1)}>+</button></span></div>) : <p>Add items from the menu.</p>}</div><div className="customer-order-total"><span>Subtotal</span><strong>{formatMoney(subtotal)}</strong></div><label>Your name (optional)<input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Guest" maxLength={60} /></label><label>Note for the restaurant<textarea value={customerNote} onChange={(event) => setCustomerNote(event.target.value)} placeholder="Less spicy, allergies, etc." maxLength={240} /></label><button className="customer-submit-order" type="submit" disabled={submitting || !cart.length || !selectedTableId}>{submitting ? "Sending order..." : "Send order to kitchen"}</button></aside>
+      </form>}
+    </div>
+  );
+}
+
 function LoginScreen({ onLogin }) {
-  const [email, setEmail] = useState("super@vestora.test");
-  const [password, setPassword] = useState("Super@123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
-
-  function findDemoAccount(loginId, candidatePassword) {
-    return demoAccounts.find((account) => account.email?.toLowerCase() === loginId && account.password === candidatePassword);
-  }
 
   async function login(event) {
     event.preventDefault();
     const loginId = email.trim().toLowerCase();
-    const demoUser = findDemoAccount(loginId, password);
-    if (demoUser) {
-      setError("");
-      onLogin(demoUser);
+    if (localAuthEnabled && loginId === localAuthEmail && password === localAuthPassword) {
+      onLogin({
+        id: "LOCAL-SUPER-ADMIN",
+        email: loginId,
+        name: "Local Super Admin",
+        role: "super_admin",
+        appRole: "Super Admin",
+        storeId: "GLOBAL",
+        status: "Active",
+      });
       return;
     }
     if (supabaseConfigured) {
       setError("");
       const { data, error: authError } = await signInWithSupabase(loginId, password);
       if (!authError && data.user) {
-        try {
-          const profile = await supabaseProfile();
-          const metadata = data.user.user_metadata || {};
-          const profileUser = {
-            id: data.user.id,
-            email: data.user.email || loginId,
-            name: metadata.name || data.user.email || loginId,
-            role: metadata.role || profile.role || "cashier",
-            appRole: metadata.appRole || profile.appRole || profile.role || "Cashier",
-            storeId: metadata.storeId || "STORE-001",
-            status: profile.status || "Active",
-          };
-          onLogin(profileUser);
-          return;
-        } catch (syncError) {
-          setError(`Supabase connection failed: ${syncError.message}`);
-          return;
-        }
+        let profile = {};
+        try { profile = await supabaseProfile(); } catch { /* Auth metadata is sufficient while the profile API is unavailable. */ }
+        const metadata = data.user.user_metadata || {};
+        const isSuperAdmin = (data.user.email || loginId).toLowerCase() === "restaurant@vestanoretail.com";
+        const profileUser = {
+          id: data.user.id,
+          email: data.user.email || loginId,
+          name: metadata.name || data.user.email || loginId,
+          role: metadata.role || profile.role || (isSuperAdmin ? "super_admin" : "cashier"),
+          appRole: metadata.appRole || profile.appRole || profile.role || (isSuperAdmin ? "Super Admin" : "Cashier"),
+          storeId: metadata.storeId || profile.storeId || "GLOBAL",
+          status: profile.status || "Active",
+        };
+        onLogin(profileUser);
+        return;
       }
       setError(authError?.message || "Supabase sign-in failed");
       return;
     }
-    const savedUsers = loadStoredArray("vestora-users");
-    const restaurantAccounts = [
-      ...savedUsers.map((user) => ({
-        id: user.id,
-        email: String(user.email || "").trim().toLowerCase(),
-        password: String(user.password || ""),
-        name: user.name,
-        role: roleToAuthRole(user.role),
-        appRole: user.role,
-        status: user.status || "Active",
-        storeId: user.storeId || "STORE-001",
-      })),
-      ...demoAccounts,
-    ];
-    const user = restaurantAccounts.find((account) => account.email?.toLowerCase() === loginId && account.password === password && account.status !== "Inactive" && account.status !== "Suspended");
-    if (!user) {
-      setError("Invalid login");
-      return;
-    }
-    onLogin(user);
+    setError("Secure sign-in is not configured for this deployment.");
   }
 
   return (
@@ -2014,25 +2402,12 @@ function LoginScreen({ onLogin }) {
         </div>
         {error && <strong className="login-error">{error}</strong>}
         <button className="login-submit" type="submit">Login</button>
-        <div className="demo-login-panel">
-          <span>Quick demo access</span>
-          <div className="demo-logins">
-            <button type="button" onClick={() => { setEmail("super@vestora.test"); setPassword("Super@123"); }}>Super Admin</button>
-            <button type="button" onClick={() => { setEmail("admin@vestora.test"); setPassword("Admin@123"); }}>Admin</button>
-            <button type="button" onClick={() => { setEmail("branch@vestora.test"); setPassword("Branch@123"); }}>Branch Manager</button>
-          </div>
-          <div className="login-credentials">
-            <small>super@vestora.test / Super@123</small>
-            <small>admin@vestora.test / Admin@123</small>
-            <small>branch@vestora.test / Branch@123</small>
-          </div>
-        </div>
       </form>
     </div>
   );
 }
 
-function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, onEnterStore, onLogout, notify, toast }) {
+function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, onEnterStore, onUpdatePassword, onLogout, notify, toast }) {
   const [showStoreForm, setShowStoreForm] = useState(false);
   const [storeFormMode, setStoreFormMode] = useState("store");
   const [editingStoreId, setEditingStoreId] = useState(null);
@@ -2071,9 +2446,8 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, on
     const branches = head?.type === "Store" && !head.branch ? locations.filter((store) => store.id !== head.id) : locations;
     return { name, head, branches };
   });
-
   function branchLoginCredential(store) {
-    const candidates = [...users, ...demoAccounts];
+    const candidates = [...users];
     const owner = String(store.owner || "").trim().toLowerCase();
     return candidates.find((user) => {
       if (normalizeStoreId(user.storeId) !== store.id) return false;
@@ -2325,6 +2699,16 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, on
           </div>
         </section>
 
+        <button className="super-admin-security" type="button" onClick={onUpdatePassword} aria-labelledby="super-admin-security-title">
+          <span className="super-admin-security-icon"><KeyRound size={22} /></span>
+          <div>
+            <span>Account security</span>
+            <strong id="super-admin-security-title">Update password</strong>
+            <p>Change the password for this Super Admin account.</p>
+          </div>
+          <span className="super-admin-security-action">Update password</span>
+        </button>
+
         <div className="restaurant-store-grid">
           {restaurantGroups.map((group) => (
             <div className="restaurant-store-card" key={group.name}>
@@ -2371,6 +2755,7 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, on
               </div>
             </div>
           ))}
+          {!restaurantGroups.length && <div className="empty-branch-state">No restaurants yet. Select <strong>New restaurant</strong> to create your first store.</div>}
         </div>
         </>}
 
@@ -3026,7 +3411,7 @@ function BillReceiptMeta({ billTemplate, rows }) {
   );
 }
 
-function POS({ cart, setCart, items, orderType, setOrderType, online, notify, billTemplate, onSale, onVoidItem, onExit, onLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
+function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange, orderType, setOrderType, online, notify, billTemplate, onSale, onVoidItem, onExit, onLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
   const catalogItems = (items?.length ? items : menuItems).filter((item) => item.status !== "Inactive");
   const categories = ["All", ...Array.from(new Set(catalogItems.map((item) => item.category).filter(Boolean))), "Favourites"];
   const [category, setCategory] = useState("All");
@@ -3035,6 +3420,14 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
   const [customerName, setCustomerName] = useState("");
   const [customerMobile, setCustomerMobile] = useState("");
   const [discount, setDiscount] = useState(0);
+  const [offerDiscount, setOfferDiscount] = useState(0);
+  const [selectedOfferId, setSelectedOfferId] = useState("");
+  const [couponEntry, setCouponEntry] = useState("");
+  const [appliedOffer, setAppliedOffer] = useState(null);
+  const [posOffers] = useState(() => {
+    const savedOffers = loadStoredArray(`vestora-offers-${storeId}`);
+    return savedOffers.length ? savedOffers : localOfferCatalog;
+  });
   const [closingBalance, setClosingBalance] = useState(String(currentShift?.openingBalance || 0));
   const [varianceNote, setVarianceNote] = useState("");
   const [showCloseShift, setShowCloseShift] = useState(false);
@@ -3065,7 +3458,8 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
     return inCategory && inSearch;
   });
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
-  const taxableSubtotal = Math.max(subtotal - discount, 0);
+  const totalDiscount = Math.min(subtotal, discount + offerDiscount);
+  const taxableSubtotal = Math.max(subtotal - totalDiscount, 0);
   const itemTax = cart.reduce((sum, item) => {
     const rate = Number.isFinite(Number(item.tax)) ? Number(item.tax) : 5;
     return sum + Number(item.price || 0) * Number(item.qty || 0) * (rate / 100);
@@ -3073,7 +3467,9 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
   const tax = Math.round(subtotal > 0 ? itemTax * (taxableSubtotal / subtotal) : 0);
   const cgst = Math.round(tax / 2);
   const sgst = tax - cgst;
-  const total = Math.max(subtotal - discount, 0) + tax;
+  const total = Math.max(subtotal - totalDiscount, 0) + tax;
+  const activePosOffers = posOffers.filter((offer) => offer.status === "Active");
+  const selectedOffer = activePosOffers.find((offer) => offer.id === selectedOfferId) || null;
   const cartItemCount = cart.reduce((sum, item) => sum + Number(item.qty || 0), 0);
   const shiftCashReceipts = shiftBills.reduce((sum, bill) => {
     if (bill.payment === "Cash") return sum + Number(bill.total || 0);
@@ -3103,11 +3499,25 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
   const splitPaymentValid = cart.length > 0 && splitMethodCount >= 2 && Math.abs(splitDifference) < 0.01;
   const customerNameValid = !customerName.trim() || customerName.trim().length >= 2;
   const customerMobileValid = !customerMobile || /^\d{10}$/.test(customerMobile);
+  const lowStockFoodItems = foodStock.filter((record) => Number(record.available || 0) <= foodStockThreshold(record));
+  const foodStockRequirements = cart.reduce((summary, item) => {
+    const record = foodStockRecordFor(foodStock, item);
+    if (!record) return summary;
+    const key = normalizeFoodItemName(record.item);
+    summary.set(key, {
+      record,
+      quantity: Number(summary.get(key)?.quantity || 0) + Number(item.qty || 0),
+    });
+    return summary;
+  }, new Map());
 
   useEffect(() => {
     if (!recentlyAddedKey || !billItemsRef.current) return undefined;
-    const addedLine = Array.from(billItemsRef.current.children).find((element) => element.dataset.cartItemKey === recentlyAddedKey);
-    addedLine?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    const itemsContainer = billItemsRef.current;
+    const addedLine = Array.from(itemsContainer.children).find((element) => element.dataset.cartItemKey === recentlyAddedKey);
+    if (addedLine) {
+      itemsContainer.scrollTo({ top: Math.max(0, addedLine.offsetTop - itemsContainer.offsetTop - 4), behavior: "smooth" });
+    }
     const timer = window.setTimeout(() => setRecentlyAddedKey(""), 900);
     return () => window.clearTimeout(timer);
   }, [cart, recentlyAddedKey]);
@@ -3119,12 +3529,30 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
     }
   }, [pendingTableOrders, selectedReceptionOrderId]);
 
+  useEffect(() => {
+    if (!appliedOffer) return;
+    const offer = posOffers.find((entry) => entry.id === appliedOffer.id);
+    const result = offer ? calculatePosOffer(offer, cart, appliedOffer.couponCode || "") : { amount: 0 };
+    if (!result.amount) {
+      setAppliedOffer(null);
+      setOfferDiscount(0);
+      return;
+    }
+    if (result.amount !== offerDiscount) setOfferDiscount(result.amount);
+  }, [cart, posOffers, appliedOffer, offerDiscount]);
+
   function getCartItemKey(item) {
     return `${String(item.id ?? "item")}::${String(item.name ?? "").trim().toLowerCase()}`;
   }
 
   function add(item) {
     const cartItemKey = getCartItemKey(item);
+    const trackedStock = foodStockRecordFor(foodStock, item);
+    const currentCartQty = cart.find((entry) => getCartItemKey(entry) === cartItemKey)?.qty || 0;
+    if (trackedStock && currentCartQty >= Number(trackedStock.available || 0)) {
+      notify(`${item.name} is out of food stock`);
+      return;
+    }
     setRecentlyAddedKey(cartItemKey);
     setCart((current) => {
       const existing = current.find((entry) => getCartItemKey(entry) === cartItemKey);
@@ -3144,6 +3572,12 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
   }
 
   function changeQty(cartItemKey, delta) {
+    const cartItem = cart.find((item) => getCartItemKey(item) === cartItemKey);
+    const trackedStock = cartItem ? foodStockRecordFor(foodStock, cartItem) : null;
+    if (delta > 0 && trackedStock && Number(cartItem.qty || 0) + delta > Number(trackedStock.available || 0)) {
+      notify(`${cartItem.name} has only ${Number(trackedStock.available || 0)} available`);
+      return;
+    }
     setCart((current) => current.map((item) => getCartItemKey(item) === cartItemKey ? { ...item, qty: Math.max(item.qty + delta, 1) } : item));
   }
 
@@ -3152,6 +3586,31 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
     if (removed) onVoidItem(removed, orderType);
     setCart((current) => current.filter((item) => getCartItemKey(item) !== cartItemKey));
     notify(removed ? `${removed.name} voided` : "Item removed");
+  }
+
+  function applyOffer() {
+    if (!cart.length) {
+      notify("Add items before applying an offer");
+      return;
+    }
+    if (appliedOffer) {
+      setAppliedOffer(null);
+      setOfferDiscount(0);
+      notify(`${appliedOffer.name} removed`, 4200);
+      return;
+    }
+    if (!selectedOffer) {
+      notify("Choose an active offer first");
+      return;
+    }
+    const result = calculatePosOffer(selectedOffer, cart, couponEntry);
+    if (!result.amount) {
+      notify(result.error || "This offer cannot be applied to the current bill");
+      return;
+    }
+    setOfferDiscount(result.amount);
+    setAppliedOffer({ id: selectedOffer.id, name: selectedOffer.name, type: selectedOffer.type, amount: result.amount, couponCode: couponEntry.trim().toUpperCase() });
+    notify(`${selectedOffer.name} applied: ${formatMoney(result.amount)} off`);
   }
 
   function completeCheckout(selectedPayment, splitPayments = []) {
@@ -3163,7 +3622,14 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
       notify("Enter a valid 10-digit customer mobile number");
       return false;
     }
-    const bill = { id: `BILL-${Date.now()}`, orderNumber, cashier: currentUser?.name || "POS User", customerName: customerName.trim(), customerMobile, orderType, tableOrderId: sourceTableOrder?.id || "", tableName: sourceTableOrder?.tableName || "", waiter: sourceTableOrder?.waiterName || "", guestCount: Number(sourceTableOrder?.guestCount || 0), items: cart, subtotal, cgst, sgst, tax, discount, total, payment: selectedPayment, splitPayments, itemCount: cart.reduce((sum, item) => sum + item.qty, 0), syncStatus: online ? "Synced" : "Pending sync", completedAt: new Date().toISOString() };
+    for (const { record, quantity } of foodStockRequirements.values()) {
+      const available = Number(record.available || 0);
+      if (quantity > available) {
+        notify(`${record.item} has only ${available} ${record.unit || "portions"} left`);
+        return false;
+      }
+    }
+    const bill = { id: `BILL-${Date.now()}`, orderNumber, cashier: currentUser?.name || "POS User", customerName: customerName.trim(), customerMobile, orderType, tableOrderId: sourceTableOrder?.id || "", tableName: sourceTableOrder?.tableName || "", waiter: sourceTableOrder?.waiterName || "", guestCount: Number(sourceTableOrder?.guestCount || 0), items: cart, subtotal, cgst, sgst, tax, discount: totalDiscount, appliedOffer, total, payment: selectedPayment, splitPayments, itemCount: cart.reduce((sum, item) => sum + item.qty, 0), syncStatus: online ? "Synced" : "Pending sync", completedAt: new Date().toISOString() };
     if (!online) {
       const queued = JSON.parse(localStorage.getItem("vestora-offline-orders") || "[]");
       localStorage.setItem("vestora-offline-orders", JSON.stringify([...queued, bill]));
@@ -3172,6 +3638,18 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
       notify(`Paid ${formatMoney(total)} by ${selectedPayment}`);
     }
     onSale(bill);
+    if (foodStockRequirements.size && onFoodStockChange) {
+      onFoodStockChange((current) => current.map((record) => {
+        const ordered = foodStockRequirements.get(normalizeFoodItemName(record.item))?.quantity || 0;
+        if (!ordered) return record;
+        return {
+          ...record,
+          sold: Number(record.sold || 0) + ordered,
+          available: Math.max(0, Number(record.available || 0) - ordered),
+          updatedAt: new Date().toISOString(),
+        };
+      }));
+    }
     if (sourceTableOrder) onTableOrderPaid?.(sourceTableOrder, bill);
     setCompletedBill(bill);
     setShowSplitPayment(false);
@@ -3179,6 +3657,10 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
     setCustomerName("");
     setCustomerMobile("");
     setDiscount(0);
+    setOfferDiscount(0);
+    setAppliedOffer(null);
+    setSelectedOfferId("");
+    setCouponEntry("");
     setSourceTableOrder(null);
     setOrderNumber(`ORD-${Date.now().toString().slice(-6)}`);
     setOrderCreatedAt(new Date());
@@ -3330,14 +3812,25 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
           <label className="search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addBarcodeMatch(); } }} placeholder="Search item or scan barcode" /></label>
           <div className="segmented">{["Dine-in", "Takeaway", "Delivery", "Online"].map((type) => <button key={type} className={orderType === type ? "selected" : ""} onClick={() => { setOrderType(type); notify(`${type} billing selected`); }}>{type}</button>)}</div>
         </div>
+        {!!lowStockFoodItems.length && <div className="pos-food-stock-alert"><AlertTriangle size={18} /><div><strong>Food stock alert</strong><span>{lowStockFoodItems.map((record) => `${record.item}: ${Number(record.available || 0)} left`).join(" · ")}</span></div></div>}
         <div className="catalog-section-head"><div><span>Menu catalog</span><strong>{filtered.length} available items</strong></div><div className="category-row">{categories.map((name) => <button key={name} className={category === name ? "chip active" : "chip"} onClick={() => setCategory(name)}>{name}</button>)}</div></div>
         <div className="item-grid">{filtered.map((item) => {
           const catalogItemKey = getCartItemKey(item);
-          return <button key={catalogItemKey} className="item-card" onClick={() => add(item)}><img className="item-photo" src={getMenuItemPhoto(item)} alt="" loading="lazy" /><span>{item.category}</span><strong>{item.name}</strong>{item.barcode && <small className="item-barcode">Barcode {item.barcode}</small>}<em>{formatMoney(item.price)}</em></button>;
+          const stockRecord = foodStockRecordFor(foodStock, item);
+          const stockAvailable = stockRecord ? Number(stockRecord.available || 0) : null;
+          return <button key={catalogItemKey} className={stockRecord && stockAvailable <= 0 ? "item-card out-of-stock" : "item-card"} onClick={() => add(item)} disabled={stockRecord && stockAvailable <= 0}><img className="item-photo" src={getMenuItemPhoto(item)} alt="" loading="lazy" /><span>{item.category}</span><strong>{item.name}</strong>{item.barcode && <small className="item-barcode">Barcode {item.barcode}</small>}{stockRecord && <small className={stockAvailable <= foodStockThreshold(stockRecord) ? "item-food-stock low" : "item-food-stock"}>{stockAvailable > 0 ? `${stockAvailable} ${stockRecord.unit || "portions"} left` : "Out of food stock"}</small>}<em>{formatMoney(item.price)}</em></button>;
         })}</div>
       </div>
       <div ref={billPanelRef} className="bill-panel">
-        <PanelHead title={sourceTableOrder ? `Bill preview · ${cartItemCount} ${cartItemCount === 1 ? "item" : "items"}` : "Bill preview"} icon={ReceiptText} />
+        <div className="bill-panel-top">
+          <PanelHead title={sourceTableOrder ? `Bill preview · ${cartItemCount} ${cartItemCount === 1 ? "item" : "items"}` : "Bill preview"} icon={ReceiptText} />
+          <div className="pos-offer-apply">
+            <select value={selectedOfferId} onChange={(event) => { setSelectedOfferId(event.target.value); setCouponEntry(""); }} disabled={Boolean(appliedOffer)} aria-label="Choose active offer"><option value="">Apply offer</option>{activePosOffers.map((offer) => <option key={offer.id} value={offer.id}>{offer.name} · {offer.type}</option>)}</select>
+            <button type="button" className={appliedOffer ? "active" : ""} onClick={applyOffer} disabled={!appliedOffer && !activePosOffers.length}>{appliedOffer ? "Remove" : "Apply"}</button>
+            {selectedOffer?.type === "Coupon" && !appliedOffer && <label className="coupon-entry"><span>Coupon code</span><input value={couponEntry} onChange={(event) => setCouponEntry(event.target.value.toUpperCase())} placeholder="Enter code" maxLength="24" /></label>}
+            {appliedOffer && <span className="pos-offer-applied"><CircleCheck size={14} /> {appliedOffer.name}</span>}
+          </div>
+        </div>
           <div className={previewBillPaperClass} style={billPaperStyle}>
             <BillReceiptHeader billTemplate={billTemplate} />
           {billTemplate.showOrderInfo !== false && <div className="bill-type-row"><span>Billing type</span><strong>{orderType}</strong></div>}
@@ -3396,7 +3889,8 @@ function POS({ cart, setCart, items, orderType, setOrderType, online, notify, bi
           </div>
           <div className="totals">
             <span>Subtotal <strong>{formatMoney(subtotal)}</strong></span>
-            <span>Discount <strong>{formatMoney(discount)}</strong></span>
+            <span>Discount <strong>{formatMoney(totalDiscount)}</strong></span>
+            {appliedOffer && <span className="bill-applied-offer">Offer · {appliedOffer.name}<strong>-{formatMoney(offerDiscount)}</strong></span>}
             {billTemplate.showTaxBreakup !== false && <span>CGST <strong>{formatMoney(cgst)}</strong></span>}
             {billTemplate.showTaxBreakup !== false && <span>SGST <strong>{formatMoney(sgst)}</strong></span>}
             {billTemplate.showItemCount && <span>Items <strong>{cartItemCount}</strong></span>}
@@ -3691,6 +4185,9 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
   const [printSlip, setPrintSlip] = useState(null);
   const [cancelRequest, setCancelRequest] = useState(null);
   const [cancelReason, setCancelReason] = useState("");
+  const [qrTable, setQrTable] = useState(null);
+  const [qrImage, setQrImage] = useState("");
+  const [qrLoading, setQrLoading] = useState(false);
   const visibleTables = tables.filter((table) => table.floor === floor);
   const selectedTable = tables.find((table) => table.id === selected);
   const catalogItems = (items?.length ? items : menuItems).filter((item) => item.status !== "Inactive");
@@ -3698,7 +4195,7 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
   const filteredOrderItems = catalogItems.filter((item) => (orderCategory === "All" || item.category === orderCategory) && [item.name, item.category, item.barcode].join(" ").toLowerCase().includes(orderQuery.trim().toLowerCase()));
   const activeTableOrder = selectedTable ? tableOrders.find((order) => order.tableId === selectedTable.id && order.status !== "Paid" && order.status !== "Cancelled") : null;
   const addonTableOrder = activeTableOrder
-    && ["Taking order", "KOT sent"].includes(activeTableOrder.status)
+    && ["Taking order", "KOT sent", "QR order received"].includes(activeTableOrder.status)
     && Array.isArray(activeTableOrder.items)
     && activeTableOrder.items.length > 0
     ? activeTableOrder
@@ -3789,6 +4286,32 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
     setGuestCount(Math.min(Number(table.seats || 1), Math.max(1, Number(existingOrder?.guestCount || 1))));
     setShowWaiterOrder(false);
     notify(`${table.name} selected`);
+  }
+
+  async function openTableQr(table) {
+    // Publish the latest menu and table layout before printing a QR code so a
+    // customer's phone always receives the same catalog as the staff screen.
+    await Promise.all([
+      syncLocalStateKeyToSupabase(`vestora-menu-items-${storeId}`).catch(() => {}),
+      syncLocalStateKeyToSupabase(`vestora-tables-${storeId}`).catch(() => {}),
+    ]);
+    const url = new URL(window.location.href);
+    url.search = "";
+    url.searchParams.set("order", "1");
+    url.searchParams.set("store", storeId);
+    url.searchParams.set("table", String(table.id));
+    setQrTable({ ...table, url: url.toString() });
+    setQrImage("");
+    setQrLoading(true);
+    try {
+      const image = await QRCode.toDataURL(url.toString(), { width: 360, margin: 2, errorCorrectionLevel: "M", color: { dark: "#092c25", light: "#ffffff" } });
+      setQrImage(image);
+    } catch {
+      notify("Unable to generate table QR code");
+      setQrTable(null);
+    } finally {
+      setQrLoading(false);
+    }
   }
 
   function changeGuestCount(delta) {
@@ -4065,7 +4588,7 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
               title={selectedTable && !canTakeTableOrder ? (activeTableOrder ? "Add-ons close after dining is completed" : "Select an Available table to start an order") : undefined}
               onClick={startWaiterOrder}
             >
-              <ClipboardList size={16} /> {addonTableOrder ? "Add on" : "Take order"}
+              <ClipboardList size={16} /> {activeTableOrder?.source === "QR" && activeTableOrder.status === "QR order received" ? "Review QR order" : addonTableOrder ? "Add on" : "Take order"}
             </button>
           </div>
           <div className="floor-table-actions">
@@ -4141,6 +4664,7 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
                 <button type="button" disabled={index === visibleTables.length - 1} onClick={() => moveTable(table.id, 1)} title={`Move ${table.name} right`} aria-label={`Move ${table.name} right`}><ChevronRight size={18} /></button>
               </div>
             )}
+            {canManageAll && !reorderMode && <button className="table-qr-button" type="button" onClick={(event) => { event.stopPropagation(); openTableQr(table); }}><QrCode size={15} /> QR order</button>}
           </div>
         ))}
       </div>
@@ -4171,6 +4695,27 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
                   <button className="reception-action" type="button" onClick={finishDining} disabled={!orderItems.length}><ReceiptText size={17} /> Dining complete · Send reception</button>
                 </div>
               </div>
+            </div>
+          </section>
+        </div>
+      )}
+      {qrTable && (
+        <div className="shift-modal-backdrop qr-order-backdrop" role="presentation">
+          <section className="shift-modal qr-order-modal" role="dialog" aria-modal="true" aria-label={`QR ordering for ${qrTable.name}`}>
+            <div className="shift-modal-head">
+              <div><span>Table ordering</span><h2>{qrTable.name} QR code</h2></div>
+              <button type="button" onClick={() => setQrTable(null)}>Close</button>
+            </div>
+            <p className="modal-help-text">Customers scan this code to open the menu and order directly from {qrTable.name}.</p>
+            <div className="qr-order-preview">
+              {qrLoading ? <div className="qr-loading">Creating QR code...</div> : qrImage && <img src={qrImage} alt={`Order from table ${qrTable.name}`} />}
+              <strong>{qrTable.name} · {qrTable.floor}</strong>
+            </div>
+            <label className="qr-order-url">Ordering link<input readOnly value={qrTable.url} onFocus={(event) => event.target.select()} /></label>
+            <div className="shift-actions">
+              <button type="button" onClick={() => navigator.clipboard?.writeText(qrTable.url).then(() => notify("Ordering link copied"))}>Copy link</button>
+              <a className="qr-download-button" href={qrImage || undefined} download={`table-${qrTable.name}-qr.png`}>Download QR</a>
+              <button type="button" onClick={() => { setQrTable(null); window.setTimeout(() => window.print(), 80); }}>Print</button>
             </div>
           </section>
         </div>
@@ -4209,7 +4754,7 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
   );
 }
 
-function Inventory({ notify, canManageAll, storeId }) {
+function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
   const storageKey = `vestora-inventory-${storeId}`;
   const categoryStorageKey = `vestora-inventory-categories-${storeId}`;
   const defaultCategories = ["Dry goods", "Dairy", "Vegetables", "Beverages", "Operations", "Packaging", "Other"];
@@ -4226,14 +4771,59 @@ function Inventory({ notify, canManageAll, storeId }) {
   const [skuIsManual, setSkuIsManual] = useState(false);
   const [categoryCreatorOpen, setCategoryCreatorOpen] = useState(false);
   const [categoryDraft, setCategoryDraft] = useState("");
+  const inventoryLocalChangeAtRef = useRef(0);
+  const inventoryApplyingRemoteRef = useRef(false);
+  const cloudHydratedRef = useRef(false);
 
   useEffect(() => {
     localStorage.setItem(storageKey, JSON.stringify(items));
-  }, [items, storageKey]);
+    if (inventoryApplyingRemoteRef.current) {
+      inventoryApplyingRemoteRef.current = false;
+      return;
+    }
+    inventoryLocalChangeAtRef.current = Date.now();
+    if (cloudStateReady && cloudHydratedRef.current) syncLocalStateKeyToSupabase(storageKey).catch(() => {});
+  }, [items, storageKey, cloudStateReady]);
 
   useEffect(() => {
     localStorage.setItem(categoryStorageKey, JSON.stringify(categories));
-  }, [categories, categoryStorageKey]);
+    if (cloudStateReady && cloudHydratedRef.current) syncLocalStateKeyToSupabase(categoryStorageKey).catch(() => {});
+  }, [categories, categoryStorageKey, cloudStateReady]);
+
+  useEffect(() => {
+    if (!cloudStateReady || !supabaseConfigured) return undefined;
+    let cancelled = false;
+    const refreshFromCloud = async () => {
+      if (Date.now() - inventoryLocalChangeAtRef.current < 2500) return;
+      try {
+        const [inventoryRows, categoryRows] = await Promise.all([
+          supabaseFunctionJson(`vestora-api/state?key=${encodeURIComponent(storageKey)}`),
+          supabaseFunctionJson(`vestora-api/state?key=${encodeURIComponent(categoryStorageKey)}`),
+        ]);
+        if (cancelled) return;
+        const remoteItems = Array.isArray(inventoryRows?.[0]?.state_value) ? inventoryRows[0].state_value : null;
+        const remoteCategories = Array.isArray(categoryRows?.[0]?.state_value) ? categoryRows[0].state_value : null;
+        if (remoteItems) setItems((current) => {
+          if (JSON.stringify(current) === JSON.stringify(remoteItems)) return current;
+          inventoryApplyingRemoteRef.current = true;
+          return remoteItems;
+        });
+        if (remoteCategories) setCategories((current) => JSON.stringify(current) === JSON.stringify(remoteCategories) ? current : remoteCategories);
+      } catch {
+        // The local inventory remains usable while the shared state endpoint is unavailable.
+      } finally {
+        if (!cancelled) {
+          cloudHydratedRef.current = true;
+        }
+      }
+    };
+    refreshFromCloud();
+    const timer = window.setInterval(refreshFromCloud, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [cloudStateReady, storageKey, categoryStorageKey]);
 
   const getStatus = (item) => {
     const stock = Number(item.stock || 0);
@@ -4254,21 +4844,17 @@ function Inventory({ notify, canManageAll, storeId }) {
   });
 
   const formatQuantity = (value) => Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
-  const generateSku = (name, excludedId = "") => {
-    const itemCode = String(name || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean).map((word) => word.slice(0, 4)).join("-") || "ITEM";
-    const prefix = `INV-${itemCode}`;
-    const existingSkus = new Set(items.filter((item) => item.id !== excludedId).map((item) => String(item.sku || "").toUpperCase()));
+  const generateSku = (excludedId = "") => {
+    const existingNumbers = new Set(items
+      .filter((item) => item.id !== excludedId && /^\d+$/.test(String(item.sku || "").trim()))
+      .map((item) => Number(item.sku)));
     let serial = 1;
-    let sku = `${prefix}-${String(serial).padStart(3, "0")}`;
-    while (existingSkus.has(sku)) {
-      serial += 1;
-      sku = `${prefix}-${String(serial).padStart(3, "0")}`;
-    }
-    return sku;
+    while (existingNumbers.has(serial)) serial += 1;
+    return String(serial).padStart(3, "0");
   };
   const openCreate = () => {
     setEditingId(null);
-    setDraft(blankDraft);
+    setDraft({ ...blankDraft, sku: generateSku() });
     setSkuIsManual(false);
     setCategoryCreatorOpen(false);
     setCategoryDraft("");
@@ -4291,10 +4877,11 @@ function Inventory({ notify, canManageAll, storeId }) {
     setCategoryDraft("");
   };
   const updateDraft = (field, value) => {
-    if (field === "sku") setSkuIsManual(Boolean(value.trim()));
+    const nextValue = field === "sku" && !editingId ? value.replace(/\D/g, "") : value;
+    if (field === "sku") setSkuIsManual(Boolean(nextValue.trim()));
     setDraft((current) => {
-      if (field === "name" && !editingId && !skuIsManual) return { ...current, name: value, sku: value.trim() ? generateSku(value) : "" };
-      return { ...current, [field]: value };
+      if (field === "name" && !editingId && !skuIsManual) return { ...current, name: value, sku: value.trim() ? generateSku() : "" };
+      return { ...current, [field]: nextValue };
     });
   };
   const createCategory = () => {
@@ -4325,8 +4912,16 @@ function Inventory({ notify, canManageAll, storeId }) {
       notify("Stock, reorder level, and unit cost must be valid values");
       return;
     }
-    const resolvedSku = (draft.sku.trim() || generateSku(draft.name, editingId)).toUpperCase();
-    const duplicateSku = items.some((item) => item.id !== editingId && String(item.sku || "").toUpperCase() === resolvedSku);
+    const resolvedSku = (draft.sku.trim() || generateSku(editingId)).toUpperCase();
+    if (!editingId && !/^\d+$/.test(resolvedSku)) {
+      notify("SKU number must contain digits only");
+      return;
+    }
+    const duplicateSku = items.some((item) => {
+      if (item.id === editingId) return false;
+      const existingSku = String(item.sku || "").toUpperCase();
+      return existingSku === resolvedSku || (/^\d+$/.test(existingSku) && /^\d+$/.test(resolvedSku) && Number(existingSku) === Number(resolvedSku));
+    });
     if (duplicateSku) {
       notify("This SKU code is already in use");
       return;
@@ -4396,7 +4991,7 @@ function Inventory({ notify, canManageAll, storeId }) {
             </div>
             <div className="inventory-form-grid">
               <label><span>Item name</span><input value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} placeholder="e.g. Basmati Rice" autoFocus /></label>
-              <label><span>SKU / item code</span><input value={draft.sku} onChange={(event) => updateDraft("sku", event.target.value)} placeholder="Generated from item name" /></label>
+               <label><span>SKU number</span><input value={draft.sku} onChange={(event) => updateDraft("sku", event.target.value)} inputMode="numeric" pattern="[0-9]*" maxLength="6" placeholder="Auto-generated number" /></label>
               <div className="inventory-category-field"><div className="inventory-category-head"><span>Category</span><button className="inventory-add-category" type="button" onClick={() => setCategoryCreatorOpen((open) => !open)} aria-expanded={categoryCreatorOpen}><Plus size={14} /> New category</button></div><select value={draft.category} onChange={(event) => updateDraft("category", event.target.value)}>{categories.map((categoryName) => <option key={categoryName}>{categoryName}</option>)}</select>{categoryCreatorOpen && <div className="inventory-inline-category"><input value={categoryDraft} onChange={(event) => setCategoryDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); createCategory(); } }} placeholder="New category name" autoFocus /><button type="button" onClick={createCategory}><Save size={15} /> Add</button><button type="button" className="cancel" onClick={() => { setCategoryCreatorOpen(false); setCategoryDraft(""); }} title="Cancel category" aria-label="Cancel category"><X size={15} /></button></div>}</div>
               <label><span>Unit</span><select value={draft.unit} onChange={(event) => updateDraft("unit", event.target.value)}><option>kg</option><option>g</option><option>ltr</option><option>ml</option><option>pcs</option><option>cyl</option><option>box</option><option>pack</option></select></label>
               <label><span>Current stock</span><input type="number" min="0" step="0.01" value={draft.stock} onChange={(event) => updateDraft("stock", event.target.value)} placeholder="0" /></label>
@@ -4441,7 +5036,7 @@ function Inventory({ notify, canManageAll, storeId }) {
   );
 }
 
-function Production({ notify, storeId, canManageAll, activeView = "Recipes", activeReport = "Daily Production", onViewChange }) {
+function Production({ notify, storeId, canManageAll, activeView = "Recipes", activeReport = "Daily Production", onViewChange, foodStock = [], onFoodStockChange, cloudStateReady = false }) {
   const today = localDateKey();
   const recipeKey = `vestora-recipes-${storeId}`;
   const inventoryKey = `vestora-inventory-${storeId}`;
@@ -4452,7 +5047,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
   const finishedGoodsKey = `vestora-finished-goods-${storeId}`;
   const savedRecipes = stripUntouchedDefaultRecords(loadStoredArray(recipeKey), defaultRecipes, ["changedAt", "changedBy"]);
   const savedRecipeCategories = loadStoredArray(categoryKey);
-  const productionTabs = ["Recipes", "Planning", "Batches", "Wastage", "Reports"];
+  const productionTabs = ["Recipes", "Planning", "Batches", "Food Stock", "Wastage", "Reports"];
   const [activeTab, setActiveTab] = useState(productionTabs.includes(activeView) ? activeView : "Recipes");
   const [recipes, setRecipes] = useState(() => savedRecipes);
   const [recipeCategories, setRecipeCategories] = useState(() => Array.from(new Set([...productionCategories, ...savedRecipeCategories, ...(savedRecipes.length ? savedRecipes : defaultRecipes).map((recipe) => recipe.category).filter(Boolean)])));
@@ -4499,6 +5094,12 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
     person: "",
     approval: "Pending",
     date: today,
+  });
+  const [foodStockDraft, setFoodStockDraft] = useState({
+    item: selectedRecipe?.name || "Chicken Biryani",
+    qty: "",
+    unit: selectedRecipe?.outputUnit || "plate",
+    threshold: 5,
   });
   const wastageStockItem = inventory.find((item) => item.name === wastageDraft.item);
   const wastageUnits = wastageStockItem ? productionUnits.filter((unit) => unitsAreCompatible(unit, wastageStockItem.unit)) : productionUnits;
@@ -4575,13 +5176,34 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
   };
   const selectedProductionReport = reports[activeReport] ? activeReport : productionReportNames[0];
 
-  useEffect(() => localStorage.setItem(recipeKey, JSON.stringify(recipes)), [recipes, recipeKey]);
-  useEffect(() => localStorage.setItem(categoryKey, JSON.stringify(recipeCategories)), [recipeCategories, categoryKey]);
-  useEffect(() => localStorage.setItem(inventoryKey, JSON.stringify(inventory)), [inventory, inventoryKey]);
-  useEffect(() => localStorage.setItem(batchKey, JSON.stringify(batches)), [batches, batchKey]);
-  useEffect(() => localStorage.setItem(wastageKey, JSON.stringify(wastageEntries)), [wastageEntries, wastageKey]);
-  useEffect(() => localStorage.setItem(transactionKey, JSON.stringify(transactions)), [transactions, transactionKey]);
-  useEffect(() => localStorage.setItem(finishedGoodsKey, JSON.stringify(finishedGoods)), [finishedGoods, finishedGoodsKey]);
+  useEffect(() => {
+    localStorage.setItem(recipeKey, JSON.stringify(recipes));
+    if (cloudStateReady) syncLocalStateKeyToSupabase(recipeKey).catch(() => {});
+  }, [recipes, recipeKey]);
+  useEffect(() => {
+    localStorage.setItem(categoryKey, JSON.stringify(recipeCategories));
+    if (cloudStateReady) syncLocalStateKeyToSupabase(categoryKey).catch(() => {});
+  }, [recipeCategories, categoryKey]);
+  useEffect(() => {
+    localStorage.setItem(inventoryKey, JSON.stringify(inventory));
+    if (cloudStateReady) syncLocalStateKeyToSupabase(inventoryKey).catch(() => {});
+  }, [inventory, inventoryKey]);
+  useEffect(() => {
+    localStorage.setItem(batchKey, JSON.stringify(batches));
+    if (cloudStateReady) syncLocalStateKeyToSupabase(batchKey).catch(() => {});
+  }, [batches, batchKey]);
+  useEffect(() => {
+    localStorage.setItem(wastageKey, JSON.stringify(wastageEntries));
+    if (cloudStateReady) syncLocalStateKeyToSupabase(wastageKey).catch(() => {});
+  }, [wastageEntries, wastageKey]);
+  useEffect(() => {
+    localStorage.setItem(transactionKey, JSON.stringify(transactions));
+    if (cloudStateReady) syncLocalStateKeyToSupabase(transactionKey).catch(() => {});
+  }, [transactions, transactionKey]);
+  useEffect(() => {
+    localStorage.setItem(finishedGoodsKey, JSON.stringify(finishedGoods));
+    if (cloudStateReady) syncLocalStateKeyToSupabase(finishedGoodsKey).catch(() => {});
+  }, [finishedGoods, finishedGoodsKey]);
 
   useEffect(() => {
     if (productionTabs.includes(activeView) && activeView !== activeTab) setActiveTab(activeView);
@@ -4721,6 +5343,51 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
     notify("Recipe deleted");
   }
 
+  function addFoodStock(event) {
+    event?.preventDefault();
+    if (!canManageAll) {
+      notify("Production Manager permission required");
+      return;
+    }
+    const item = String(foodStockDraft.item || "").trim();
+    const quantity = Number(foodStockDraft.qty);
+    const threshold = Number(foodStockDraft.threshold);
+    if (!item) {
+      notify("Enter the completed food item");
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      notify("Completed quantity must be greater than zero");
+      return;
+    }
+    if (!Number.isFinite(threshold) || threshold < 0) {
+      notify("Enter a valid low-stock alert level");
+      return;
+    }
+    const unit = foodStockDraft.unit || recipes.find((recipe) => normalizeFoodItemName(recipe.name) === normalizeFoodItemName(item))?.outputUnit || "plate";
+    const existing = foodStockRecordFor(foodStock, item);
+    const now = new Date().toISOString();
+    onFoodStockChange?.((current) => {
+      const matching = foodStockRecordFor(current, item);
+      if (matching) {
+        return current.map((record) => record.id === matching.id ? {
+          ...record,
+          item: record.item || item,
+          unit: record.unit || unit,
+          produced: Number(record.produced || 0) + quantity,
+          available: Number(record.available || 0) + quantity,
+          threshold,
+          updatedAt: now,
+        } : record);
+      }
+      return [{ id: `FOOD-${Date.now()}`, item, unit, produced: quantity, sold: 0, available: quantity, threshold, updatedAt: now }, ...current];
+    });
+    setFinishedGoods((current) => [{ id: `FG-MANUAL-${Date.now()}`, item, qty: quantity, unit, batchNo: "Manual food stock", cost: 0, date: today }, ...current]);
+    setTransactions((current) => [{ id: `TRN-FOOD-${Date.now()}`, type: "Receipt", batchNo: "Manual food stock", item, qty: `${quantity} ${unit}`, cost: 0, date: today }, ...current]);
+    setFoodStockDraft((current) => ({ ...current, qty: "" }));
+    notify(`${quantity} ${unit} of ${item} added to food stock${existing ? "" : " · POS tracking enabled"}`);
+  }
+
   function startProduction() {
     if (!canManageAll) {
       notify("Production Manager permission required");
@@ -4800,6 +5467,19 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
     setInventory(nextInventory);
     setBatches((current) => current.map((item) => item.id === batch.id ? finishedBatch : item));
     setFinishedGoods((current) => [{ id: `FG-${Date.now()}`, item: batch.recipeName, qty: batch.qty, unit: recipe?.outputUnit || "plate", batchNo: batch.batchNo, cost: finishedBatch.cost, date: today }, ...current]);
+    onFoodStockChange?.((current) => {
+      const matching = foodStockRecordFor(current, batch.recipeName);
+      const quantity = Number(batch.qty || 0);
+      if (matching) {
+        return current.map((record) => record.id === matching.id ? {
+          ...record,
+          produced: Number(record.produced || 0) + quantity,
+          available: Number(record.available || 0) + quantity,
+          updatedAt: new Date().toISOString(),
+        } : record);
+      }
+      return [{ id: `FOOD-${Date.now()}`, item: batch.recipeName, unit: recipe?.outputUnit || "plate", produced: quantity, sold: 0, available: quantity, threshold: 5, updatedAt: new Date().toISOString() }, ...current];
+    });
     setTransactions((current) => [
       { id: `TRN-FG-${Date.now()}`, type: "Receipt", batchNo: batch.batchNo, item: batch.recipeName, qty: `${batch.qty} ${recipe?.outputUnit || "plate"}`, cost: finishedBatch.cost, date: today },
       ...(shouldIssueMaterials ? requirements.map((row, index) => ({ id: `TRN-${Date.now()}-${index}`, type: "Issue", batchNo: batch.batchNo, recipeName: batch.recipeName, item: row.name, qty: formatProductionQty(row.requiredBase, row.unit), qtyBase: row.requiredBase, unit: row.unit, cost: row.cost, date: today })) : []),
@@ -5052,6 +5732,30 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
                 <button disabled={!canManageAll || !selectedBatch || selectedBatch.status === "Completed"} onClick={() => finishProduction(selectedBatch)}>Finish production</button>
                 <button disabled={!canManageAll || !selectedBatch || selectedBatch.status === "Completed"} onClick={() => cancelBatch(selectedBatch)}>Cancel</button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "Food Stock" && (
+          <div className="food-stock-layout">
+            <form className="production-form food-stock-form" onSubmit={addFoodStock}>
+              <div className="food-stock-form-heading"><div><span>COMPLETED FOOD</span><h3>Add finished food to POS stock</h3></div><p>Every paid POS order reduces the remaining quantity automatically.</p></div>
+              <label>Food item<input list="food-stock-item-options" value={foodStockDraft.item} onChange={(event) => { const recipe = recipes.find((entry) => normalizeFoodItemName(entry.name) === normalizeFoodItemName(event.target.value)); setFoodStockDraft((current) => ({ ...current, item: event.target.value, unit: recipe?.outputUnit || current.unit })); }} placeholder="Chicken Biryani" /><datalist id="food-stock-item-options">{Array.from(new Set([...recipes.map((recipe) => recipe.name), ...foodStock.map((record) => record.item)].filter(Boolean))).map((item) => <option key={item} value={item} />)}</datalist></label>
+              <label>Completed quantity<input type="number" min="0.01" step="0.01" value={foodStockDraft.qty} onChange={(event) => setFoodStockDraft((current) => ({ ...current, qty: event.target.value }))} placeholder="10" /></label>
+              <label>Unit<select value={foodStockDraft.unit} onChange={(event) => setFoodStockDraft((current) => ({ ...current, unit: event.target.value }))}>{productionOutputUnits.map((unit) => <option key={unit}>{unit}</option>)}</select></label>
+              <label>Alert when remaining at or below<input type="number" min="0" step="1" value={foodStockDraft.threshold} onChange={(event) => setFoodStockDraft((current) => ({ ...current, threshold: event.target.value }))} /></label>
+              <div className="production-actions"><button type="submit" disabled={!canManageAll}><Plus size={15} /> Add completed production</button></div>
+            </form>
+            <div className="production-table food-stock-table">
+              <div className="production-report-head"><div><h3>Food stock available to POS</h3><span className="food-stock-table-note">Use the same item name as the menu item to enable deduction.</span></div><strong>{foodStock.length} tracked item{foodStock.length === 1 ? "" : "s"}</strong></div>
+              <table>
+                <thead><tr><th>Food item</th><th>Produced</th><th>POS ordered</th><th>Remaining</th><th>Alert level</th><th>Status</th></tr></thead>
+                <tbody>{foodStock.length ? foodStock.map((record) => {
+                  const available = Number(record.available || 0);
+                  const low = available <= foodStockThreshold(record);
+                  return <tr key={record.id}><td><strong>{record.item}</strong></td><td>{record.produced || 0} {record.unit || "portion"}</td><td>{record.sold || 0} {record.unit || "portion"}</td><td className={low ? "food-stock-remaining low" : "food-stock-remaining"}>{available} {record.unit || "portion"}</td><td>{foodStockThreshold(record)}</td><td><span className={available <= 0 ? "danger-chip" : low ? "food-stock-low-chip" : "active-chip"}>{available <= 0 ? "Out of stock" : low ? "Low stock" : "Healthy"}</span></td></tr>;
+                }) : <tr><td colSpan="6">No completed food has been added yet. Finish a batch or add completed production above.</td></tr>}</tbody>
+              </table>
             </div>
           </div>
         )}
@@ -5388,6 +6092,7 @@ function MenuManagement({ notify, canManageAll, storeId, productItems, setProduc
 
   useEffect(() => {
     localStorage.setItem(`vestora-menu-setup-${storeId}`, JSON.stringify(records));
+    syncLocalStateKeyToSupabase(`vestora-menu-setup-${storeId}`).catch(() => {});
   }, [records, storeId]);
 
   function openSection(name) {
@@ -5727,6 +6432,7 @@ function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId
     setExpenses((current) => {
       const next = typeof nextValue === "function" ? nextValue(current) : nextValue;
       localStorage.setItem(expenseStorageKey, JSON.stringify(next));
+      syncLocalStateKeyToSupabase(expenseStorageKey).catch(() => {});
       return next;
     });
   }
@@ -6047,7 +6753,10 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
   const journalAmountTotal = (record) => normalizeFinanceJournalLines(record).reduce((sum, line) => sum + Number(line.debit || 0), 0);
   const saveRecords = (nextValue) => setRecords((current) => {
     const next = typeof nextValue === "function" ? nextValue(current) : nextValue;
-    if (storageKey) localStorage.setItem(storageKey, JSON.stringify(next));
+    if (storageKey) {
+      localStorage.setItem(storageKey, JSON.stringify(next));
+      syncLocalStateKeyToSupabase(storageKey).catch(() => {});
+    }
     if (reportBucket) setReportRecords((reportCurrent) => ({ ...reportCurrent, [reportBucket]: next }));
     return next;
   });
@@ -6076,6 +6785,7 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     const savedLedgers = loadStoredArray(ledgerStorageKey);
     const nextSaved = [record, ...savedLedgers];
     localStorage.setItem(ledgerStorageKey, JSON.stringify(nextSaved));
+    syncLocalStateKeyToSupabase(ledgerStorageKey).catch(() => {});
     const nextMasters = loadFinanceLedgers(storeId);
     setLedgerMasters(nextMasters);
     setLedgerMasterDraft({ code: nextFinanceLedgerCode(record.type, nextMasters), name: "", type: record.type, group: record.group, status: "Active" });
@@ -6135,6 +6845,7 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     const journalKey = `vestora-finance-journals-${storeId}`;
     const nextJournals = [record, ...loadStoredArray(journalKey)];
     localStorage.setItem(journalKey, JSON.stringify(nextJournals));
+    syncLocalStateKeyToSupabase(journalKey).catch(() => {});
     setReportRecords((current) => ({ ...current, journals: nextJournals }));
     setLedgerDraft(blankFinanceJournalDraft());
     setLedgerFormOpen(false);
@@ -6395,6 +7106,396 @@ function BillTemplateEditor({ billTemplate, setBillTemplate, notify }) {
         </div>
       </div>
     </div>
+  );
+}
+
+const localOfferCatalog = [
+  { id: "OFF-001", name: "Happy Hour", type: "Time based", discount: "20% off beverages", window: "4:00 PM - 7:00 PM", days: "Monday - Friday", status: "Active" },
+  { id: "OFF-002", name: "Weekend Feast", type: "Percentage", discount: "15% off mains", window: "All day", days: "Saturday - Sunday", status: "Scheduled" },
+  { id: "OFF-003", name: "Buy 1 Get 1 Chaas", type: "BOGO", discount: "Buy 1, get 1 free", window: "12:00 PM - 3:00 PM", days: "Every day", status: "Active" },
+  { id: "OFF-004", name: "Family Combo", type: "Combo", discount: "Save ₹120 on a combo", window: "All day", days: "Every day", status: "Draft" },
+  { id: "OFF-005", name: "Welcome Coupon", type: "Coupon", discount: "₹100 off on first order", window: "All day", days: "New customers", status: "Active" },
+];
+
+const offerTypeForView = {
+  "Happy hour offer": "Time based",
+  "BOGO offers": "BOGO",
+  "Combo discounts": "Combo",
+  "Weekend offers": "Percentage",
+  Coupons: "Coupon",
+};
+
+const offerWeekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+function offerIconForType(type) {
+  if (type === "Time based") return Clock;
+  if (type === "BOGO") return Sparkles;
+  if (type === "Combo") return BadgeIndianRupee;
+  if (type === "Coupon") return ReceiptText;
+  return Percent;
+}
+
+function formatOfferDiscount(type, value) {
+  const amount = Number(value || 0);
+  if (type === "BOGO") return "Buy 1, get 1 free";
+  if (type === "Combo") return `Save ₹${amount || 0} on a combo`;
+  if (type === "Coupon") return `₹${amount || 0} off with coupon`;
+  return `${amount || 0}% off`;
+}
+
+function formatOfferTime(timeValue) {
+  const [hoursText, minutesText] = String(timeValue || "").split(":");
+  const hours = Number(hoursText);
+  const minutes = Number(minutesText);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return "All day";
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const displayHour = hours % 12 || 12;
+  return `${displayHour}:${String(minutes).padStart(2, "0")} ${suffix}`;
+}
+
+function formatOfferDays(days) {
+  if (days.length === offerWeekdays.length) return "Every day";
+  if (!days.length) return "No days selected";
+  return days.map((day) => day.slice(0, 3)).join(", ");
+}
+
+function parseOfferDays(days) {
+  const value = String(days || "").toLowerCase();
+  if (!value || value.includes("every day")) return offerWeekdays;
+  if (value.includes("monday") && value.includes("friday") && value.includes("-")) return offerWeekdays.slice(0, 5);
+  if (value.includes("saturday") && value.includes("sunday") && value.includes("-")) return offerWeekdays.slice(5);
+  const selectedDays = offerWeekdays.filter((day) => value.includes(day.slice(0, 3).toLowerCase()));
+  return selectedDays.length ? selectedDays : offerWeekdays;
+}
+
+function inputTimeFromOfferWindow(window, fallback) {
+  const match = String(window || "").match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!match) return fallback;
+  let hours = Number(match[1]);
+  if (match[3].toUpperCase() === "PM" && hours !== 12) hours += 12;
+  if (match[3].toUpperCase() === "AM" && hours === 12) hours = 0;
+  return `${String(hours).padStart(2, "0")}:${match[2]}`;
+}
+
+function offerDiscountValue(offer) {
+  const match = String(offer?.discount || "").match(/\d+(?:\.\d+)?/);
+  return match?.[0] || "0";
+}
+
+function offerTimeInMinutes(value) {
+  const match = String(value || "").match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!match) return null;
+  let hours = Number(match[1]);
+  if (match[3].toUpperCase() === "PM" && hours !== 12) hours += 12;
+  if (match[3].toUpperCase() === "AM" && hours === 12) hours = 0;
+  return hours * 60 + Number(match[2]);
+}
+
+function offerMatchesToday(offer) {
+  const schedule = String(offer.days || "Every day").toLowerCase();
+  if (schedule.includes("every day") || schedule.includes("new customer")) return true;
+  const day = new Date().toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
+  if (schedule.includes("-")) {
+    const [startDay, endDay] = schedule.split("-").map((entry) => entry.trim().slice(0, 3));
+    const startIndex = offerWeekdays.findIndex((entry) => entry.toLowerCase().startsWith(startDay));
+    const endIndex = offerWeekdays.findIndex((entry) => entry.toLowerCase().startsWith(endDay));
+    const dayIndex = offerWeekdays.findIndex((entry) => entry.toLowerCase() === day);
+    if (startIndex >= 0 && endIndex >= 0 && dayIndex >= 0) return startIndex <= endIndex ? dayIndex >= startIndex && dayIndex <= endIndex : dayIndex >= startIndex || dayIndex <= endIndex;
+  }
+  return schedule.includes(day.slice(0, 3));
+}
+
+function offerMatchesTime(offer) {
+  if (String(offer.window || "").toLowerCase().includes("all day")) return true;
+  const [startText, endText] = String(offer.window || "").split("-");
+  const start = offerTimeInMinutes(startText);
+  const end = offerTimeInMinutes(endText);
+  if (start === null || end === null) return true;
+  const now = new Date();
+  const current = now.getHours() * 60 + now.getMinutes();
+  return start <= end ? current >= start && current <= end : current >= start || current <= end;
+}
+
+function calculatePosOffer(offer, cart, couponEntry = "") {
+  if (offer.status !== "Active") return { amount: 0, error: "This offer is not active" };
+  if (!offerMatchesToday(offer)) return { amount: 0, error: "This offer is not scheduled for today" };
+  if (!offerMatchesTime(offer)) return { amount: 0, error: "This offer is outside its active time" };
+  const subtotal = cart.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.qty || 0), 0);
+  const offerValue = Number(offerDiscountValue(offer));
+
+  if (offer.type === "BOGO") {
+    const bought = cart.find((item) => String(item.id) === String(offer.buyProductId));
+    const free = cart.find((item) => String(item.id) === String(offer.freeProductId));
+    const pairCount = Math.min(Number(bought?.qty || 0), Number(free?.qty || 0));
+    if (!pairCount) return { amount: 0, error: "Add both selected BOGO products to the bill" };
+    return { amount: Math.min(subtotal, Math.round(pairCount * Number(free.price || 0))) };
+  }
+
+  if (offer.type === "Combo") {
+    const productIds = offer.comboProductIds || [];
+    if (productIds.length < 2 || !productIds.every((id) => cart.some((item) => String(item.id) === String(id) && Number(item.qty || 0) > 0))) return { amount: 0, error: "Add every product from this combo to the bill" };
+    return { amount: Math.min(subtotal, Math.round(offerValue)) };
+  }
+
+  if (offer.type === "Coupon") {
+    if (!offer.couponCode || String(couponEntry || "").trim().toUpperCase() !== String(offer.couponCode).trim().toUpperCase()) return { amount: 0, error: "Enter the correct coupon code" };
+    if (subtotal < Number(offer.minimumOrder || 0)) return { amount: 0, error: `Minimum order is ${formatMoney(offer.minimumOrder)}` };
+    return { amount: Math.min(subtotal, Math.round(offerValue)) };
+  }
+
+  const eligibleCart = offer.type === "Time based" && /beverage/i.test(offer.discount || "") ? cart.filter((item) => String(item.category || "").toLowerCase() === "beverages") : cart;
+  const eligibleTotal = eligibleCart.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.qty || 0), 0);
+  if (!eligibleTotal) return { amount: 0, error: "Add an eligible item to the bill" };
+  return { amount: Math.min(subtotal, Math.round(eligibleTotal * (offerValue / 100))) };
+}
+
+function OffersPromotions({ notify, canManage, storeId, productItems = [], activeView = "Happy hour offer", onViewChange }) {
+  const offersStorageKey = `vestora-offers-${storeId}`;
+  const availableProducts = productItems.filter((item) => item.status !== "Inactive");
+  const [selectedView, setSelectedView] = useState(activeView);
+  const [offers, setOffers] = useState(() => {
+    const savedOffers = loadStoredArray(offersStorageKey);
+    return savedOffers.length ? savedOffers : localOfferCatalog;
+  });
+  const [offerDialogOpen, setOfferDialogOpen] = useState(false);
+  const [editingOfferId, setEditingOfferId] = useState(null);
+  const [offerDraft, setOfferDraft] = useState({ name: "", type: "Time based", discountValue: "20", startTime: "16:00", endTime: "19:00", window: "All day", runDays: offerWeekdays, buyProductId: "", freeProductId: "", comboProductIds: [], couponCode: "", minimumOrder: "0", status: "Active" });
+
+  useEffect(() => {
+    setSelectedView(activeView);
+  }, [activeView]);
+
+  useEffect(() => {
+    localStorage.setItem(offersStorageKey, JSON.stringify(offers));
+    syncLocalStateKeyToSupabase(offersStorageKey).catch(() => {});
+  }, [offers, offersStorageKey]);
+
+  const visibleOffers = offers.filter((offer) => {
+    if (selectedView === "Happy hour offer") return offer.type === "Time based";
+    if (selectedView === "All offers") return true;
+    return offer.type === offerTypeForView[selectedView];
+  });
+  const activeCount = offers.filter((offer) => offer.status === "Active").length;
+  const scheduledCount = offers.filter((offer) => offer.status === "Scheduled").length;
+  const draftCount = offers.filter((offer) => offer.status === "Draft").length;
+
+  function selectView(view) {
+    setSelectedView(view);
+    onViewChange?.(view);
+    notify(`${view} selected`);
+  }
+
+  function toggleOffer(id) {
+    if (!canManage) {
+      notify("Only managers can change offer status");
+      return;
+    }
+    setOffers((current) => current.map((offer) => offer.id === id ? { ...offer, status: offer.status === "Active" ? "Paused" : "Active" } : offer));
+    const offer = offers.find((entry) => entry.id === id);
+    notify(`${offer?.name || "Offer"} status updated`);
+  }
+
+  function openCreateOffer() {
+    if (!canManage) {
+      notify("Only managers can create offers");
+      return;
+    }
+    const type = offerTypeForView[selectedView] || "Time based";
+    setOfferDraft({
+      name: "",
+      type,
+      discountValue: type === "Combo" || type === "Coupon" ? "100" : "20",
+      startTime: "16:00",
+      endTime: "19:00",
+      window: "All day",
+      runDays: offerWeekdays,
+      buyProductId: availableProducts[0]?.id || "",
+      freeProductId: availableProducts[1]?.id || availableProducts[0]?.id || "",
+      comboProductIds: [],
+      couponCode: "",
+      minimumOrder: "0",
+      status: "Active",
+    });
+    setEditingOfferId(null);
+    setOfferDialogOpen(true);
+  }
+
+  function createOffer(event) {
+    event.preventDefault();
+    const name = offerDraft.name.trim();
+    if (!name) {
+      notify("Enter an offer name to continue");
+      return;
+    }
+    const buyProduct = availableProducts.find((item) => item.id === offerDraft.buyProductId);
+    const freeProduct = availableProducts.find((item) => item.id === offerDraft.freeProductId);
+    if (offerDraft.type === "BOGO" && (!buyProduct || !freeProduct)) {
+      notify("Select both BOGO products to continue");
+      return;
+    }
+    if (offerDraft.type === "BOGO" && buyProduct.id === freeProduct.id) {
+      notify("Choose different buy and free products for BOGO");
+      return;
+    }
+    const comboProducts = availableProducts.filter((item) => offerDraft.comboProductIds.includes(item.id));
+    if (offerDraft.type === "Combo" && comboProducts.length < 2) {
+      notify("Select at least two products for a combo offer");
+      return;
+    }
+    const couponCode = offerDraft.couponCode.trim().toUpperCase();
+    if (offerDraft.type === "Coupon" && !couponCode) {
+      notify("Enter a coupon code to continue");
+      return;
+    }
+    const existingOffer = offers.find((offer) => offer.id === editingOfferId);
+    const offer = {
+      ...(existingOffer || {}),
+      id: editingOfferId || `OFF-${Date.now()}`,
+      name,
+      type: offerDraft.type,
+      discount: offerDraft.type === "BOGO" ? `Buy ${buyProduct.name}, get ${freeProduct.name} free` : offerDraft.type === "Combo" ? `Save ₹${Number(offerDraft.discountValue || 0)} on ${comboProducts.map((item) => item.name).join(" + ")}` : offerDraft.type === "Coupon" ? `₹${Number(offerDraft.discountValue || 0)} off · ${couponCode}` : formatOfferDiscount(offerDraft.type, offerDraft.discountValue),
+      window: offerDraft.type === "Time based" ? `${formatOfferTime(offerDraft.startTime)} - ${formatOfferTime(offerDraft.endTime)}` : offerDraft.window.trim() || "All day",
+      days: formatOfferDays(offerDraft.runDays),
+      startTime: offerDraft.type === "Time based" ? offerDraft.startTime : undefined,
+      endTime: offerDraft.type === "Time based" ? offerDraft.endTime : undefined,
+      buyProductId: offerDraft.type === "BOGO" ? buyProduct.id : undefined,
+      freeProductId: offerDraft.type === "BOGO" ? freeProduct.id : undefined,
+      comboProductIds: offerDraft.type === "Combo" ? offerDraft.comboProductIds : undefined,
+      couponCode: offerDraft.type === "Coupon" ? couponCode : undefined,
+      minimumOrder: offerDraft.type === "Coupon" ? Number(offerDraft.minimumOrder || 0) : undefined,
+      status: offerDraft.status,
+    };
+    const viewByType = { "Time based": "Happy hour offer", Percentage: "Weekend offers", BOGO: "BOGO offers", Combo: "Combo discounts", Coupon: "Coupons" };
+    const createdOfferView = viewByType[offer.type] || "Happy hour offer";
+    setOffers((current) => editingOfferId ? current.map((entry) => entry.id === editingOfferId ? offer : entry) : [offer, ...current]);
+    setSelectedView(createdOfferView);
+    onViewChange?.(createdOfferView);
+    setOfferDialogOpen(false);
+    setEditingOfferId(null);
+    notify(`${offer.name} ${existingOffer ? "updated" : "created and ready for POS"}`);
+  }
+
+  function toggleOfferDay(day) {
+    setOfferDraft((current) => ({
+      ...current,
+      runDays: current.runDays.includes(day) ? current.runDays.filter((selectedDay) => selectedDay !== day) : [...current.runDays, day],
+    }));
+  }
+
+  function toggleComboProduct(productId) {
+    setOfferDraft((current) => ({
+      ...current,
+      comboProductIds: current.comboProductIds.includes(productId) ? current.comboProductIds.filter((selectedId) => selectedId !== productId) : [...current.comboProductIds, productId],
+    }));
+  }
+
+  function openEditOffer(offer) {
+    if (!canManage) {
+      notify("Only managers can edit offers");
+      return;
+    }
+    setOfferDraft({
+      name: offer.name || "",
+      type: offer.type || "Time based",
+      discountValue: offerDiscountValue(offer),
+      startTime: offer.startTime || inputTimeFromOfferWindow(offer.window, "16:00"),
+      endTime: offer.endTime || inputTimeFromOfferWindow(String(offer.window || "").split("-")[1], "19:00"),
+      window: offer.type === "Time based" ? "All day" : offer.window || "All day",
+      runDays: parseOfferDays(offer.days),
+      buyProductId: offer.buyProductId || availableProducts[0]?.id || "",
+      freeProductId: offer.freeProductId || availableProducts[1]?.id || availableProducts[0]?.id || "",
+      comboProductIds: offer.comboProductIds || [],
+      couponCode: offer.couponCode || "",
+      minimumOrder: String(offer.minimumOrder || 0),
+      status: offer.status || "Draft",
+    });
+    setEditingOfferId(offer.id);
+    setOfferDialogOpen(true);
+  }
+
+  function deleteOffer(offer) {
+    if (!canManage) {
+      notify("Only managers can delete offers");
+      return;
+    }
+    if (!window.confirm(`Delete ${offer.name}? This cannot be undone.`)) return;
+    setOffers((current) => current.filter((entry) => entry.id !== offer.id));
+    notify(`${offer.name} deleted`);
+  }
+
+  return (
+    <section className="screen offers-screen">
+      <div className="panel offers-hero">
+        <div className="offers-hero-copy">
+          <span className="offers-eyebrow"><Sparkles size={14} /> Promotions workspace</span>
+          <h2>Offers your customers will look forward to.</h2>
+          <p>Design time-based discounts, value bundles, and rewards that your team can apply confidently at the counter.</p>
+          <div className="offers-hero-highlights"><span><CircleCheck size={14} /> Ready for POS</span><span><Clock size={14} /> Schedule with confidence</span></div>
+        </div>
+        <div className="offers-hero-actions">
+          <button type="button" className="offers-create-button" onClick={openCreateOffer}><Plus size={17} /> Create offer</button>
+        </div>
+      </div>
+
+      <div className="metric-grid compact offers-stat-grid">
+        <Metric icon={Sparkles} label="Active offers" value={activeCount} trend="Live at POS" />
+        <Metric icon={Clock} label="Happy Hour" value="20% off" trend="4:00 PM - 7:00 PM" />
+        <Metric icon={CalendarClock} label="Scheduled" value={scheduledCount} trend="Ready to start" />
+        <Metric icon={ClipboardList} label="Draft offers" value={draftCount} trend="Needs review" />
+      </div>
+
+      <div className="offers-content-grid offers-list-only">
+        <div className="panel offers-list-panel">
+          <PanelHead title={selectedView} icon={Sparkles} actions={["Create offer"]} onAction={openCreateOffer} />
+          <div className="offers-list-meta"><span>{visibleOffers.length} offer{visibleOffers.length === 1 ? "" : "s"} shown</span><span>Local demo data</span></div>
+          <div className="offers-list">
+            {visibleOffers.map((offer) => {
+              const OfferIcon = offerIconForType(offer.type);
+              return (
+                <div className="offer-card" key={offer.id}>
+                  <div className="offer-card-icon"><OfferIcon size={18} /></div>
+                  <div className="offer-card-main"><div className="offer-card-title"><strong>{offer.name}</strong><span className={`offer-status ${offer.status.toLowerCase()}`}>{offer.status}</span></div><span>{offer.discount}</span><small>{offer.window} · {offer.days}</small></div>
+                  <div className="offer-card-actions">
+                    <button type="button" className="offer-card-action" onClick={() => toggleOffer(offer.id)}>{offer.status === "Active" ? "Pause" : "Activate"}</button>
+                    <button type="button" className="offer-card-action" onClick={() => openEditOffer(offer)} title={`Edit ${offer.name}`}><Pencil size={14} /> Edit</button>
+                    <button type="button" className="offer-card-action danger" onClick={() => deleteOffer(offer)} title={`Delete ${offer.name}`}><Trash2 size={14} /> Delete</button>
+                  </div>
+                </div>
+              );
+            })}
+            {!visibleOffers.length && <div className="offers-empty"><Sparkles size={20} /><strong>No offers in this view yet</strong><span>Choose Create offer when you are ready to add one.</span></div>}
+          </div>
+        </div>
+      </div>
+
+      {offerDialogOpen && <div className="shift-modal-backdrop" role="presentation">
+        <form className="shift-modal offer-create-modal" onSubmit={createOffer} role="dialog" aria-modal="true" aria-label="Create offer">
+          <div className="shift-modal-head">
+            <div><span>Promotion setup</span><h2>{editingOfferId ? "Edit offer" : "Create a new offer"}</h2></div>
+            <button type="button" onClick={() => { setOfferDialogOpen(false); setEditingOfferId(null); }} title="Close"><X size={18} /></button>
+          </div>
+          <p className="modal-help-text">Set the customer-facing details your counter team will use at POS.</p>
+          <div className="offer-form-grid">
+            <label className="wide">Offer name<input value={offerDraft.name} onChange={(event) => setOfferDraft((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Friday Dinner Special" autoFocus /></label>
+            <label>Offer type<select value={offerDraft.type} onChange={(event) => setOfferDraft((current) => ({ ...current, type: event.target.value, discountValue: event.target.value === "Combo" || event.target.value === "Coupon" ? "100" : "20", window: event.target.value === "Time based" ? current.window : "All day" }))}><option>Time based</option><option>Percentage</option><option>BOGO</option><option>Combo</option><option>Coupon</option></select></label>
+            {offerDraft.type === "BOGO" ? <><label>Customer buys<select value={offerDraft.buyProductId} onChange={(event) => setOfferDraft((current) => ({ ...current, buyProductId: event.target.value }))}><option value="">Select a menu item</option>{availableProducts.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Customer gets free<select value={offerDraft.freeProductId} onChange={(event) => setOfferDraft((current) => ({ ...current, freeProductId: event.target.value }))}><option value="">Select a menu item</option>{availableProducts.map((item) => <option key={item.id} value={item.id} disabled={item.id === offerDraft.buyProductId}>{item.name}</option>)}</select></label></> : <label>{offerDraft.type === "Combo" || offerDraft.type === "Coupon" ? "Discount amount (₹)" : "Discount (%)"}<input type="number" min="0" value={offerDraft.discountValue} onChange={(event) => setOfferDraft((current) => ({ ...current, discountValue: event.target.value }))} /></label>}
+            {offerDraft.type === "Combo" && <fieldset className="offer-product-picker wide"><legend>Products included in this combo</legend><p>Select two or more menu items.</p><div>{availableProducts.map((item) => <button type="button" key={item.id} className={offerDraft.comboProductIds.includes(item.id) ? "selected" : ""} onClick={() => toggleComboProduct(item.id)} aria-pressed={offerDraft.comboProductIds.includes(item.id)}><span>{item.name}</span><small>{formatMoney(item.price)}</small></button>)}</div></fieldset>}
+            {offerDraft.type === "Coupon" && <><label>Coupon code<input value={offerDraft.couponCode} onChange={(event) => setOfferDraft((current) => ({ ...current, couponCode: event.target.value.toUpperCase() }))} placeholder="e.g. WELCOME100" maxLength="24" /></label><label>Minimum order (₹)<input type="number" min="0" value={offerDraft.minimumOrder} onChange={(event) => setOfferDraft((current) => ({ ...current, minimumOrder: event.target.value }))} /></label></>}
+            {offerDraft.type === "Time based" ? <><label>Start time<input type="time" value={offerDraft.startTime} onChange={(event) => setOfferDraft((current) => ({ ...current, startTime: event.target.value }))} /></label><label>End time<input type="time" value={offerDraft.endTime} onChange={(event) => setOfferDraft((current) => ({ ...current, endTime: event.target.value }))} /></label></> : <label className="wide">Active window<input value={offerDraft.window} onChange={(event) => setOfferDraft((current) => ({ ...current, window: event.target.value }))} placeholder="e.g. All day" /></label>}
+            <fieldset className="offer-days-field wide">
+              <legend>Runs on</legend>
+              <div className="offer-days-actions"><button type="button" className={offerDraft.runDays.length === offerWeekdays.length ? "selected" : ""} onClick={() => setOfferDraft((current) => ({ ...current, runDays: offerWeekdays }))}>Every day</button><span>{formatOfferDays(offerDraft.runDays)}</span></div>
+              <div className="offer-days-grid">{offerWeekdays.map((day) => <button type="button" key={day} className={offerDraft.runDays.includes(day) ? "selected" : ""} onClick={() => toggleOfferDay(day)} aria-pressed={offerDraft.runDays.includes(day)}>{day.slice(0, 3)}</button>)}</div>
+            </fieldset>
+            <label>Status<select value={offerDraft.status} onChange={(event) => setOfferDraft((current) => ({ ...current, status: event.target.value }))}><option>Active</option><option>Scheduled</option><option>Draft</option></select></label>
+          </div>
+          <div className="shift-actions">
+            <button type="button" onClick={() => { setOfferDialogOpen(false); setEditingOfferId(null); }}>Cancel</button>
+            <button type="submit">{editingOfferId ? <Pencil size={16} /> : <Plus size={16} />}{editingOfferId ? "Save changes" : "Create offer"}</button>
+          </div>
+        </form>
+      </div>}
+    </section>
   );
 }
 
@@ -7172,6 +8273,12 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
   const draft = activeSection === "Theme and language"
     ? { ...(settings[activeSection] || config.defaults), theme: themeConfig.mode, themePreset: themeConfig.preset, primaryColor: themeConfig.primaryColor, accentColor: themeConfig.accentColor, sidebarColor: themeConfig.sidebarColor, backgroundColor: themeConfig.backgroundColor, surfaceColor: themeConfig.surfaceColor, textColor: themeConfig.textColor, mutedColor: themeConfig.mutedColor }
     : settings[activeSection] || config.defaults;
+  const [availablePrinters, setAvailablePrinters] = useState(() => Array.from(new Set([...printerChoices, ...loadStoredArray("vestora-printer-choices")] )));
+  const [newPrinterName, setNewPrinterName] = useState("");
+  const printerOptions = Array.from(new Set([
+    ...availablePrinters,
+    ...(activeSection === "Printer setup" ? [draft.billPrinter, draft.kotPrinter, draft.counterPrinter] : []),
+  ].filter(Boolean)));
 
   useEffect(() => {
     const saved = localStorage.getItem(settingsStorageKey);
@@ -7180,7 +8287,12 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
 
   useEffect(() => {
     localStorage.setItem(settingsStorageKey, JSON.stringify(settings));
+    syncLocalStateKeyToSupabase(settingsStorageKey).catch(() => {});
   }, [settings, settingsStorageKey]);
+
+  useEffect(() => {
+    localStorage.setItem("vestora-printer-choices", JSON.stringify(availablePrinters));
+  }, [availablePrinters]);
 
   function update(field, value) {
     if (!canManage) {
@@ -7216,6 +8328,22 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
       return;
     }
     setSettings((current) => ({ ...current, [activeSection]: { ...(current[activeSection] || config.defaults), [field]: value } }));
+  }
+
+  function addPrinterName() {
+    if (!canManage) {
+      notify("Admin permission required");
+      return;
+    }
+    const printerName = newPrinterName.trim();
+    if (!printerName) {
+      notify("Enter the printer name exactly as shown in Windows");
+      return;
+    }
+    setAvailablePrinters((current) => Array.from(new Set([...current, printerName])));
+    update("kotPrinter", printerName);
+    setNewPrinterName("");
+    notify(`${printerName} added to printer choices`);
   }
 
   function saveSettings() {
@@ -7441,17 +8569,23 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
                   </div>
                 </div>
               ) : (
-                <div className="menu-form-grid">
-                  {config.fields.map(([field, label]) => (
-                    <label key={field}>{label}
-                      {activeSection === "Printer setup" && ["billPrinter", "kotPrinter", "counterPrinter"].includes(field) ? (
-                        <input list="vestora-printer-choices" value={draft[field] || ""} onChange={(event) => update(field, event.target.value)} disabled={!canManage} placeholder="Select or enter printer name" />
+                 <div className="menu-form-grid">
+                   {config.fields.map(([field, label]) => (
+                     <label key={field}>{label}
+                       {activeSection === "Printer setup" && ["billPrinter", "kotPrinter", "counterPrinter"].includes(field) ? (
+                        <select value={draft[field] || ""} onChange={(event) => update(field, event.target.value)} disabled={!canManage}>
+                          <option value="">Select printer</option>
+                          {printerOptions.map((printer) => <option key={printer} value={printer}>{printer}</option>)}
+                        </select>
                       ) : <input value={draft[field] || ""} onChange={(event) => update(field, event.target.value)} disabled={!canManage} />}
                     </label>
                   ))}
                 </div>
               )}
-              {activeSection === "Printer setup" && <datalist id="vestora-printer-choices">{printerChoices.map((printer) => <option key={printer} value={printer} />)}</datalist>}
+              {activeSection === "Printer setup" && <div className="printer-option-manager">
+                <div><strong>Add a newly installed printer</strong><small>Install the Windows driver first, then enter the printer name exactly as it appears in Windows.</small></div>
+                <div className="printer-option-entry"><input value={newPrinterName} onChange={(event) => setNewPrinterName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addPrinterName(); } }} disabled={!canManage} placeholder="Example: BPOS RP-260IV" /><button type="button" onClick={addPrinterName} disabled={!canManage}><Plus size={16} /> Add printer</button></div>
+              </div>}
               {!canManage && <p className="permission-note">Admin permission required to edit settings.</p>}
               <div className="row-actions menu-admin-actions">
                 <button onClick={saveSettings} disabled={!canManage}>Save settings</button>
@@ -7473,7 +8607,7 @@ const attendanceTabs = ["Add Face ID", "Face Check In/Out", "Attendance Report",
 const defaultAttendanceTab = attendanceTabs[0];
 
 const defaultAttendanceSettings = {
-  confidenceThreshold: 56,
+  confidenceThreshold: 80,
   cooldownMinutes: 0,
   shiftStart: "09:30",
   fullDayHours: 8,
@@ -7481,7 +8615,19 @@ const defaultAttendanceSettings = {
   overtimeAfter: 9,
   storeFaceImages: false,
   deviceId: "SHOP-FIXED-CAM-01",
+  faceSafetyVersion: 2,
 };
+
+function attendanceSettingsWithSafetyDefaults(saved = {}) {
+  const savedThreshold = Number(saved.confidenceThreshold || 0);
+  const needsSafetyUpgrade = Number(saved.faceSafetyVersion || 0) < 2;
+  return {
+    ...defaultAttendanceSettings,
+    ...saved,
+    confidenceThreshold: needsSafetyUpgrade ? Math.max(80, savedThreshold) : Math.max(75, savedThreshold || 80),
+    faceSafetyVersion: 2,
+  };
+}
 
 function isAdminCreatedAttendanceUser(user, activeStore) {
   const starterIds = new Set(starterUsers.map((item) => String(item.id)));
@@ -7517,6 +8663,10 @@ function buildAttendanceEmployees(users, activeStore, savedEmployees = []) {
         faceStoreImages: Boolean(saved.faceStoreImages),
       };
     });
+}
+
+function hasVerifiedFaceEnrollment(employee) {
+  return Boolean(employee?.active && employee.faceConsent && employee.faceDescriptor?.length && Number(employee.faceSamples || 0) >= 5);
 }
 
 function formatAttendanceTime(value) {
@@ -7585,13 +8735,11 @@ const faceMatchDistance = {
   strict: 0.42,
   loose: 0.68,
 };
+const minimumFaceDistanceGap = 0.08;
+const requiredFaceVerificationScans = 3;
 
 function maxFaceDistanceForThreshold(confidenceThreshold) {
-  const threshold = Math.max(30, Math.min(95, Number(confidenceThreshold || 56)));
-  if (threshold <= 56) {
-    const relaxedRange = faceMatchDistance.loose - 0.6;
-    return faceMatchDistance.loose - ((threshold - 30) / 26) * relaxedRange;
-  }
+  const threshold = Math.max(75, Math.min(95, Number(confidenceThreshold || 80)));
   const strictRange = 0.6 - faceMatchDistance.strict;
   return 0.6 - ((threshold - 56) / 39) * strictRange;
 }
@@ -7606,7 +8754,7 @@ function faceDistanceToConfidence(distance) {
 }
 
 function bestFaceMatch(descriptor, employees, confidenceThreshold) {
-  const enrolled = employees.filter((employee) => employee.active && employee.faceConsent && employee.faceDescriptor?.length);
+  const enrolled = employees.filter(hasVerifiedFaceEnrollment);
   if (!descriptor?.length || !enrolled.length) return null;
   const matches = enrolled.map((employee) => {
     const distance = euclideanDistance(descriptor, employee.faceDescriptor);
@@ -7614,7 +8762,10 @@ function bestFaceMatch(descriptor, employees, confidenceThreshold) {
     return { employee, distance, confidence };
   }).sort((a, b) => a.distance - b.distance);
   const best = matches[0];
-  return best && best.distance <= maxFaceDistanceForThreshold(confidenceThreshold) ? best : null;
+  const runnerUp = matches[1];
+  if (!best || best.distance > maxFaceDistanceForThreshold(confidenceThreshold)) return null;
+  if (runnerUp && runnerUp.distance - best.distance < minimumFaceDistanceGap) return null;
+  return best;
 }
 
 function downloadCsv(filename, columns, rows) {
@@ -7642,10 +8793,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
   const [logs, setLogs] = useState(() => loadStoredArray(logsKey));
   const [leaveRequests, setLeaveRequests] = useState(() => loadStoredArray(leaveRequestsKey));
   const [leaveForm, setLeaveForm] = useState({ employeeId: "", type: "Casual leave", from: "", to: "", reason: "" });
-  const [settings, setSettings] = useState(() => {
-    const saved = loadStoredObject(settingsKey);
-    return saved ? { ...defaultAttendanceSettings, ...saved } : defaultAttendanceSettings;
-  });
+  const [settings, setSettings] = useState(() => attendanceSettingsWithSafetyDefaults(loadStoredObject(settingsKey)));
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
   const [manualEmployeeId, setManualEmployeeId] = useState("");
   const [employeeFilter, setEmployeeFilter] = useState("");
@@ -7666,12 +8814,13 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
   const streamRef = useRef(null);
   const faceApiRef = useRef(null);
   const scanTimerRef = useRef(null);
+  const candidateMatchRef = useRef({ employeeId: "", count: 0 });
   const employeesRef = useRef(employees);
   const settingsRef = useRef(settings);
   const canManageAttendance = canManage || canManageAll;
   const selectedEmployee = employees.find((employee) => employee.id === selectedEmployeeId) || employees[0];
   const manualEmployee = employees.find((employee) => employee.id === manualEmployeeId);
-  const enrolledCount = employees.filter((employee) => employee.faceConsent && employee.faceDescriptor?.length).length;
+  const enrolledCount = employees.filter(hasVerifiedFaceEnrollment).length;
   const todayKey = new Date().toISOString().slice(0, 10);
   const todayLogs = logs.filter((log) => log.date === todayKey);
   const openLogs = todayLogs.filter((log) => !log.checkOut).length;
@@ -7684,7 +8833,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
     setLeaveRequests(loadStoredArray(leaveRequestsKey));
     setLeaveForm({ employeeId: "", type: "Casual leave", from: "", to: "", reason: "" });
     const savedSettings = loadStoredObject(settingsKey);
-    setSettings(savedSettings ? { ...defaultAttendanceSettings, ...savedSettings } : defaultAttendanceSettings);
+    setSettings(attendanceSettingsWithSafetyDefaults(savedSettings));
     setSelectedEmployeeId("");
     setManualEmployeeId("");
     setSamples([]);
@@ -7693,19 +8842,23 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
   useEffect(() => {
     localStorage.setItem(employeesKey, JSON.stringify(employees));
     employeesRef.current = employees;
+    syncLocalStateKeyToSupabase(employeesKey).catch(() => {});
   }, [employees, employeesKey]);
 
   useEffect(() => {
     localStorage.setItem(logsKey, JSON.stringify(logs));
+    syncLocalStateKeyToSupabase(logsKey).catch(() => {});
   }, [logs, logsKey]);
 
   useEffect(() => {
     localStorage.setItem(leaveRequestsKey, JSON.stringify(leaveRequests));
+    syncLocalStateKeyToSupabase(leaveRequestsKey).catch(() => {});
   }, [leaveRequests, leaveRequestsKey]);
 
   useEffect(() => {
     localStorage.setItem(settingsKey, JSON.stringify(settings));
     settingsRef.current = settings;
+    syncLocalStateKeyToSupabase(settingsKey).catch(() => {});
   }, [settings, settingsKey]);
 
   useEffect(() => {
@@ -7787,6 +8940,8 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
+    candidateMatchRef.current = { employeeId: "", count: 0 };
+    setMatchedFace(null);
     setScanStatus("Camera idle");
   }
 
@@ -7801,6 +8956,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
           .withFaceLandmarks()
           .withFaceDescriptor();
         if (!detection) {
+          candidateMatchRef.current = { employeeId: "", count: 0 };
           setMatchedFace(null);
           setCurrentDescriptor([]);
           setScanStatus("No face detected");
@@ -7809,8 +8965,22 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
         const descriptor = Array.from(detection.descriptor || []);
         const match = bestFaceMatch(descriptor, employeesRef.current, settingsRef.current.confidenceThreshold);
         setCurrentDescriptor(descriptor);
+        if (!match) {
+          candidateMatchRef.current = { employeeId: "", count: 0 };
+          setMatchedFace(null);
+          setScanStatus("Face not verified");
+          return;
+        }
+        const previousCandidate = candidateMatchRef.current;
+        const count = previousCandidate.employeeId === match.employee.id ? previousCandidate.count + 1 : 1;
+        candidateMatchRef.current = { employeeId: match.employee.id, count };
+        if (count < requiredFaceVerificationScans) {
+          setMatchedFace(null);
+          setScanStatus(`Verifying ${match.employee.name} (${count}/${requiredFaceVerificationScans})`);
+          return;
+        }
         setMatchedFace(match);
-        setScanStatus(match ? `${match.employee.name} matched` : "Unknown face");
+        setScanStatus(`${match.employee.name} verified`);
       } catch {
         setScanStatus("Face scan waiting");
       }
@@ -7824,6 +8994,10 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
     }
     if (!selectedEmployee) {
       notify("Select an employee first");
+      return;
+    }
+    if (samples.length >= 5) {
+      notify("All 5 face samples have already been captured");
       return;
     }
     if (!streamRef.current) {
@@ -7844,8 +9018,8 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
       notify("Admin or HR permission required");
       return;
     }
-    if (samples.length < 3) {
-      notify("Capture at least 3 samples");
+    if (samples.length < 5) {
+      notify("Capture all 5 face samples before saving");
       return;
     }
     const descriptor = averageFaceDescriptors(samples);
@@ -8307,7 +9481,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
               <div className="selected-face-id-panel">
                 <div>
                   <span>Enrolled Face ID</span>
-                  <strong>{selectedEmployee.name} / {selectedEmployee.faceSamples || 1} samples</strong>
+                  <strong>{selectedEmployee.name} / {selectedEmployee.faceSamples || 1} samples{hasVerifiedFaceEnrollment(selectedEmployee) ? "" : " (re-enroll with 5 samples)"}</strong>
                 </div>
                 <button className="danger-action" onClick={() => deleteFaceData(selectedEmployee.id)} disabled={!canManageAttendance}>
                   <Trash2 size={17} />
@@ -8338,9 +9512,9 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
             <div className="attendance-employee-list">
               {filteredEmployees.map((employee) => (
                 <div key={employee.id} className="attendance-employee-row">
-                  <span className={employee.faceConsent && employee.faceDescriptor?.length ? "face-dot enrolled" : "face-dot"} />
+                  <span className={hasVerifiedFaceEnrollment(employee) ? "face-dot enrolled" : "face-dot"} />
                   <div><strong>{employee.name}</strong><small>{employee.code} / {employee.designation}</small></div>
-                  <em>{employee.faceConsent && employee.faceDescriptor?.length ? `${employee.faceSamples} samples` : "Not enrolled"}</em>
+                  <em>{hasVerifiedFaceEnrollment(employee) ? `${employee.faceSamples} samples` : employee.faceDescriptor?.length ? "Re-enroll with 5 samples" : "Not enrolled"}</em>
                   {employee.faceConsent && employee.faceDescriptor?.length ? (
                     <button onClick={() => deleteFaceData(employee.id)} disabled={!canManageAttendance}>
                       <Trash2 size={16} />
@@ -8518,7 +9692,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
         <div className="panel attendance-settings-panel">
           <PanelHead title="Attendance settings" icon={SlidersHorizontal} actions={["Save"]} onAction={() => notify("Attendance settings saved")} />
           <div className="menu-form-grid">
-            <label>Confidence threshold<input type="number" min="30" max="95" value={settings.confidenceThreshold} onChange={(event) => updateSetting("confidenceThreshold", Number(event.target.value))} disabled={!canManageAttendance} /></label>
+            <label>Face confidence threshold<input type="number" min="75" max="95" value={settings.confidenceThreshold} onChange={(event) => updateSetting("confidenceThreshold", Number(event.target.value))} disabled={!canManageAttendance} /></label>
             <label>Shift start<input type="time" value={settings.shiftStart} onChange={(event) => updateSetting("shiftStart", event.target.value)} disabled={!canManageAttendance} /></label>
             <label>Full day hours<input type="number" min="1" max="16" value={settings.fullDayHours} onChange={(event) => updateSetting("fullDayHours", Number(event.target.value))} disabled={!canManageAttendance} /></label>
             <label>Half day hours<input type="number" min="1" max="12" value={settings.halfDayHours} onChange={(event) => updateSetting("halfDayHours", Number(event.target.value))} disabled={!canManageAttendance} /></label>
@@ -8527,11 +9701,74 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
           </div>
           <label className="attendance-consent"><input type="checkbox" checked={settings.storeFaceImages} onChange={(event) => updateSetting("storeFaceImages", event.target.checked)} disabled={!canManageAttendance} /> Allow storing raw face images for this store.</label>
           <div className="attendance-setup-note">
-            <strong>Local face-api setup</strong>
-            <span>Place the tiny face detector, landmark, and recognition model files inside frontend/public/models/face-api. The app loads them locally and never sends camera frames to any paid or third-party API.</span>
+            <strong>Strict local face verification</strong>
+            <span>Face recognition requires five enrollment samples, a clear best match, and three consecutive matching scans before check-in or check-out is available. Camera frames stay on this device.</span>
           </div>
         </div>
       )}
+    </section>
+  );
+}
+
+function StoreQrOrderingSettings({ activeStore, notify, canManage, onBack }) {
+  const [qrImage, setQrImage] = useState("");
+  const [orderingUrl, setOrderingUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function generateQr() {
+    if (!activeStore?.id) {
+      notify("Select a store before generating its QR code");
+      return;
+    }
+    setLoading(true);
+    const url = new URL(window.location.href);
+    url.search = "";
+    url.searchParams.set("order", "1");
+    url.searchParams.set("store", activeStore.id);
+    setOrderingUrl(url.toString());
+    try {
+      await Promise.all([
+        syncLocalStateKeyToSupabase(`vestora-menu-items-${activeStore.id}`).catch(() => {}),
+        syncLocalStateKeyToSupabase(`vestora-tables-${activeStore.id}`).catch(() => {}),
+      ]);
+      setQrImage(await QRCode.toDataURL(url.toString(), { width: 360, margin: 2, errorCorrectionLevel: "H", color: { dark: "#092c25", light: "#ffffff" } }));
+      notify(`${activeStore.name}${activeStore.branch ? ` / ${activeStore.branch}` : ""} QR code generated`);
+    } catch {
+      setQrImage("");
+      notify("Unable to generate store QR code");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    generateQr();
+  }, [activeStore?.id]);
+
+  return (
+    <section className="screen settings-detail-screen">
+      <button className="settings-back-button" onClick={onBack}><PanelLeftClose size={17} /> Back to settings</button>
+      <div className="panel settings-detail-panel">
+        <PanelHead title="QR ordering" icon={QrCode} actions={canManage ? ["Generate QR"] : []} onAction={generateQr} />
+        <p className="settings-description">Generate one QR code for this store. Customers scan it without logging in, choose their table, and see only this store's active menu items.</p>
+        <div className="qr-settings-store-scope">
+          <strong>{activeStore?.name || "Store"}{activeStore?.branch ? ` / ${activeStore.branch}` : ""}</strong>
+          <span>Store ID: {activeStore?.id || "Not selected"}</span>
+        </div>
+        <div className="qr-settings-content">
+          <div className="qr-order-preview">
+            {loading ? <div className="qr-loading">Creating QR code...</div> : qrImage && <img src={qrImage} alt={`Customer ordering QR for ${activeStore?.name || "store"}`} />}
+            <strong>{activeStore?.name || "Store"} · Customer ordering</strong>
+          </div>
+          <label className="qr-order-url">Ordering link<input readOnly value={orderingUrl} onFocus={(event) => event.target.select()} /></label>
+        </div>
+        <div className="shift-actions">
+          <button type="button" onClick={generateQr} disabled={!canManage || loading}><QrCode size={16} /> Generate QR</button>
+          <button type="button" onClick={() => orderingUrl && navigator.clipboard?.writeText(orderingUrl).then(() => notify("Ordering link copied"))} disabled={!orderingUrl}>Copy link</button>
+          <a className="qr-download-button" href={qrImage || undefined} download={`${activeStore?.name || "store"}-ordering-qr.png`} aria-disabled={!qrImage}>Download QR</a>
+          <button type="button" onClick={() => window.print()} disabled={!qrImage}>Print</button>
+        </div>
+      </div>
     </section>
   );
 }
@@ -8563,6 +9800,10 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
         </div>
       </section>
     );
+  }
+
+  if (selectedSetting === "QR ordering") {
+    return <StoreQrOrderingSettings activeStore={activeStore} notify={notify} canManage={canManage} onBack={() => setSelectedSetting(null)} />;
   }
 
   if (selectedSetting) {

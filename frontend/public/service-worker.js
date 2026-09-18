@@ -1,4 +1,4 @@
-const CACHE_NAME = "vestora-v204";
+const CACHE_NAME = "vestora-v207";
 const assetUrl = (path) => new URL(path, self.registration.scope).toString();
 const SHELL = [
   "",
@@ -14,7 +14,7 @@ const SHELL = [
 ].map(assetUrl);
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL)));
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (event) => {
@@ -22,6 +22,7 @@ self.addEventListener("activate", (event) => {
     caches
       .keys()
       .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then(() => self.clients.claim())
   );
 });
 
