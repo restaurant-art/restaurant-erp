@@ -15346,6 +15346,14 @@ button.chart-account-row:hover {
 .inventory-sync-status span { flex: 1; min-width: 200px; }
 .cloud-sync-banner { position: fixed; bottom: 12px; right: 12px; z-index: 2000; max-width: min(620px, calc(100vw - 24px)); display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 8px; background: #e9f7ef; color: #14532d; box-shadow: 0 2px 12px #0002; font-size: 12px; }
 .cloud-sync-error { background: #fff0ed; color: #9c261d; }
+.store-loading-panel { width: min(540px, calc(100vw - 32px)); padding: 28px; border: 1px solid #dce3df; border-radius: 14px; background: #fff; color: #192d25; box-shadow: 0 14px 48px #16332712; }
+.store-loading-panel h2 { margin: 0 0 16px; font-size: 22px; font-weight: 650; }
+.store-loading-panel p { margin: 12px 0; line-height: 1.6; overflow-wrap: anywhere; }
+.store-loading-panel [role="alert"] { color: #9c261d; }
+.store-loading-note { font-size: 13px; color: #64756d; }
+.store-loading-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 22px; }
+.store-loading-actions button { padding: 10px 16px; border: 1px solid #ccd8d0; border-radius: 7px; background: #f3f6f4; color: #233c2e; cursor: pointer; }
+.store-loading-actions button:first-child { background: #205b3b; border-color: #205b3b; color: white; }
 .cloud-sync-saving, .cloud-sync-connecting { background: #fff6d9; color: #6a4a00; }
 .cloud-sync-banner button { white-space: nowrap; background: transparent; color: inherit; padding: 6px; border: 1px solid currentColor; border-radius: 5px; }
 @media print { .cloud-sync-banner { display: none; } }

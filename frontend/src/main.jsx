@@ -79,7 +79,7 @@ import {
 import "./styles.css";
 import { businessStorage as localStorage, stopCloudSync } from "./lib/supabase";
 import { useBusinessState, useCloudSyncStatus } from "./lib/use-business-state";
-import { fetchSharedSuperAdminStores, hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseApiList, supabaseApiRequest, supabaseConfigured, supabaseFunctionJson, supabaseProfile, syncInventoryState, syncLocalStateKeyToSupabase, syncLocalStateToSupabase, updateSupabasePassword } from "./lib/supabase";
+import { fetchSharedSuperAdminStores, getSupabaseSession, hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseApiList, supabaseApiRequest, supabaseConfigured, supabaseFunctionJson, supabaseProfile, syncInventoryState, syncLocalStateKeyToSupabase, syncLocalStateToSupabase, updateSupabasePassword } from "./lib/supabase";
 
 const appBaseUrl = import.meta.env.BASE_URL || "/";
 const localAuthEnabled = String(import.meta.env.VITE_LOCAL_AUTH_ENABLED || "").toLowerCase() === "true";
@@ -1188,6 +1188,9 @@ function AuthenticatedApp() {
     return { ...user, role: roleToAuthRole(user.role), appRole: user.appRole || roleLabelForUser(user) };
   });
   const [supabaseStateReady, setSupabaseStateReady] = useState(() => !supabaseConfigured);
+  const [cloudLoadError, setCloudLoadError] = useState("");
+  const [cloudLoadStage, setCloudLoadStage] = useState("Verifying your store sign-in…");
+  const [cloudRetry, setCloudRetry] = useState(0);
   const [active, setActive] = useState("dashboard");
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [returnModule, setReturnModule] = useState("dashboard");
@@ -1472,12 +1475,17 @@ function AuthenticatedApp() {
     let mounted = true;
     let applying = false;
     let loadedUserId = "";
+    let generation = 0;
     const applySession = async (session) => {
       if (!mounted || !session?.user) return;
       if (applying || loadedUserId === session.user.id) return;
       applying = true;
+      const attempt = ++generation;
+      const isCurrent = () => mounted && attempt === generation;
       window.vestoraSupabaseStateReady = false;
       setSupabaseStateReady(false);
+      setCloudLoadError("");
+      setCloudLoadStage("Verifying your store sign-in…");
       const metadata = session.user.user_metadata || {};
       let loginUser = {
         id: session.user.id,
@@ -1488,58 +1496,43 @@ function AuthenticatedApp() {
         storeId: metadata.storeId || "STORE-001",
         status: "Active",
       };
-      let profileLoaded = false;
-      let stateLoaded = false;
+      setCurrentUser(loginUser);
       try {
         const profile = await supabaseProfile();
+        if (!isCurrent()) return;
         loginUser = { ...loginUser, ...profile, storeId: profile.storeId || "GLOBAL" };
-        profileLoaded = true;
-      } catch {
-        // Auth metadata still gives the app enough information to render the
-        // signed-in session, but cloud writes remain disabled without a
-        // verified profile.
-      }
-
-      if (profileLoaded) {
-        try {
-          // The store directory is shared platform data. Every authenticated
-          // VESTORA user needs the same directory on every device; only
-          // Super Admins can change it.
-          const sharedStores = await fetchSharedSuperAdminStores();
-          if (Array.isArray(sharedStores)) {
-            const cleanedStores = removeDummyStores(sharedStores);
-            localStorage.setItem("vestora-stores", JSON.stringify(cleanedStores));
-            setStores(cleanedStores);
-          }
-        } catch {
-          // The authenticated state hydration below remains the fallback if
-          // the direct shared-directory read is temporarily unavailable.
-        }
-        try {
-          const hydrationStoreId = (loginUser.role === "super_admin" || loginUser.isSuperuser)
-            ? (selectedStoreId === "GLOBAL" ? "" : selectedStoreId)
-            : normalizeStoreId(loginUser.storeId || activeStoreId);
-          await hydrateLocalStateFromSupabase(hydrationStoreId);
-          stateLoaded = true;
-        } catch (error) {
-          notify(`Cloud data could not be loaded: ${error.message}. Local records are retained.`, 10000);
-        }
-      }
-
-      if (mounted) {
+        setCloudLoadStage("Loading shared store records and recovering unsent changes…");
+        // This includes the authorized directory; a separate directory read
+        // delayed startup and its failure was previously hidden.
+        await hydrateLocalStateFromSupabase();
+        if (!isCurrent()) return;
         setCurrentUser(loginUser);
         localStorage.setItem("vestora-current-user", JSON.stringify(loginUser));
-        window.vestoraSupabaseStateReady = profileLoaded && stateLoaded;
-        setSupabaseStateReady(profileLoaded && stateLoaded);
+        if (loginUser.role !== "super_admin") {
+          setSelectedStoreId(normalizeStoreId(loginUser.storeId));
+        }
+        setSuperAdminLanding(loginUser.role === "super_admin" && localStorage.getItem("vestora-super-admin-in-store") !== "true");
+        const loginRole = roleLabelForUser(loginUser);
+        const landingModule = loginRole === "Waiter" ? "tables" : loginRole === "Chef" ? "kds" : "dashboard";
+        setActive(landingModule);
+        setReturnModule(landingModule);
+        window.vestoraSupabaseStateReady = true;
+        setSupabaseStateReady(true);
+        loadedUserId = session.user.id;
+      } catch (error) {
+        if (isCurrent()) setCloudLoadError(error.message || "Store data could not be loaded. Please retry.");
+      } finally {
+        if (isCurrent()) applying = false;
       }
-      if (profileLoaded && stateLoaded) loadedUserId = session.user.id;
-      applying = false;
     };
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "PASSWORD_RECOVERY" && mounted) setPasswordDialogOpen(true);
       if (session) window.setTimeout(() => applySession(session), 0);
       else if (mounted) {
+        generation++;
+        applying = false;
         loadedUserId = "";
+        setCloudLoadError("");
         window.vestoraSupabaseStateReady = false;
         stopCloudSync();
         setCurrentUser(null);
@@ -1548,12 +1541,16 @@ function AuthenticatedApp() {
     });
     // Register the listener before loading the session so recovery links do
     // not lose the PASSWORD_RECOVERY event during Supabase initialization.
-    supabase.auth.getSession().then(({ data }) => applySession(data.session));
+    getSupabaseSession().then((session) => applySession(session)).catch((error) => {
+      if (mounted) setCloudLoadError(error.message);
+    });
     return () => {
       mounted = false;
+      generation++;
+      stopCloudSync();
       listener.subscription.unsubscribe();
     };
-  }, []);
+  }, [cloudRetry]);
 
   useEffect(() => {
     if (!supabaseConfigured || !currentUser || !supabaseStateReady) return undefined;
@@ -1992,12 +1989,17 @@ function AuthenticatedApp() {
     notify(`Refund saved for ${refund.billId}`);
   }
 
-  if (!currentUser) {
-    return <LoginScreen onLogin={handleLogin} />;
+  if (supabaseConfigured && !supabaseStateReady && (currentUser || cloudLoadError)) {
+    return <div className="login-screen"><section className="store-loading-panel" aria-live="polite">
+      <h2>{cloudLoadError ? "Store connection needs attention" : "Loading your store data"}</h2>
+      <p role={cloudLoadError ? "alert" : "status"}>{cloudLoadError || cloudLoadStage}</p>
+      <p className="store-loading-note">Your saved records remain on this computer. Do not clear browser data.</p>
+      <div className="store-loading-actions"><button onClick={() => setCloudRetry((value) => value + 1)}>Retry connection</button><button onClick={handleLogout}>Sign out</button></div>
+    </section></div>;
   }
 
-  if (supabaseConfigured && !supabaseStateReady) {
-    return <div className="login-screen"><div className="panel"><h2>Loading your store data</h2><p>{toast || "Connecting to the shared store records…"}</p><button onClick={() => window.location.reload()}>Retry connection</button><button onClick={handleLogout}>Sign out</button></div></div>;
+  if (!currentUser) {
+    return <LoginScreen onLogin={handleLogin} />;
   }
 
   if (currentUser.role === "supplier") {
@@ -2372,20 +2374,8 @@ function LoginScreen({ onLogin }) {
       setError("");
       const { data, error: authError } = await signInWithSupabase(loginId, password);
       if (!authError && data.user) {
-        let profile = {};
-        try { profile = await supabaseProfile(); } catch { /* Auth metadata is sufficient while the profile API is unavailable. */ }
-        const metadata = data.user.user_metadata || {};
-        const isSuperAdmin = (data.user.email || loginId).toLowerCase() === "restaurant@vestanoretail.com";
-        const profileUser = {
-          id: data.user.id,
-          email: data.user.email || loginId,
-          name: metadata.name || data.user.email || loginId,
-          role: profile.role || "cashier",
-          appRole: profile.appRole || "Cashier",
-          storeId: profile.storeId || "GLOBAL",
-          status: profile.status || "Active",
-        };
-        onLogin(profileUser);
+        // The auth listener owns profile verification and hydration. A second
+        // competing profile request here could replace the verified user.
         return;
       }
       setError(authError?.message || "Supabase sign-in failed");

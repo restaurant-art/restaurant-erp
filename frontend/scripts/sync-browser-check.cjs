@@ -13,14 +13,18 @@ const base = process.env.SYNC_TEST_URL || 'http://127.0.0.1:4188';
   const authUser = { id: 'qa-user', aud: 'authenticated', role: 'authenticated', email: 'qa@example.test', app_metadata: {}, user_metadata: {}, created_at: new Date().toISOString() };
   const exp = Math.floor(Date.now() / 1000) + 3600;
   const token = Buffer.from('{}').toString('base64url') + '.' + Buffer.from(JSON.stringify({ sub: 'qa-user', exp })).toString('base64url') + '.test';
-  async function open() {
+  async function open({ failProfile = false, failState = false } = {}) {
     const context = await browser.newContext();
     await context.route('**/*.supabase.co/**', async (route) => {
       const req = route.request(), url = new URL(req.url());
       let data = [], code = 200;
       if (url.pathname.includes('/auth/v1/user')) data = authUser;
-      else if (url.pathname.endsWith('/profile')) data = profile;
+      else if (url.pathname.endsWith('/profile')) {
+        data = failProfile ? { message: 'Invalid JWT' } : profile;
+        if (failProfile) code = 401;
+      }
       else if (url.pathname.endsWith('/state')) {
+        if (failState) { await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Store access could not be verified' }) }); return; }
         if (req.method() === 'PUT') {
           const body = req.postDataJSON();
           if (operations.has(body.mutationId)) data = operations.get(body.mutationId);
@@ -42,6 +46,13 @@ const base = process.env.SYNC_TEST_URL || 'http://127.0.0.1:4188';
     const page = await context.newPage();
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(base);
+    if (failProfile || failState) {
+      await page.getByRole('heading', { name: 'Store connection needs attention' }).waitFor();
+      await page.getByRole('alert').filter({ hasText: failProfile ? 'Invalid JWT [profile: 401]' : 'Store access could not be verified [state: 503]' }).waitFor();
+      assert.equal(await page.locator('nav').count(), 0, 'failed verification must not expose store modules');
+      failProfile = false; failState = false;
+      await page.getByRole('button', { name: 'Retry connection', exact: true }).click();
+    }
     await page.getByText('Store data saved to cloud', { exact: true }).waitFor({ timeout: 15000 });
     if (await page.getByRole('button', { name: 'View branch', exact: true }).count()) await page.getByRole('button', { name: 'View branch', exact: true }).click();
     try { await page.getByRole('button', { name: 'Tables', exact: true }).waitFor({ timeout: 15000 }); }
@@ -49,6 +60,12 @@ const base = process.env.SYNC_TEST_URL || 'http://127.0.0.1:4188';
     return page;
   }
   try {
+    const recoveredProfile = await open({ failProfile: true });
+    await recoveredProfile.context().close();
+    console.log('PASS: profile failure is visible and retry loads the store without reloading or clearing records');
+    const recoveredState = await open({ failState: true });
+    await recoveredState.context().close();
+    console.log('PASS: shared-state failure is visible and retry recovers');
     const a = await open(), b = await open();
     await a.getByRole('button', { name: 'Tables', exact: true }).click();
     await b.getByRole('button', { name: 'Tables', exact: true }).click();

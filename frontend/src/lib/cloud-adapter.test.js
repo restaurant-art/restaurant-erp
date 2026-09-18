@@ -27,7 +27,7 @@ function device(rows, profile = { role: "super_admin", isSuperuser: true }) {
       rows.set(body.key, row); return Response.json(row);
     },
     createSharedSync, isBusinessKey, stateStore, sanitize, isInventoryStateKey,
-    URL, Response, Set, Map, JSON, Promise,
+    URL, Response, Set, Map, JSON, Promise, AbortSignal, setTimeout, clearTimeout,
   };
   vm.runInNewContext(source + "\nglobalThis.adapter = { businessStorage, hydrateLocalStateFromSupabase, supabaseProfile, syncLocalStateToSupabase, getCloudSyncStatus, subscribeBusinessState, stopCloudSync };", context);
   return { ...context.adapter, raw: storage, events, context,
@@ -46,6 +46,40 @@ test("the real adapter saves omitted-effect writes, refreshes an open device and
   assert.ok(notifications > 0);
   assert.equal(a.getCloudSyncStatus().state, "synced");
   assert.ok(b.events.some((event) => event.detail?.key === key));
+});
+
+test("gateway error messages are retained instead of hidden by a generic API error", async () => {
+  const a = device(new Map());
+  a.context.fetch = async () => Response.json({ message: "Invalid JWT" }, { status: 401 });
+  await assert.rejects(a.supabaseProfile(), /Invalid JWT \[profile: 401\]/);
+});
+
+test("a stalled auth lock fails with a retryable message", async () => {
+  const a = device(new Map());
+  a.context.setTimeout = (callback) => setTimeout(callback, 5);
+  vm.runInNewContext("supabase.auth.getSession = () => new Promise(() => {})", a.context);
+  await assert.rejects(a.supabaseProfile(), /Sign-in verification timed out/);
+});
+
+test("network timeout preserves browser records and exposes a clear error", async () => {
+  const a = device(new Map());
+  a.raw.setItem("vestora-inventory-A", '[{"id":"rice","stock":10}]');
+  a.context.fetch = async () => { const error = new Error("timeout"); error.name = "TimeoutError"; throw error; };
+  await assert.rejects(a.supabaseProfile(), /store server did not respond in time/);
+  assert.equal(a.raw.getItem("vestora-inventory-A"), '[{"id":"rice","stock":10}]');
+});
+
+test("failed cache configuration does not leave a half-configured session on retry", async () => {
+  const a = device(new Map(), { role: "cashier", storeId: "A", allowedStoreIds: ["A"] });
+  a.raw.setItem("vestora-stores", "invalid-json");
+  await assert.rejects(a.supabaseProfile(), /saved record.*cannot be read/);
+  assert.equal(a.raw.getItem("vestora-stores"), "invalid-json");
+  // Simulate a support-assisted repair; the application must not destroy it.
+  a.raw.setItem("vestora-stores", '[]');
+  await a.ready();
+  a.businessStorage.setItem("vestora-inventory-A", '[{"id":"rice"}]');
+  await a.syncLocalStateToSupabase();
+  assert.equal(a.getCloudSyncStatus().state, "synced");
 });
 test("startup effects cannot overwrite a cloud record before authenticated hydration", async () => {
   const key = "vestora-recipes-A", rows = new Map([[key, { state_key: key, state_value: [{ id: "real" }], updated_at: "1" }]]);

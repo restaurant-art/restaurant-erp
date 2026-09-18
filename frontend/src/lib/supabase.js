@@ -13,6 +13,23 @@ const supabaseAnonKey = String(
 export const supabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 export const supabase = supabaseConfigured ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
+// Auth locks and network requests must not leave the store-loading gate pending
+// forever. A timed-out write retains its mutation ID for safe acknowledgement.
+async function bounded(operation, message, milliseconds = 20000) {
+  let timer;
+  try {
+    return await Promise.race([operation, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), milliseconds);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+export async function getSupabaseSession() {
+  const result = await bounded(supabase.auth.getSession(), "Sign-in verification timed out. Close other UVPRO tabs and retry; your local records are retained.");
+  if (result.error) throw result.error;
+  return result.data.session;
+}
+
 export async function signInWithSupabase(email, password) {
   if (!supabase) return { data: null, error: new Error("Supabase frontend environment is not configured") };
   return supabase.auth.signInWithPassword({ email, password });
@@ -34,20 +51,27 @@ export async function supabaseAuthHeaders() {
 
 export async function supabaseFunctionFetch(path, options = {}) {
   if (!supabaseConfigured) throw new Error("Supabase frontend environment is not configured");
-  const { data: { session } } = await supabase.auth.getSession();
+  const session = await getSupabaseSession();
+  if (!session?.access_token) throw new Error("Your sign-in session has expired. Sign in again; local records are retained.");
   const headers = {
     ...(await supabaseAuthHeaders()),
     ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
     ...(options.headers || {}),
   };
-  return fetch(`${supabaseUrl}/functions/v1/${String(path).replace(/^\/+/, "")}`, { ...options, headers });
+  try {
+    return await fetch(`${supabaseUrl}/functions/v1/${String(path).replace(/^\/+/, "")}`, { ...options, headers, signal: options.signal || AbortSignal.timeout(20000) });
+  } catch (error) {
+    if (error.name === "TimeoutError" || error.name === "AbortError") throw new Error("The store server did not respond in time. Check your connection and retry. Local records are retained.");
+    throw error;
+  }
 }
 
 export async function supabaseFunctionJson(path, options = {}) {
   const response = await supabaseFunctionFetch(path, options);
-  const body = await response.json().catch(() => null);
+  const body = await bounded(response.json().catch(() => null), "The store server response timed out. Retry; local records are retained.");
   if (!response.ok) {
-    const message = body?.error || `Supabase API request failed (${response.status})`;
+    const detail = body?.error || body?.message || `Store API request failed (${response.status})`;
+    const message = `${detail} [${String(path).split("?")[0].split("/").pop()}: ${response.status}]`;
     const error = new Error(message);
     error.status = response.status;
     throw error;
@@ -69,8 +93,10 @@ export async function supabaseApiRequest(resource, options = {}) {
 }
 
 export async function supabaseProfile() {
+  const before = await getSupabaseSession();
   const profile = await supabaseFunctionJson("vestora-api/profile");
-  const { data: { session } } = await supabase.auth.getSession();
+  const session = await getSupabaseSession();
+  if (!before || session?.user.id !== before.user.id) throw new Error("Sign-in changed. Please retry.");
   if (session) configureCloudSync(profile, session.user.id);
   return profile;
 }
@@ -114,13 +140,14 @@ function configureCloudSync(profile, userId) {
   if (syncContext?.namespace === namespace) return;
   stopCloudSync();
   const context = { namespace, superAdmin: profile.isSuperuser || profile.role === "super_admin", stores: profile.allowedStoreIds || (profile.storeId ? [profile.storeId] : []) };
-  syncContext = context;
   // Browser caches can outlive a login. Keep a recovery copy and expose only
   // the new login's store records to the application.
   if (!context.superAdmin) {
     for (const key of Object.keys(rawStorage).filter((key) => isBusinessKey(key) && !stateStore(key))) {
       const raw = rawStorage.getItem(key);
-      const value = JSON.parse(raw);
+      let value;
+      try { value = JSON.parse(raw); }
+      catch { throw new Error(`A saved record (${key}) cannot be read. It has been retained for recovery; contact support.`); }
       if (!Array.isArray(value)) continue;
       const scoped = value.filter((item) => context.stores.includes(String(key === "vestora-stores" ? item.id : item.storeId || "")));
       if (JSON.stringify(scoped) !== raw) {
@@ -129,6 +156,7 @@ function configureCloudSync(profile, userId) {
       }
     }
   }
+  syncContext = context;
   synchronizer = createSharedSync({
     storage: rawStorage, namespace,
     valid: () => syncContext === context,
@@ -204,16 +232,20 @@ export async function fetchSharedSuperAdminStores() {
   return rows.find((row) => row.state_key === "vestora-stores")?.state_value ?? [];
 }
 export async function hydrateLocalStateFromSupabase() {
-  if (!supabaseConfigured || !synchronizer) return false;
+  if (!supabaseConfigured || !synchronizer) throw new Error("Store sign-in has not been verified. Please retry.");
+  const sync = synchronizer;
   const rows = await supabaseFunctionJson("vestora-api/state");
+  if (sync !== synchronizer) throw new Error("Sign-in changed. Please retry.");
+  if (!Array.isArray(rows)) throw new Error("The store server returned an invalid response. Please retry.");
   const keys = new Set([...Object.keys(rawStorage).filter(allowedKey), ...rows.map((row) => row.state_key).filter(allowedKey)]);
   // Retain browser-only additions. Backups are made before the first merge;
   // an existing checkpoint also preserves unsent edits across reloads.
   const byKey = new Map(rows.map((row) => [row.state_key, row]));
   await Promise.allSettled([...keys].map(async (key) => {
-    try { await synchronizer.sync(key, { row: byKey.get(key) }); failures.delete(key); }
-    catch (error) { failures.set(key, error.message); }
+    try { await sync.sync(key, { row: byKey.get(key) }); if (sync === synchronizer) failures.delete(key); }
+    catch (error) { if (sync === synchronizer) failures.set(key, error.message); }
   }));
+  if (sync !== synchronizer) throw new Error("Sign-in changed. Please retry.");
   report();
   return true;
 }
