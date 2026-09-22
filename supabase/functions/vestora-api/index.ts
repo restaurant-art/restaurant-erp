@@ -127,13 +127,11 @@ Deno.serve(async (request) => {
     if (!profile || (!isPlatformAdmin && !["owner", "restaurant_admin"].includes(profile.user_type))) return json({ error: "Administrator permission required" }, 403);
     const body = await request.json().catch(() => null);
     const storeId = String(body?.storeId || "");
-    if (!directory.some((store) => store.id === storeId) || !canStore(storeId)) return json({ error: "Store access denied" }, 403);
     const email = String(body?.email || "").trim().toLowerCase();
     const name = String(body?.name || "").trim();
     const roleNames: Record<string, string> = { "Restaurant Admin": "restaurant_admin", "Restaurant Owner": "owner", "Cashier": "cashier", "Waiter": "waiter", "Chef": "chef", "Inventory Manager": "inventory_manager", "Accountant": "accountant", "Manager": "manager", "HR Manager": "hr_manager", "Purchase Manager": "purchase_manager", "Supplier": "supplier" };
-    if (!name || !email.includes("@") || body?.role === "Super Admin") return json({ error: "Valid staff name, email and store role required" }, 400);
+    if (!email.includes("@")) return json({ error: "Valid staff email required" }, 400);
     if (email === String(user.email || "").toLowerCase()) return json({ error: "You cannot change or deactivate the account currently signed in. Use Account security to change its password." }, 400);
-    if (!isPlatformAdmin && ["Restaurant Admin", "Restaurant Owner"].includes(body.role)) return json({ error: "Super Admin permission required to manage administrator logins" }, 403);
     const { data: protectedProfile, error: protectedProfileError } = await admin.from("core_user").select("user_type,is_superuser").eq("email", email).maybeSingle();
     if (protectedProfileError) return json({ error: "Unable to verify the protected account" }, 503);
     if (protectedProfile?.is_superuser || protectedProfile?.user_type === "super_admin") return json({ error: "Super Admin accounts cannot be reassigned as staff users." }, 403);
@@ -145,6 +143,20 @@ Deno.serve(async (request) => {
       authUser = data.users.find((entry) => String(entry.email).toLowerCase() === email);
       if (authUser || data.users.length < 100) break;
     }
+    if (body?.action === "delete") {
+      if (!authUser) return json({ deleted: true });
+      if (!isPlatformAdmin) {
+        const assignedStoreId = String(authUser.app_metadata?.vestora?.storeId || "");
+        if (!directory.some((store) => store.id === storeId) || !canStore(storeId) || assignedStoreId !== storeId) return json({ error: "Store access denied" }, 403);
+        if (["owner", "restaurant_admin", "super_admin"].includes(String(authUser.app_metadata?.vestora?.role || ""))) return json({ error: "This login cannot be deleted by this administrator" }, 403);
+      }
+      const { error: deleteError } = await admin.auth.admin.deleteUser(authUser.id);
+      if (deleteError) return json({ error: deleteError.message }, 400);
+      return json({ deleted: true });
+    }
+    if (!name || body?.role === "Super Admin") return json({ error: "Valid staff name and store role required" }, 400);
+    if (!directory.some((store) => store.id === storeId) || !canStore(storeId)) return json({ error: "Store access denied" }, 403);
+    if (!isPlatformAdmin && ["Restaurant Admin", "Restaurant Owner"].includes(body.role)) return json({ error: "Super Admin permission required to manage administrator logins" }, 403);
     if (authUser && !isPlatformAdmin && (!canStore(String(authUser.app_metadata?.vestora?.storeId || "")) || ["owner", "restaurant_admin", "super_admin"].includes(authUser.app_metadata?.vestora?.role))) return json({ error: "This login cannot be reassigned by this administrator" }, 403);
     const password = String(body.password || "");
     if ((!authUser || password) && password.length < 8) return json({ error: "Use a password of at least 8 characters" }, 400);

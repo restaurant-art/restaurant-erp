@@ -8632,9 +8632,9 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       notify("Select a branch for this user");
       return;
     }
-    const duplicateEmail = users.some((user) => user.email.trim().toLowerCase() === draft.email.trim().toLowerCase() && user.id !== editingId);
-    if (duplicateEmail) {
-      notify("This email already has a UVPRO login");
+    const matchingEmailUser = users.find((user) => user.email.trim().toLowerCase() === draft.email.trim().toLowerCase() && user.id !== editingId);
+    if (matchingEmailUser) {
+      notify("This email already has a UVPRO login. Edit that user to change their branch.");
       return;
     }
     const allowedRole = roleChoices.includes(draft.role) ? draft.role : "Cashier";
@@ -8689,10 +8689,10 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       return;
     }
     try {
-      await supabaseApiRequest("staff-account", { method: "POST", body: JSON.stringify({ ...user, password: "", status: "Inactive" }) });
+      await supabaseApiRequest("staff-account", { method: "POST", body: JSON.stringify({ ...user, action: "delete" }) });
     } catch (error) { notify(`User was not removed: ${error.message}`, 10000); return; }
     setUsers((current) => current.filter((user) => user.id !== id));
-    notify("User deleted");
+    notify("User ID and login deleted. Its email can now be used for a new account.");
   }
 
   return (
