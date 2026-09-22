@@ -8633,8 +8633,16 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       return;
     }
     const matchingEmailUser = users.find((user) => user.email.trim().toLowerCase() === draft.email.trim().toLowerCase() && user.id !== editingId);
-    if (matchingEmailUser) {
-      notify("This email already has a UVPRO login. Edit that user to change their branch.");
+    const matchingStoreId = normalizeStoreId(matchingEmailUser?.storeId);
+    const replaceableDeletedLogin = !editingId
+      && canManageAll
+      && matchingEmailUser
+      && (String(matchingEmailUser.status || "Active") === "Inactive"
+        || (matchingStoreId !== "GLOBAL" && !stores.some((store) => store.id === matchingStoreId)))
+      ? matchingEmailUser
+      : null;
+    if (matchingEmailUser && !replaceableDeletedLogin) {
+      notify("This email already has an active UVPRO login. Delete that user first to create a new ID.");
       return;
     }
     const allowedRole = roleChoices.includes(draft.role) ? draft.role : "Cashier";
@@ -8666,8 +8674,11 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       }));
       notify("User updated");
     } else {
-      setUsers((current) => [...current, { ...scopedDraft, id: crypto.randomUUID() }]);
-      notify("New user created");
+      setUsers((current) => [
+        ...current.filter((user) => user.id !== replaceableDeletedLogin?.id),
+        { ...scopedDraft, id: crypto.randomUUID() },
+      ]);
+      notify(replaceableDeletedLogin ? "Old login removed. New user ID created." : "New user created");
     }
     closeUserEditor();
   }
