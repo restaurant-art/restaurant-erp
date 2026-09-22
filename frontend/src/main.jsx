@@ -8651,7 +8651,7 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       // The server reads the verified store directory itself. Saving that
       // directory first made an otherwise authorized owner unable to add a
       // staff user when directory saving was restricted or temporarily busy.
-      const result = await supabaseApiRequest("staff-account", { method: "POST", body: JSON.stringify({ ...scopedDraft, password: draft.password }) });
+      const result = await supabaseApiRequest("staff-account", { method: "POST", body: JSON.stringify({ ...scopedDraft, action: editingId ? "update" : "create", password: draft.password }) });
       scopedDraft.authUserId = result.authUserId;
     } catch (error) { notify(`User was not saved: ${error.message}`, 10000); return; }
     if (editingId) {

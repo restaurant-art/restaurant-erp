@@ -154,6 +154,18 @@ Deno.serve(async (request) => {
       if (deleteError) return json({ error: deleteError.message }, 400);
       return json({ deleted: true });
     }
+    if (body?.action === "create" && authUser) {
+      const oldStoreId = String(authUser.app_metadata?.vestora?.storeId || "");
+      const oldLoginWasDeleted = authUser.app_metadata?.vestora?.active === false;
+      const oldStoreWasDeleted = Boolean(oldStoreId) && !directory.some((store) => store.id === oldStoreId);
+      if (isPlatformAdmin && (oldLoginWasDeleted || oldStoreWasDeleted)) {
+        const { error: deleteError } = await admin.auth.admin.deleteUser(authUser.id);
+        if (deleteError) return json({ error: deleteError.message }, 400);
+        authUser = null;
+      } else {
+        return json({ error: "This email is already linked to a UVPRO login. Delete the old user first to create a new ID." }, 409);
+      }
+    }
     if (!name || body?.role === "Super Admin") return json({ error: "Valid staff name and store role required" }, 400);
     if (!directory.some((store) => store.id === storeId) || !canStore(storeId)) return json({ error: "Store access denied" }, 403);
     if (!isPlatformAdmin && ["Restaurant Admin", "Restaurant Owner"].includes(body.role)) return json({ error: "Super Admin permission required to manage administrator logins" }, 403);
