@@ -1,4 +1,4 @@
-const CACHE_NAME = "vestora-v209";
+const CACHE_NAME = "vestora-v210";
 const assetUrl = (path) => new URL(path, self.registration.scope).toString();
 const SHELL = [
   "",
