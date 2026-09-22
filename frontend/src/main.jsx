@@ -1293,7 +1293,7 @@ function AuthenticatedApp() {
     });
   }, []);
   useEffect(() => {
-    if (currentUser?.role !== "super_admin" || stores.length) return;
+    if (currentUser?.role !== "super_admin" || stores.length || !supabaseStateReady) return;
     setSelectedStoreId("GLOBAL");
     setSuperAdminLanding(true);
     localStorage.removeItem("vestora-super-admin-in-store");
@@ -1557,8 +1557,7 @@ function AuthenticatedApp() {
       };
       if (assignedRole) {
         if (loginUser.role === "super_admin") {
-          localStorage.removeItem("vestora-super-admin-in-store");
-          setSuperAdminLanding(true);
+          setSuperAdminLanding(localStorage.getItem("vestora-super-admin-in-store") !== "true");
         }
         setCurrentUser(loginUser);
       }
@@ -1572,8 +1571,7 @@ function AuthenticatedApp() {
         if (!isCurrent()) return;
         const openSuperAdminLanding = loginUser.role === "super_admin";
         if (openSuperAdminLanding) {
-          localStorage.removeItem("vestora-super-admin-in-store");
-          setSuperAdminLanding(true);
+          setSuperAdminLanding(localStorage.getItem("vestora-super-admin-in-store") !== "true");
         }
         setCurrentUser(loginUser);
         localStorage.setItem("vestora-current-user", JSON.stringify(loginUser));
