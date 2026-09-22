@@ -6742,7 +6742,7 @@ h3 {
 
 .waiter-order-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -6759,9 +6759,8 @@ h3 {
   font-weight: 800;
 }
 
-.waiter-order-actions .kot-action {
-  background: #10231f;
-  color: #ffffff;
+.waiter-order-actions .save-order-action {
+  grid-column: 1 / -1;
 }
 
 .waiter-order-actions .cancel-order-action {
@@ -6770,10 +6769,7 @@ h3 {
 }
 
 .waiter-order-actions .reception-action {
-  grid-column: 1 / -1;
-  background: #22745e;
-  border-color: #22745e;
-  color: #ffffff;
+  grid-column: span 1;
 }
 
 .waiter-order-actions button:disabled {
@@ -9270,6 +9266,250 @@ h3 {
   color: var(--theme-primary);
 }
 
+.online-provider-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid rgba(16, 35, 31, 0.12);
+}
+
+.online-provider-tabs button {
+  min-height: 42px;
+  padding: 0 18px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: #60736a;
+  font-weight: 800;
+}
+
+.online-provider-tabs button.active {
+  border-bottom-color: var(--theme-primary);
+  color: var(--theme-primary);
+}
+
+.online-integration-config,
+.online-delivery-mapping-form,
+.online-delivery-simulator {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: end;
+}
+
+.online-integration-config > label,
+.online-delivery-mapping-form > label,
+.online-delivery-simulator > label {
+  display: grid;
+  gap: 7px;
+  color: #40564d;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.online-integration-config label small {
+  color: #60736a;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.online-integration-config input,
+.online-integration-config select,
+.online-delivery-mapping-form input,
+.online-delivery-mapping-form select,
+.online-delivery-simulator input,
+.online-delivery-simulator select,
+.online-prep-minutes {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid rgba(16, 35, 31, 0.17);
+  border-radius: 7px;
+  background: #fff;
+  color: #10231f;
+}
+
+.online-integration-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 5px;
+  color: #60736a;
+  font-size: 12px;
+}
+
+.online-delivery-section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(16, 35, 31, 0.1);
+}
+
+.online-delivery-section-head h3,
+.online-delivery-jobs h4 {
+  margin: 0 0 4px;
+  color: #18382d;
+  font-size: 16px;
+}
+
+.online-delivery-section-head p {
+  margin: 0;
+  color: #60736a;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.online-delivery-mapping-form {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 16px;
+  border: 1px solid rgba(16, 35, 31, 0.1);
+  border-radius: 9px;
+  background: #f8faf9;
+}
+
+.online-delivery-mapping-form .online-stock-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.online-delivery-mapping-form .online-stock-toggle input {
+  width: 18px;
+  min-height: 18px;
+}
+
+.online-delivery-mapping-form > button,
+.online-delivery-simulator > button {
+  min-height: 40px;
+}
+
+.online-delivery-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid rgba(16, 35, 31, 0.1);
+  border-radius: 8px;
+}
+
+.online-delivery-table-wrap table {
+  width: 100%;
+  min-width: 900px;
+  border-collapse: collapse;
+}
+
+.online-delivery-table-wrap th,
+.online-delivery-table-wrap td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(16, 35, 31, 0.08);
+  text-align: left;
+  vertical-align: middle;
+  font-size: 12px;
+}
+
+.online-delivery-table-wrap th {
+  background: #f2f7f4;
+  color: #52685f;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.online-delivery-table-wrap td small {
+  display: block;
+  margin-top: 3px;
+  color: #75877f;
+}
+
+.online-delivery-table-wrap .row-actions {
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.online-delivery-table-wrap .row-actions button {
+  min-height: 31px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.online-prep-minutes {
+  width: 62px;
+  min-width: 62px;
+}
+
+.online-delivery-jobs {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(194, 138, 58, 0.3);
+  border-radius: 8px;
+  background: #fff8eb;
+}
+
+.online-delivery-jobs > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.dark .online-integration-config > label,
+.dark .online-delivery-mapping-form > label,
+.dark .online-delivery-simulator > label,
+.dark .online-delivery-section-head h3,
+.dark .online-delivery-jobs h4 {
+  color: #dce7e1;
+}
+
+.dark .online-integration-config input,
+.dark .online-integration-config select,
+.dark .online-delivery-mapping-form input,
+.dark .online-delivery-mapping-form select,
+.dark .online-delivery-simulator input,
+.dark .online-delivery-simulator select,
+.dark .online-prep-minutes {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: #101917;
+  color: #f3f6f4;
+}
+
+.dark .online-delivery-mapping-form {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: #141e1b;
+}
+
+.dark .online-delivery-table-wrap {
+  border-color: rgba(255, 255, 255, 0.11);
+}
+
+.dark .online-delivery-table-wrap th {
+  background: #20312b;
+  color: #c8d5ce;
+}
+
+.dark .online-delivery-table-wrap th,
+.dark .online-delivery-table-wrap td,
+.dark .online-delivery-section-head {
+  border-color: rgba(255, 255, 255, 0.09);
+}
+
+.dark .online-delivery-section-head p,
+.dark .online-delivery-table-wrap td small,
+.dark .online-integration-actions {
+  color: #aebdb5;
+}
+
+.dark .online-delivery-jobs {
+  border-color: rgba(194, 138, 58, 0.24);
+  background: #30291d;
+  color: #e7d5b1;
+}
+
 .dark .online-integration-notice {
   border-color: rgba(194, 138, 58, 0.38);
   background: #332b1d;
@@ -10409,6 +10649,21 @@ th {
 @media (max-width: 760px) {
   .online-platform-grid {
     grid-template-columns: 1fr;
+  }
+
+  .online-integration-config,
+  .online-delivery-mapping-form,
+  .online-delivery-simulator {
+    grid-template-columns: 1fr;
+  }
+
+  .online-integration-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .online-provider-tabs button {
+    flex: 1;
   }
 
   .online-integration-notice,

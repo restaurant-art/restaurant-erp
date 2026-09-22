@@ -7,7 +7,8 @@ import { isBusinessKey, stateStore, sanitize } from "./business-state.js";
 // environment must never send sign-ins or business data to a different one.
 const uvproSupabaseUrl = "https://vqinmequtjkuzrtzkzsk.supabase.co";
 const configuredSupabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
-const supabaseUrl = configuredSupabaseUrl === uvproSupabaseUrl ? configuredSupabaseUrl : uvproSupabaseUrl;
+const localDevelopmentSupabaseUrl = import.meta.env.DEV && /^http:\/\/(localhost|127\.0\.0\.1):54321$/.test(configuredSupabaseUrl);
+const supabaseUrl = configuredSupabaseUrl === uvproSupabaseUrl || localDevelopmentSupabaseUrl ? configuredSupabaseUrl : uvproSupabaseUrl;
 const supabaseAnonKey = String(
   import.meta.env.VITE_SUPABASE_ANON_KEY
   || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY

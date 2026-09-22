@@ -15,6 +15,7 @@
     "@vladmandic/face-api": "^1.7.15",
     "lucide-react": "^0.468.0",
     "qrcode": "^1.5.4",
+    "qz-tray": "^2.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "recharts": "^2.15.0",

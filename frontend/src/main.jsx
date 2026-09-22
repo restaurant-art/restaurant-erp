@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import QRCode from "qrcode";
+import qz from "qz-tray";
 import {
   Area,
   AreaChart,
@@ -411,9 +412,9 @@ const settingsSectionConfig = {
     fields: [["upiId", "UPI ID"], ["terminal", "Card terminal"], ["wallets", "Wallets"], ["settlement", "Settlement account"]],
     defaults: { upiId: "vestora@upi", terminal: "PineLabs Counter 1", wallets: "Paytm, PhonePe, GPay", settlement: "HDFC Current Account" },
   },
-  "Online ordering integrations": {
-    description: "Set outlet IDs and check the setup requirements for Zomato and Swiggy order integration.",
-    action: "Save outlet details",
+  "Integrations": {
+    description: "Configure branch-level delivery outlets, menu mappings, stock, kitchen tickets, and test order flows.",
+    action: "Open integrations",
     fields: [],
     defaults: {},
   },
@@ -454,7 +455,7 @@ const storeSettingsSections = [
   "Print bill format",
   "Printer setup",
   "Payment providers",
-  "Online ordering integrations",
+  "Integrations",
   "QR ordering",
   "Theme and language",
 ];
@@ -1303,7 +1304,9 @@ function AuthenticatedApp() {
   });
   const [kotPrinter, setKotPrinter] = useState(() => {
     const saved = localStorage.getItem("vestora-kot-printer");
-    return saved ? { ...defaultKotPrinter, ...JSON.parse(saved) } : defaultKotPrinter;
+    if (!saved) return defaultKotPrinter;
+    const printer = { ...defaultKotPrinter, ...JSON.parse(saved) };
+    return printer.type === "QZ Tray" ? { ...printer, enabled: false, status: "Disconnected" } : printer;
   });
   const [salesLedger, setSalesLedger] = useBusinessState("vestora-sales-ledger", () => loadStoredArray("vestora-sales-ledger"));
   const [voidLedger, setVoidLedger] = useBusinessState("vestora-void-ledger", () => loadStoredArray("vestora-void-ledger"));
@@ -1916,8 +1919,21 @@ function AuthenticatedApp() {
     };
     setSalesLedger((current) => [savedBill, ...current]);
     if (!savedBill.tableOrderId) {
-      setKdsOrders((current) => [createKdsOrderFromBill(savedBill), ...current]);
-      if (kotPrinter.enabled && kotPrinter.status === "Connected" && kotPrinter.autoPrint) notify(`KOT queued for ${kotPrinter.name}`);
+      const kdsOrder = createKdsOrderFromBill(savedBill);
+      setKdsOrders((current) => [kdsOrder, ...current]);
+      if (kotPrinter.enabled && kotPrinter.status === "Connected" && kotPrinter.autoPrint) {
+        if (kotPrinter.type === "QZ Tray") {
+          printKotWithQz({
+            printerName: kotPrinter.name,
+            paper: kotPrinter.paper,
+            copies: kotPrinter.copies,
+            order: { ...savedBill, kotId: kdsOrder.id, tableName: savedBill.orderType, waiterName: savedBill.waiterName || currentUser?.name },
+          }).then(() => notify(`KOT printed on ${kotPrinter.name}`))
+            .catch((error) => notify(`KOT is queued, but QZ Tray printing failed: ${error?.message || "Check QZ Tray"}`));
+        } else {
+          notify(`KOT queued for ${kotPrinter.name}`);
+        }
+      }
     }
   }
 
@@ -1967,7 +1983,9 @@ function AuthenticatedApp() {
       tableOrderId: sentOrder.id,
     };
     setKdsOrders((current) => current.some((entry) => entry.id === kotId) ? current : [ticket, ...current]);
-    notify(kotPrinter.enabled && kotPrinter.status === "Connected" ? `KOT sent to ${kotPrinter.name}` : "KOT added to kitchen queue; connect printer for paper copy");
+    notify(kotPrinter.enabled && kotPrinter.status === "Connected"
+      ? kotPrinter.type === "QZ Tray" ? "KOT added to kitchen queue; sending to QZ Tray printer" : `KOT sent to ${kotPrinter.name}`
+      : "KOT added to kitchen queue; connect printer for paper copy");
     return { ...sentOrder, kotPrintItems: kotItems };
   }
 
@@ -2085,6 +2103,7 @@ function AuthenticatedApp() {
           setStores={setStores}
           users={users}
           activeStore={activeStore}
+          storeAccessReady={supabaseStateReady}
           onEnterStore={enterStore}
           onUpdatePassword={() => setPasswordDialogOpen(true)}
           onLogout={handleLogout}
@@ -2136,7 +2155,7 @@ function AuthenticatedApp() {
     reports: <Reports notify={notify} storeId={activeStore.id} salesLedger={scopedSalesLedger} voidLedger={scopedVoidLedger} refundLedger={scopedRefundLedger} onRefund={recordRefund} lastShiftClose={lastShiftClose} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} activeView={reportView} onReportChange={setReportView} />,
     mis: <MISReports salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} notify={notify} />,
     admin: <Admin notify={notify} users={users} setUsers={setUsers} currentUser={currentUser} canManageAll={canManageAll} canManageStore={canManage} stores={stores} activeStore={activeStore} activeView={adminView} onViewChange={openAdminView} customRoles={customRoles} setCustomRoles={setCustomRoles} />,
-    settings: <SettingsView notify={notify} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} canManage={canManage} canManageAll={canManageAll} activeStore={activeStore} setStores={setStores} themeConfig={{ ...themeConfig, mode: dark ? "Dark" : "Light" }} setThemeConfig={setThemeConfig} setDark={setDark} />,
+    settings: <SettingsView notify={notify} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} canManage={canManage} canManageAll={canManageAll} activeStore={activeStore} setStores={setStores} menuItems={productItems} themeConfig={{ ...themeConfig, mode: dark ? "Dark" : "Light" }} setThemeConfig={setThemeConfig} setDark={setDark} />,
   }[activeModule];
 
   if (activeModule === "pos") {
@@ -2499,7 +2518,7 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, onEnterStore, onUpdatePassword, onLogout, notify, toast }) {
+function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, storeAccessReady = true, onEnterStore, onUpdatePassword, onLogout, notify, toast }) {
   const [showStoreForm, setShowStoreForm] = useState(false);
   const [storeFormMode, setStoreFormMode] = useState("store");
   const [editingStoreId, setEditingStoreId] = useState(null);
@@ -2838,7 +2857,7 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, on
                     </div>
                     <div className="branch-card-actions">
                       <button type="button" onClick={() => editBranch(store)}>Edit branch</button>
-                      <button type="button" onClick={() => onEnterStore(store)}>View branch</button>
+                      <button type="button" onClick={() => onEnterStore(store)} disabled={!storeAccessReady} title={!storeAccessReady ? "Store access is still loading" : undefined}>{storeAccessReady ? "View branch" : "Loading…"}</button>
                       <button className="destructive-action" type="button" onClick={() => deleteBranch(store)}>Delete</button>
                     </div>
                   </div>
@@ -4578,7 +4597,7 @@ function KDS({ notify, orders, setOrders, kotPrinter }) {
       <div className="kot-printer-strip">
         <span className={kotPrinter.enabled && kotPrinter.status === "Connected" ? "pill online" : "pill offline"}>{kotPrinter.enabled && kotPrinter.status === "Connected" ? "KOT printer connected" : "KOT printer disconnected"}</span>
         <strong>{kotPrinter.name}</strong>
-        <em>{kotPrinter.paper} / {kotPrinter.ip}:{kotPrinter.port}</em>
+        <em>{kotPrinter.paper}{kotPrinter.type === "QZ Tray" ? " / QZ Tray" : ` / ${kotPrinter.ip}:${kotPrinter.port}`}</em>
       </div>
       <div className="kanban">
         {columns.map((column) => (
@@ -4899,6 +4918,12 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
 
   function printTableSlip(type, order) {
     setPrintSlip({ type, order });
+    if (type === "kot" && kotPrinter?.type === "QZ Tray") {
+      printKotWithQz({ printerName: kotPrinter.name, paper: kotPrinter.paper, copies: kotPrinter.copies, order })
+        .then(() => notify(`KOT printed on ${kotPrinter.name}`))
+        .catch((error) => notify(`QZ Tray print failed: ${error?.message || "Check QZ Tray and printer connection"}`));
+      return;
+    }
     window.setTimeout(() => window.print(), 100);
   }
 
@@ -4915,10 +4940,6 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
   function finishDining() {
     if (!orderItems.length) {
       notify("Add and save the table order first");
-      return;
-    }
-    if (!workingOrder?.kotId) {
-      notify("Print and send the KOT before completing dining");
       return;
     }
     const order = buildTableOrder(workingOrder?.kotId ? "KOT sent" : "Taking order");
@@ -5144,7 +5165,7 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
                 <div className="waiter-order-total"><span>Estimated subtotal</span><strong>{formatMoney(orderSubtotal)}</strong></div>
                 <div className="waiter-order-actions">
                   {addonTableOrder && <button className="cancel-order-action" type="button" onClick={requestCancelOrder}><Trash2 size={16} /> Cancel order</button>}
-                  <button type="button" onClick={saveOrderDraft} disabled={!orderItems.length}>{addonTableOrder ? "Save add-on" : "Save order"}</button>
+                  <button className="save-order-action" type="button" onClick={saveOrderDraft} disabled={!orderItems.length}>{addonTableOrder ? "Save add-on" : "Save order"}</button>
                   <button className="kot-action" type="button" onClick={printAndSendKot} disabled={!orderItems.length}><Printer size={17} /> {addonTableOrder ? "Print add-on KOT" : "Print KOT"}</button>
                   <button className="reception-action" type="button" onClick={finishDining} disabled={!orderItems.length}><ReceiptText size={17} /> Dining complete · Send reception</button>
                 </div>
@@ -7714,6 +7735,36 @@ const offerTypeForView = {
   Coupons: "Coupon",
 };
 
+function escapePrintHtml(value) {
+  return String(value ?? "").replace(/[&<>\"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character]);
+}
+
+async function connectQzTray() {
+  if (!qz.websocket.isActive()) await qz.websocket.connect();
+  return qz.printers.find();
+}
+
+async function printKotWithQz({ printerName, paper, copies = 1, order, isTest = false }) {
+  if (!printerName?.trim()) throw new Error("Choose a printer from the QZ Tray printer list");
+  if (!qz.websocket.isActive()) await qz.websocket.connect();
+  const ticketId = isTest ? "TEST-KOT" : order?.kotId || order?.orderNumber || "KOT";
+  const title = isTest ? "QZ TRAY TEST PRINT" : "KITCHEN ORDER TICKET";
+  const lines = isTest
+    ? [{ qty: 1, name: "Printer test" }, { qty: 1, name: "KOT connection" }]
+    : order?.kotPrintItems || order?.items || [];
+  const itemsHtml = lines.map((item) => `<p><b>${escapePrintHtml(item.qty || 1)} ×</b> ${escapePrintHtml(item.name)}${item.notes ? `<br><small>${escapePrintHtml(item.notes)}</small>` : ""}</p>`).join("");
+  const width = paper === "58mm" ? "52mm" : "72mm";
+  const html = `<!doctype html><html><head><meta charset="utf-8"><style>@page{margin:0}*{box-sizing:border-box}body{font-family:Arial,sans-serif;width:${width};margin:0;padding:3mm;color:#000;font-size:12pt}header{text-align:center;border-bottom:1px dashed #000;padding-bottom:2mm;margin-bottom:2mm}h2{font-size:14pt;margin:0 0 2mm}header strong{font-size:12pt}.meta{font-size:10pt;margin:1mm 0 3mm}.items p{margin:2mm 0;word-break:break-word}footer{border-top:1px dashed #000;margin-top:3mm;padding-top:2mm;text-align:center;font-size:9pt}</style></head><body><header><h2>${title}</h2><strong>${escapePrintHtml(ticketId)}</strong></header><div class="meta">${isTest ? "UVPRO KOT printer test" : `Table: ${escapePrintHtml(order?.tableName || "—")}<br>Waiter: ${escapePrintHtml(order?.waiterName || "—")}<br>${escapePrintHtml(new Date().toLocaleString("en-IN"))}`}</div><main class="items">${itemsHtml}</main><footer>UVPRO · ${escapePrintHtml(printerName)}</footer></body></html>`;
+  const config = qz.configs.create(printerName, { copies: Math.max(1, Math.min(5, Number(copies) || 1)), margins: 0 });
+  return qz.print(config, [{ type: "pixel", format: "html", flavor: "plain", data: html }]);
+}
+
 const offerWeekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 function offerIconForType(type) {
@@ -8756,6 +8807,17 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
 }
 
 function KotPrinterSetup({ kotPrinter, setKotPrinter, notify, canManage }) {
+  const [qzPrinters, setQzPrinters] = useState([]);
+  const [qzBusy, setQzBusy] = useState(false);
+
+  useEffect(() => {
+    const onQzClosed = () => setKotPrinter((current) => current.type === "QZ Tray"
+      ? { ...current, enabled: false, status: "Disconnected" }
+      : current);
+    qz.websocket.setClosedCallbacks(onQzClosed);
+    return () => qz.websocket.setClosedCallbacks([]);
+  }, [setKotPrinter]);
+
   function update(field, value) {
     setKotPrinter((current) => ({ ...current, [field]: value, enabled: false, status: "Disconnected" }));
   }
@@ -8767,12 +8829,46 @@ function KotPrinterSetup({ kotPrinter, setKotPrinter, notify, canManage }) {
       const hasValidPort = Number(printer.port) > 0 && Number(printer.port) <= 65535;
       return hasValidIp && hasValidPort;
     }
+    if (printer.type === "QZ Tray") return Boolean(printer.name?.trim());
     return true;
   }
 
-  function connectPrinter() {
+  async function discoverQzPrinters() {
+    if (!canManage) throw new Error("Admin permission required");
+    setQzBusy(true);
+    try {
+      const printers = await connectQzTray();
+      setQzPrinters(printers);
+      if (!printers.length) throw new Error("QZ Tray is running, but no printers were found on this computer");
+      const selectedPrinter = printers.includes(kotPrinter.name) ? kotPrinter.name : printers[0];
+      setKotPrinter((current) => ({ ...current, type: "QZ Tray", name: selectedPrinter, enabled: false, status: "Printer found" }));
+      return printers;
+    } finally {
+      setQzBusy(false);
+    }
+  }
+
+  async function connectPrinter() {
     if (!canManage) {
       notify("Admin permission required");
+      return;
+    }
+    if (kotPrinter.type === "QZ Tray") {
+      setQzBusy(true);
+      setKotPrinter((current) => ({ ...current, enabled: false, status: "Connecting to QZ Tray" }));
+      try {
+        const printers = await connectQzTray();
+        setQzPrinters(printers);
+        const selectedPrinter = printers.includes(kotPrinter.name) ? kotPrinter.name : printers[0];
+        if (!selectedPrinter) throw new Error("No printers found. Install the printer in Windows and try again.");
+        setKotPrinter((current) => ({ ...current, name: selectedPrinter, enabled: true, status: "Connected" }));
+        notify(`QZ Tray connected to ${selectedPrinter}`);
+      } catch (error) {
+        setKotPrinter((current) => ({ ...current, enabled: false, status: "Disconnected" }));
+        notify(`Could not connect to QZ Tray: ${error?.message || "Install and open QZ Tray, then retry"}`);
+      } finally {
+        setQzBusy(false);
+      }
       return;
     }
     setKotPrinter((current) => ({ ...current, enabled: false, status: "Checking connection" }));
@@ -8788,18 +8884,34 @@ function KotPrinterSetup({ kotPrinter, setKotPrinter, notify, canManage }) {
     }, 500);
   }
 
-  function disconnectPrinter() {
+  async function disconnectPrinter() {
     if (!canManage) {
       notify("Admin permission required");
       return;
+    }
+    if (kotPrinter.type === "QZ Tray" && qz.websocket.isActive()) {
+      try {
+        await qz.websocket.disconnect();
+      } catch (error) {
+        notify(`QZ Tray disconnect failed: ${error?.message || "Try again"}`);
+      }
     }
     setKotPrinter((current) => ({ ...current, enabled: false, status: "Disconnected" }));
     notify("KOT printer disconnected");
   }
 
-  function testPrinter() {
+  async function testPrinter() {
     if (!kotPrinter.enabled || kotPrinter.status !== "Connected") {
       notify("Connect KOT printer first");
+      return;
+    }
+    if (kotPrinter.type === "QZ Tray") {
+      try {
+        await printKotWithQz({ printerName: kotPrinter.name, paper: kotPrinter.paper, copies: kotPrinter.copies, isTest: true });
+        notify(`Test KOT printed on ${kotPrinter.name}`);
+      } catch (error) {
+        notify(`QZ Tray test print failed: ${error?.message || "Check QZ Tray and printer connection"}`);
+      }
       return;
     }
     notify(`Test KOT sent to ${kotPrinter.name}`);
@@ -8815,16 +8927,19 @@ function KotPrinterSetup({ kotPrinter, setKotPrinter, notify, canManage }) {
       </div>
       <div className="kot-printer-fields">
         <label>Printer name<input list="vestora-kot-printer-choices" value={kotPrinter.name} onChange={(event) => update("name", event.target.value)} disabled={!canManage} placeholder="Select or enter printer name" /><datalist id="vestora-kot-printer-choices">{printerChoices.map((printer) => <option key={printer} value={printer} />)}</datalist></label>
-        <label>Connection type<select value={kotPrinter.type} onChange={(event) => update("type", event.target.value)} disabled={!canManage}><option>Thermal LAN printer</option><option>USB thermal printer</option><option>Bluetooth printer</option><option>Windows default printer</option></select></label>
-        <label>IP address<input value={kotPrinter.ip} onChange={(event) => update("ip", event.target.value)} disabled={!canManage} /></label>
-        <label>Port<input value={kotPrinter.port} onChange={(event) => update("port", event.target.value)} disabled={!canManage} /></label>
+        <label>Connection type<select value={kotPrinter.type} onChange={(event) => update("type", event.target.value)} disabled={!canManage}><option>Thermal LAN printer</option><option>USB thermal printer</option><option>Bluetooth printer</option><option>Windows default printer</option><option>QZ Tray</option></select></label>
+        {kotPrinter.type === "QZ Tray" ? (
+          <label>Installed printer<select value={kotPrinter.name} onChange={(event) => update("name", event.target.value)} disabled={!canManage}><option value="">Choose a printer</option>{qzPrinters.map((printer) => <option key={printer} value={printer}>{printer}</option>)}{!qzPrinters.includes(kotPrinter.name) && kotPrinter.name && <option value={kotPrinter.name}>{kotPrinter.name}</option>}</select></label>
+        ) : <label>IP address<input value={kotPrinter.ip} onChange={(event) => update("ip", event.target.value)} disabled={!canManage} /></label>}
+        {kotPrinter.type !== "QZ Tray" && <label>Port<input value={kotPrinter.port} onChange={(event) => update("port", event.target.value)} disabled={!canManage} /></label>}
         <label>Paper size<select value={kotPrinter.paper} onChange={(event) => update("paper", event.target.value)} disabled={!canManage}><option>80mm</option><option>58mm</option></select></label>
         <label>Copies<input type="number" min="1" max="5" value={kotPrinter.copies} onChange={(event) => update("copies", Number(event.target.value || 1))} disabled={!canManage} /></label>
       </div>
+      {kotPrinter.type === "QZ Tray" && <div className="settings-printer-status"><div><strong>QZ Tray must be installed and running on this computer.</strong><small>On first use, approve UVPRO in the QZ Tray permission prompt. Printers connected to this computer will appear here.</small></div><button type="button" onClick={() => discoverQzPrinters().catch((error) => notify(`QZ Tray: ${error?.message || "Could not find printers"}`))} disabled={!canManage || qzBusy}>{qzBusy ? "Searching…" : "Find printers"}</button></div>}
       <label className="kot-toggle"><input type="checkbox" checked={kotPrinter.autoPrint} onChange={(event) => update("autoPrint", event.target.checked)} disabled={!canManage} /> Auto send KOT to kitchen queue when order is created</label>
       <div className="editor-row">
-        <button onClick={connectPrinter} disabled={!canManage}>Connect printer</button>
-        <button onClick={testPrinter}>Test KOT</button>
+        <button onClick={connectPrinter} disabled={!canManage || qzBusy}>{qzBusy ? "Connecting…" : "Connect printer"}</button>
+        <button onClick={testPrinter} disabled={qzBusy}>Test KOT</button>
         <button onClick={disconnectPrinter} disabled={!canManage}>Disconnect</button>
       </div>
       <div className="print-kot test-kot">
@@ -10426,89 +10541,315 @@ function StoreQrOrderingSettings({ activeStore, notify, canManage, onBack }) {
   );
 }
 
-function OnlineOrderingIntegrationSettings({ activeStore, canManage, notify, onBack }) {
-  const integrationStorageKey = `vestora-online-order-integrations-${activeStore?.id || "global"}`;
-  const [outlets, setOutlets] = useBusinessState(integrationStorageKey, () => {
-    const saved = localStorage.getItem(integrationStorageKey);
-    return saved ? JSON.parse(saved) : { zomatoOutletId: "", swiggyOutletId: "" };
-  });
+function OnlineOrderingIntegrationSettings({ activeStore, canManage, notify, menuItems = [], kotPrinter, onBack }) {
+  const storeId = activeStore?.id || "";
+  const [provider, setProvider] = useState("zomato");
+  const [connection, setConnection] = useState(null);
+  const [mappings, setMappings] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [jobs, setJobs] = useState([]);
+  const [outletId, setOutletId] = useState("");
+  const [mode, setMode] = useState("test");
+  const [credentialsJson, setCredentialsJson] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [mappingDraft, setMappingDraft] = useState({ providerItemId: "", providerItemName: "", localItemId: "", localItemName: "", addonMapping: "{}", gstRate: "0", providerPrice: "0", onlineStock: "0", isAvailable: true, kotPrinter: kotPrinter?.name || "" });
+  const [simItemId, setSimItemId] = useState("");
+  const [simQuantity, setSimQuantity] = useState("1");
+  const [simExternalId, setSimExternalId] = useState(() => `SIM-${Date.now()}`);
+  const [prepMinutes, setPrepMinutes] = useState("20");
+
+  const callDelivery = useCallback((action, payload = {}) => supabaseFunctionJson("vestora-delivery", {
+    method: "POST",
+    body: JSON.stringify({ action, storeId, provider, ...payload }),
+  }), [storeId, provider]);
 
   useEffect(() => {
-    localStorage.setItem(integrationStorageKey, JSON.stringify(outlets));
-    syncLocalStateKeyToSupabase(integrationStorageKey).catch(() => {});
-  }, [integrationStorageKey, outlets]);
+    setSimItemId(""); setConnection(null); setOutletId(""); setMode("test"); setCredentialsJson("");
+    setMappings([]); setOrders([]); setLogs([]); setJobs([]);
+  }, [provider, storeId]);
 
-  function updateOutlet(field, value) {
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await callDelivery("config.get");
+      const current = result.connection || null;
+      setConnection(current);
+      let legacyOutlet = "";
+      if (!current) {
+        try {
+          const legacy = JSON.parse(localStorage.getItem(`vestora-online-order-integrations-${storeId}`) || "{}");
+          legacyOutlet = provider === "zomato" ? legacy.zomatoOutletId || "" : legacy.swiggyOutletId || "";
+        } catch { /* Ignore an invalid legacy outlet draft; secure server configuration remains authoritative. */ }
+      }
+      setOutletId(current?.outletId || legacyOutlet);
+      setMode(current?.mode || "test");
+      setCredentialsJson("");
+      if (!current) {
+        setMappings([]); setOrders([]); setLogs([]); setJobs([]);
+        return;
+      }
+      const data = await callDelivery("mapping.list");
+      setMappings(data.mappings || []); setOrders(data.orders || []); setLogs(data.logs || []); setJobs(data.jobs || []);
+      if (!simItemId && data.mappings?.length) setSimItemId(data.mappings[0].provider_item_id);
+    } catch (error) {
+      setNotice(error?.message || "Could not load online delivery settings");
+    } finally { setLoading(false); }
+  }, [callDelivery, provider, storeId, simItemId]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  async function saveConfiguration(event) {
+    event.preventDefault();
     if (!canManage) return;
-    setOutlets((current) => ({ ...current, [field]: value }));
+    setSaving(true); setNotice("");
+    try {
+      const result = await callDelivery("config.save", {
+        outletId, mode, credentials: credentialsJson,
+        clearCredentials: false, confirmLivePending: true,
+        settings: { kotPrinter: kotPrinter?.name || "" },
+      });
+      setConnection(result.connection);
+      setCredentialsJson("");
+      setNotice(`Saved ${provider === "zomato" ? "Zomato" : "Swiggy"} outlet for ${activeStore?.branch || activeStore?.name || "this branch"}. Credentials are never returned to the browser.`);
+      await refresh();
+    } catch (error) { setNotice(error?.message || "Could not save integration settings"); }
+    finally { setSaving(false); }
   }
 
-  function saveOutletDetails() {
-    if (!canManage) {
-      notify("Admin permission required");
+  async function clearCredentialBundle() {
+    if (!canManage || !connection?.credentialsConfigured || !window.confirm("Remove the encrypted credential bundle for this branch?")) return;
+    setSaving(true);
+    try {
+      const result = await callDelivery("config.save", {
+        outletId, mode, credentials: "", clearCredentials: true, confirmLivePending: true,
+        settings: { kotPrinter: kotPrinter?.name || "" },
+      });
+      setConnection(result.connection);
+      setNotice("Encrypted credential bundle removed from this branch configuration.");
+    } catch (error) { setNotice(error?.message || "Could not clear credentials"); }
+    finally { setSaving(false); }
+  }
+
+  function setMappingField(field, value) {
+    setMappingDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function editMapping(mapping) {
+    setMappingDraft({
+      providerItemId: mapping.provider_item_id, providerItemName: mapping.provider_item_name,
+      localItemId: mapping.local_item_id, localItemName: mapping.local_item_name,
+      addonMapping: JSON.stringify(mapping.addon_mapping || {}), gstRate: String(mapping.gst_rate || 0),
+      providerPrice: String(mapping.provider_price || 0), onlineStock: String(mapping.online_stock || 0),
+      isAvailable: Boolean(mapping.is_available), kotPrinter: mapping.kot_printer || "",
+    });
+    setNotice(`Editing ${mapping.provider_item_name}. Save the form to update its branch mapping.`);
+  }
+
+  async function saveMapping(event) {
+    event.preventDefault();
+    if (!canManage) return;
+    setSaving(true); setNotice("");
+    try {
+      const result = await callDelivery("mapping.save", { mapping: mappingDraft });
+      setMappings((current) => [...current.filter((entry) => entry.id !== result.mapping.id && entry.provider_item_id !== result.mapping.provider_item_id), result.mapping].sort((a, b) => a.provider_item_name.localeCompare(b.provider_item_name)));
+      setSimItemId(result.mapping.provider_item_id);
+      setMappingDraft({ providerItemId: "", providerItemName: "", localItemId: "", localItemName: "", addonMapping: "{}", gstRate: "0", providerPrice: "0", onlineStock: "0", isAvailable: true, kotPrinter: kotPrinter?.name || "" });
+      setNotice("Menu, add-on, GST, online stock, and KOT routing mapping saved for this branch.");
+    } catch (error) { setNotice(error?.message || "Could not save menu mapping"); }
+    finally { setSaving(false); }
+  }
+
+  async function simulateIncomingOrder(event) {
+    event.preventDefault();
+    const mapping = mappings.find((entry) => entry.provider_item_id === simItemId);
+    if (!mapping) { setNotice("Save a menu mapping before simulating an order"); return; }
+    setSaving(true); setNotice("");
+    try {
+      const quantity = Number(simQuantity);
+      const response = await callDelivery("simulate", { order: {
+        externalOrderId: simExternalId,
+        customer: "UVPRO simulator customer",
+        items: [{ providerItemId: mapping.provider_item_id, name: mapping.provider_item_name, quantity, addons: [] }],
+        subtotal: Number(mapping.provider_price || 0) * quantity,
+      } });
+      if (response.duplicate) {
+        setNotice(response.message || "Duplicate order ignored; stock was not deducted again.");
+      } else if (response.stockIssue) {
+        setNotice(`Order recorded for review: ${response.stockIssue}. Stock was not deducted.`);
+      } else {
+        setNotice(`Signed ${provider} test webhook accepted for ${response.order.external_order_id}; mapped stock updated.`);
+        await printIncomingKot(response.order, mapping);
+        setSimExternalId(`SIM-${Date.now()}`);
+      }
+      await refresh();
+    } catch (error) { setNotice(error?.message || "Test order simulation failed"); }
+    finally { setSaving(false); }
+  }
+
+  async function printIncomingKot(order, fallbackMapping) {
+    if (kotPrinter?.type !== "QZ Tray") {
+      await callDelivery("order.print-result", { orderId: order.id, printStatus: "not_configured", printer: "" }).catch(() => {});
+      setNotice(`Order ${order.external_order_id} received. Configure QZ Tray to print the KOT automatically.`);
       return;
     }
-    localStorage.setItem(integrationStorageKey, JSON.stringify(outlets));
-    syncLocalStateKeyToSupabase(integrationStorageKey).catch(() => {});
-    notify("Outlet IDs saved. Platform order sync is not connected yet.");
+    const routeItems = order.kot_data?.items || order.items || [];
+    const groups = new Map();
+    for (const item of routeItems) {
+      const target = String(item.kotPrinter || fallbackMapping.kot_printer || connection?.settings?.kotPrinter || kotPrinter.name || "").trim();
+      if (!target) continue;
+      groups.set(target, [...(groups.get(target) || []), item]);
+    }
+    if (!groups.size) {
+      await callDelivery("order.print-result", { orderId: order.id, printStatus: "not_configured", printer: "" }).catch(() => {});
+      setNotice(`Order ${order.external_order_id} received. Choose a KOT printer in the menu mapping.`);
+      return;
+    }
+    try {
+      for (const [printerName, items] of groups) {
+        await printKotWithQz({ printerName, paper: kotPrinter.paper || "80mm", copies: kotPrinter.copies || 1, order: {
+          kotId: `${provider.toUpperCase()}-${order.external_order_id}`,
+          tableName: `${provider.toUpperCase()} delivery`, waiterName: "Online order",
+          items: items.map((item) => ({ qty: item.quantity, name: item.localItemName || item.name, notes: (item.mappedAddons || item.addons || []).join(", ") })),
+        } });
+      }
+      await callDelivery("order.print-result", { orderId: order.id, printStatus: "printed", printer: [...groups.keys()].join(", ") });
+      setNotice(`Order received and KOT sent to ${[...groups.keys()].join(", ")}.`);
+    } catch (error) {
+      await callDelivery("order.print-result", { orderId: order.id, printStatus: "failed", printer: [...groups.keys()].join(", ") }).catch(() => {});
+      setNotice(`Order received, but the KOT could not print: ${error?.message || "Check QZ Tray"}`);
+    }
   }
 
-  const platforms = [
-    {
-      name: "Zomato",
-      field: "zomatoOutletId",
-      label: "Zomato outlet ID",
-      description: "Use the outlet ID shown in your Zomato restaurant account.",
-      href: "https://www.zomato.com/developer/integration/",
-      linkLabel: "Zomato POS partner onboarding",
-    },
-    {
-      name: "Swiggy",
-      field: "swiggyOutletId",
-      label: "Swiggy outlet ID",
-      description: "Use the outlet ID shown in your Swiggy restaurant account.",
-      href: "https://developers.swiggy.com/",
-      linkLabel: "Swiggy developer portal",
-    },
-  ];
+  async function printExistingOrderKot(order) {
+    const routeItems = order.kot_data?.items || order.items || [];
+    const fallback = mappings.find((mapping) => mapping.provider_item_id === routeItems[0]?.providerItemId);
+    if (fallback) await printIncomingKot(order, fallback);
+    else setNotice("No saved menu mapping is available for this order's KOT.");
+  }
+
+  async function changeOrder(order, status) {
+    setSaving(true); setNotice("");
+    try {
+      const reason = status === "cancelled" || status === "rejected" ? window.prompt(status === "cancelled" ? "Why is this order being cancelled?" : "Why is this order being rejected?", status === "cancelled" ? "Cancelled by restaurant" : "Rejected by restaurant") : "";
+      if ((status === "cancelled" || status === "rejected") && reason === null) return;
+      await callDelivery("order.change", { orderId: order.id, status, prepMinutes: status === "accepted" || status === "preparing" ? Number(prepMinutes) : null, reason: reason || "" });
+      setNotice(`Order ${order.external_order_id} updated to ${status}.`);
+      await refresh();
+    } catch (error) { setNotice(error?.message || "Could not update order status"); }
+    finally { setSaving(false); }
+  }
+
+  async function changeAvailability(mapping) {
+    try {
+      const result = await callDelivery("stock.change", { mappingId: mapping.id, isAvailable: !mapping.is_available });
+      setMappings((current) => current.map((entry) => entry.id === mapping.id ? result.mapping : entry));
+      setNotice(`${mapping.provider_item_name} marked ${result.mapping.is_available ? "available" : "out of stock"}.`);
+    } catch (error) { setNotice(error?.message || "Could not update stock availability"); }
+  }
+
+  async function deleteMapping(mapping) {
+    if (!window.confirm(`Remove the ${mapping.provider_item_name} mapping?`)) return;
+    try {
+      await callDelivery("mapping.delete", { mappingId: mapping.id });
+      setMappings((current) => current.filter((entry) => entry.id !== mapping.id));
+      setNotice("Menu mapping removed.");
+    } catch (error) { setNotice(error?.message || "Could not remove mapping"); }
+  }
+
+  async function retryJob(job) {
+    try {
+      const result = await callDelivery("job.retry", { jobId: job.id });
+      setNotice(result.message || (result.job?.status === "succeeded" ? "Test-mode retry succeeded." : "Retry held until live provider access is approved."));
+      if (result.order && !result.stockIssue) await printExistingOrderKot(result.order);
+      await refresh();
+    } catch (error) { setNotice(error?.message || "Could not retry delivery operation"); }
+  }
+
+  const canSimulate = connection?.mode === "test" && mappings.length > 0;
+  const inputId = (prefix) => `${prefix}-${provider}`;
 
   return (
     <section className="screen settings-detail-screen">
       <button className="settings-back-button" onClick={onBack}><PanelLeftClose size={17} /> Back to settings</button>
       <div className="panel settings-detail-panel online-integration-panel">
-        <PanelHead title="Online ordering integrations" icon={ShoppingCart} actions={canManage ? ["Save outlet details"] : []} onAction={saveOutletDetails} />
-        <p className="settings-description">Configure the platform outlet IDs for {activeStore?.name || "this UVPRO branch"}.</p>
+        <PanelHead title="Integrations" icon={ShoppingCart} actions={canManage ? ["Refresh"] : []} onAction={refresh} />
+        <p className="settings-description">Secure, branch-isolated online delivery setup for {activeStore?.branch || activeStore?.name || "this UVPRO branch"}.</p>
+        <div className="online-provider-tabs" role="tablist" aria-label="Delivery provider">
+          {["zomato", "swiggy"].map((value) => <button key={value} type="button" role="tab" aria-selected={provider === value} className={provider === value ? "active" : ""} onClick={() => { setProvider(value); setNotice(""); }}>
+            {value === "zomato" ? "Zomato" : "Swiggy"}
+          </button>)}
+        </div>
         <div className="online-integration-notice" role="status">
-          <span className="online-integration-status"><span /> Not connected</span>
-          <div>
-            <strong>Orders are not syncing to UVPRO yet</strong>
-            <small>Saving outlet IDs records your setup details only. Live orders require platform partner approval, API access, and a secure UVPRO server connection.</small>
-          </div>
+          <span className="online-integration-status"><span /> {connection ? connection.status.replaceAll("_", " ") : "Not configured"}</span>
+          <div><strong>{connection?.mode === "test" ? "Test simulator ready" : connection?.mode === "live" ? "Live mode pending partner approval" : "Configure this outlet"}</strong>
+            <small>UVPRO does not call or impersonate aggregator APIs. The simulator signs a synthetic webhook and runs the same validated order-ingest path.</small></div>
         </div>
-        <div className="online-platform-grid">
-          {platforms.map((platform) => (
-            <article className="online-platform-card" key={platform.name}>
-              <div className="online-platform-heading">
-                <div><span className="online-platform-mark">{platform.name === "Zomato" ? "Z" : "S"}</span><h3>{platform.name}</h3></div>
-                <span className="online-integration-status"><span /> Not connected</span>
-              </div>
-              <p>{platform.description}</p>
-              <label>{platform.label}
-                <input value={outlets[platform.field] || ""} onChange={(event) => updateOutlet(platform.field, event.target.value)} disabled={!canManage} placeholder="Enter outlet ID" autoComplete="off" />
-              </label>
-              <a href={platform.href} target="_blank" rel="noreferrer">{platform.linkLabel}</a>
-            </article>
-          ))}
-        </div>
-        <div className="online-integration-footnote"><ShieldCheck size={17} /><span>Do not enter platform passwords or API keys here. API credentials must be stored securely on the UVPRO backend after partner access is approved.</span></div>
-        {!canManage && <p className="permission-note">Admin permission required to edit outlet details.</p>}
-        <div className="row-actions menu-admin-actions"><button onClick={saveOutletDetails} disabled={!canManage}>Save outlet details</button></div>
+        {notice && <p className="permission-note" role="status">{notice}</p>}
+        <form className="online-integration-config" onSubmit={saveConfiguration}>
+          <label htmlFor={inputId("outlet")}>{provider === "zomato" ? "Zomato outlet ID" : "Swiggy outlet ID"}
+            <input id={inputId("outlet")} value={outletId} onChange={(event) => setOutletId(event.target.value)} disabled={!canManage} required maxLength={160} placeholder="Enter approved outlet ID" autoComplete="off" />
+          </label>
+          <label htmlFor={inputId("mode")}>Environment
+            <select id={inputId("mode")} value={mode} onChange={(event) => setMode(event.target.value)} disabled={!canManage}><option value="test">Test simulator</option><option value="live">Live (pending official approval)</option></select>
+          </label>
+          <label htmlFor={inputId("credentials")}>Encrypted credential bundle <small>Optional, opaque JSON from the approved partner kit. Never put credentials in local storage.</small>
+            <input id={inputId("credentials")} type="password" value={credentialsJson} onChange={(event) => setCredentialsJson(event.target.value)} disabled={!canManage} autoComplete="new-password" spellCheck="false" placeholder={connection?.credentialsConfigured ? "Saved securely · enter to replace" : "Paste approved credential JSON only when issued"} />
+          </label>
+          <div className="online-integration-actions"><span>{connection?.credentialsConfigured ? "Server-encrypted credentials saved" : "No credentials saved"}</span><div className="row-actions">{connection?.credentialsConfigured && <button type="button" onClick={clearCredentialBundle} disabled={!canManage || saving}>Clear credentials</button>}<button className="primary-action" type="submit" disabled={!canManage || saving || !storeId}>{saving ? "Saving…" : "Save branch integration"}</button></div></div>
+        </form>
+
+        {connection && <>
+          <div className="online-delivery-section-head"><div><h3>Menu, add-on, GST and stock mapping</h3><p>Each mapping belongs only to this outlet and branch. Online stock is decremented once per accepted unique order.</p></div></div>
+          <form className="online-delivery-mapping-form" onSubmit={saveMapping}>
+            <label>Platform item ID<input value={mappingDraft.providerItemId} onChange={(event) => setMappingField("providerItemId", event.target.value)} required disabled={!canManage} placeholder="Partner menu item ID" /></label>
+            <label>Platform item name<input value={mappingDraft.providerItemName} onChange={(event) => setMappingField("providerItemName", event.target.value)} required disabled={!canManage} placeholder="Listed menu item" /></label>
+            <label>Map to UVPRO menu item<select value={mappingDraft.localItemId} onChange={(event) => { const item = menuItems.find((candidate) => String(candidate.id) === event.target.value); setMappingDraft((current) => ({ ...current, localItemId: event.target.value, localItemName: item?.name || "" })); }} disabled={!canManage} required><option value="">Choose local menu item</option>{menuItems.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label>GST %<input type="number" min="0" max="100" step="0.01" value={mappingDraft.gstRate} onChange={(event) => setMappingField("gstRate", event.target.value)} disabled={!canManage} /></label>
+            <label>Platform price ₹<input type="number" min="0" step="0.01" value={mappingDraft.providerPrice} onChange={(event) => setMappingField("providerPrice", event.target.value)} disabled={!canManage} /></label>
+            <label>Online stock qty<input type="number" min="0" step="0.001" value={mappingDraft.onlineStock} onChange={(event) => setMappingField("onlineStock", event.target.value)} disabled={!canManage} /></label>
+            <label>Add-on mapping JSON<input value={mappingDraft.addonMapping} onChange={(event) => setMappingField("addonMapping", event.target.value)} disabled={!canManage} placeholder='{"provider-addon-id":"UVPRO modifier"}' /></label>
+            <label>KOT printer mapping<input list={inputId("printers")} value={mappingDraft.kotPrinter} onChange={(event) => setMappingField("kotPrinter", event.target.value)} disabled={!canManage} placeholder="Kitchen printer name" /><datalist id={inputId("printers")}><option value={kotPrinter?.name || ""} /></datalist></label>
+            <label className="online-stock-toggle"><input type="checkbox" checked={mappingDraft.isAvailable} onChange={(event) => setMappingField("isAvailable", event.target.checked)} disabled={!canManage} /> Available online</label>
+            <button className="primary-action" type="submit" disabled={!canManage || saving || !connection}>{saving ? "Saving…" : "Save menu mapping"}</button>
+          </form>
+          <div className="online-delivery-table-wrap"><table><thead><tr><th>Platform menu item</th><th>UVPRO menu item</th><th>Add-ons / GST</th><th>Price</th><th>Online stock</th><th>KOT printer</th><th>Availability</th><th>Actions</th></tr></thead><tbody>
+            {mappings.map((mapping) => <tr key={mapping.id}><td><strong>{mapping.provider_item_name}</strong><small>{mapping.provider_item_id}</small></td><td>{mapping.local_item_name}<small>{mapping.local_item_id}</small></td><td>{Object.keys(mapping.addon_mapping || {}).length} add-ons · {mapping.gst_rate}% GST</td><td>{formatMoney(mapping.provider_price)}</td><td>{mapping.online_stock}</td><td>{mapping.kot_printer || "Not mapped"}</td><td>{mapping.is_available ? "Available" : "Out of stock"}</td><td><div className="row-actions"><button type="button" disabled={!canManage} onClick={() => editMapping(mapping)}>Edit</button><button type="button" disabled={!canManage} onClick={() => changeAvailability(mapping)}>{mapping.is_available ? "Mark OOS" : "Make available"}</button><button type="button" disabled={!canManage} onClick={() => deleteMapping(mapping)}>Remove</button></div></td></tr>)}
+            {!mappings.length && <tr><td colSpan="8">No menu mappings yet. Add at least one to run the simulator.</td></tr>}
+          </tbody></table></div>
+
+          <div className="online-delivery-section-head"><div><h3>Signed test-mode webhook simulator</h3><p>Runs a generated HMAC signature through validation, duplicate protection, order creation, stock reservation, and KOT routing. No real provider is contacted.</p></div></div>
+          <form className="online-delivery-simulator" onSubmit={simulateIncomingOrder}>
+            <label>External test order ID<input value={simExternalId} onChange={(event) => setSimExternalId(event.target.value)} required disabled={saving} /></label>
+            <label>Mapped menu item<select value={simItemId} onChange={(event) => setSimItemId(event.target.value)} disabled={!canSimulate || saving}>{mappings.map((mapping) => <option key={mapping.id} value={mapping.provider_item_id}>{mapping.provider_item_name} · stock {mapping.online_stock}</option>)}</select></label>
+            <label>Quantity<input type="number" min="1" max="100" value={simQuantity} onChange={(event) => setSimQuantity(event.target.value)} disabled={!canSimulate || saving} /></label>
+            <button className="primary-action" type="submit" disabled={!canManage || !canSimulate || saving}>{saving ? "Processing…" : `Simulate ${provider} order`}</button>
+          </form>
+
+          <div className="online-delivery-section-head"><div><h3>Delivery orders</h3><p>Branch-scoped order status and audit trail. Rejected or cancelled orders follow the stock-restoration rules.</p></div></div>
+          <div className="online-delivery-table-wrap"><table><thead><tr><th>External order</th><th>Received</th><th>Items</th><th>Total</th><th>Status</th><th>KOT</th><th>Actions</th></tr></thead><tbody>
+            {orders.map((order) => <tr key={order.id}><td><strong>{order.external_order_id}</strong><small>{order.customer_label}</small></td><td>{new Date(order.received_at).toLocaleString()}</td><td>{(order.items || []).map((item) => `${item.quantity} × ${item.localItemName || item.name}`).join(", ")}</td><td>{formatMoney(order.subtotal)}</td><td>{order.status.replaceAll("_", " ")}{order.prep_minutes ? <small>{order.prep_minutes} min prep</small> : null}</td><td>{order.kot_print_status}</td><td><div className="row-actions">{["pending", "failed", "not_configured"].includes(order.kot_print_status) && <button type="button" disabled={!canManage || saving} onClick={() => printExistingOrderKot(order)}>Print KOT</button>}{["new", "needs_review"].includes(order.status) && <><button type="button" disabled={!canManage || saving} onClick={() => changeOrder(order, "accepted")}>Accept</button><button type="button" disabled={!canManage || saving} onClick={() => changeOrder(order, "rejected")}>Reject</button></>}{["accepted", "preparing"].includes(order.status) && <><input aria-label={`Preparation minutes for ${order.external_order_id}`} className="online-prep-minutes" type="number" min="1" max="240" value={prepMinutes} onChange={(event) => setPrepMinutes(event.target.value)} /><button type="button" disabled={!canManage || saving} onClick={() => changeOrder(order, "preparing")}>Set prep</button><button type="button" disabled={!canManage || saving} onClick={() => changeOrder(order, "ready")}>Ready</button></>}{!["rejected", "cancelled"].includes(order.status) && <button type="button" disabled={!canManage || saving} onClick={() => changeOrder(order, "cancelled")}>Cancel</button>}</div></td></tr>)}
+            {!orders.length && <tr><td colSpan="7">{loading ? "Loading orders…" : "No delivery orders for this branch yet."}</td></tr>}
+          </tbody></table></div>
+
+          <div className="online-delivery-section-head"><div><h3>Integration logs and retries</h3><p>Every webhook, stock change, KOT print result, and provider sync attempt is branch scoped.</p></div></div>
+          <div className="online-delivery-table-wrap"><table><thead><tr><th>Time</th><th>Event</th><th>Result</th><th>Details</th></tr></thead><tbody>
+            {logs.map((entry) => <tr key={entry.id}><td>{new Date(entry.created_at).toLocaleString()}</td><td>{entry.event_type}</td><td>{entry.outcome}</td><td>{entry.message}</td></tr>)}
+            {!logs.length && <tr><td colSpan="4">No integration events recorded.</td></tr>}
+          </tbody></table></div>
+          {jobs.some((job) => job.status !== "succeeded") && <div className="online-delivery-jobs"><h4>Retryable / blocked operations</h4>{jobs.filter((job) => job.status !== "succeeded").map((job) => <div key={job.id}><span>{job.event_type} · attempt {job.attempt_count} · {job.last_error || job.status}</span><button type="button" disabled={!canManage} onClick={() => retryJob(job)}>Retry</button></div>)}</div>}
+          <div className="online-integration-footnote"><ShieldCheck size={17} /><span>Live platform requests remain disabled until UVPRO receives partner approval, official API specifications, and server encryption/signing keys. Test credentials are generated ephemerally and never saved.</span></div>
+        </>}
+        {loading && !connection && <p className="permission-note">Loading branch integration…</p>}
+        {!canManage && <p className="permission-note">Restaurant administrator permission is required to manage integrations.</p>}
       </div>
     </section>
   );
 }
 
-function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, canManage, canManageAll, activeStore, setStores, themeConfig, setThemeConfig, setDark }) {
+function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, canManage, canManageAll, activeStore, setStores, menuItems, themeConfig, setThemeConfig, setDark }) {
   const sectionNames = canManageAll ? Object.keys(settingsSectionConfig) : storeSettingsSections;
   const [selectedSetting, setSelectedSetting] = useState(null);
   const settingMeta = {
@@ -10518,7 +10859,7 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
     "Print bill format": ReceiptText,
     "Printer setup": Printer,
     "Payment providers": CreditCard,
-    "Online ordering integrations": ShoppingCart,
+    Integrations: ShoppingCart,
     "Cloudflare R2": DatabaseZap,
     "WhatsApp templates": Bell,
     "Backup policy": DatabaseZap,
@@ -10542,8 +10883,8 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
     return <StoreQrOrderingSettings activeStore={activeStore} notify={notify} canManage={canManage} onBack={() => setSelectedSetting(null)} />;
   }
 
-  if (selectedSetting === "Online ordering integrations") {
-    return <OnlineOrderingIntegrationSettings activeStore={activeStore} canManage={canManage} notify={notify} onBack={() => setSelectedSetting(null)} />;
+  if (selectedSetting === "Integrations") {
+    return <OnlineOrderingIntegrationSettings activeStore={activeStore} canManage={canManage} notify={notify} menuItems={menuItems} kotPrinter={kotPrinter} onBack={() => setSelectedSetting(null)} />;
   }
 
   if (selectedSetting) {
