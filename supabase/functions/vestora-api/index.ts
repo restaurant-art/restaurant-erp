@@ -155,8 +155,13 @@ Deno.serve(async (request) => {
       return json({ deleted: true });
     }
     if (body?.action === "create" && authUser) {
-      const oldStoreId = String(authUser.app_metadata?.vestora?.storeId || "");
-      const oldLoginWasDeleted = authUser.app_metadata?.vestora?.active === false;
+      // Legacy staff assignments are stored in shared app state as well as
+      // Supabase Auth metadata. Some older accounts have no vestora metadata,
+      // so use the server-owned staff record to recognize users from a deleted
+      // branch or an inactive login when a Super Admin reuses their email.
+      const priorStaff = staff.find((entry) => String(entry.email || "").toLowerCase() === email);
+      const oldStoreId = String(authUser.app_metadata?.vestora?.storeId || priorStaff?.storeId || "");
+      const oldLoginWasDeleted = authUser.app_metadata?.vestora?.active === false || priorStaff?.status === "Inactive";
       const oldStoreWasDeleted = Boolean(oldStoreId) && !directory.some((store) => store.id === oldStoreId);
       if (isPlatformAdmin && (oldLoginWasDeleted || oldStoreWasDeleted)) {
         const { error: deleteError } = await admin.auth.admin.deleteUser(authUser.id);
