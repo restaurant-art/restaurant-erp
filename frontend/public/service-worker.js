@@ -1,10 +1,12 @@
-const CACHE_NAME = "vestora-v208";
+const CACHE_NAME = "vestora-v209";
 const assetUrl = (path) => new URL(path, self.registration.scope).toString();
 const SHELL = [
   "",
   "index.html",
   "manifest.webmanifest",
-  "vestora-mark.png",
+  "pwa-icon-192.png",
+  "pwa-icon-512.png",
+  "uvpro-logo-red.png",
   "menu/paneer-tikka-bowl.jpg",
   "menu/hyderabadi-biryani.jpg",
   "menu/tandoori-platter.jpg",

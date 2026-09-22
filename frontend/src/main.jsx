@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import QRCode from "qrcode";
 import {
@@ -102,11 +102,13 @@ const modules = [
   { id: "menu", label: "Menu", icon: ClipboardList },
   { id: "inventory", label: "Inventory", icon: Boxes },
   { id: "production", label: "Production", icon: DatabaseZap },
+  { id: "item-stock", label: "Item Stock", icon: PackageSearch },
   { id: "crm", label: "CRM", icon: Users },
   { id: "offers", label: "Offers & Promotions", icon: Percent },
   { id: "attendance", label: "Attendance", icon: Camera },
   { id: "finance", label: "Finance", icon: BadgeIndianRupee },
   { id: "reports", label: "Reports", icon: FileBarChart },
+  { id: "mis", label: "MIS Reports", icon: Gauge },
   { id: "admin", label: "Admin", icon: ShieldCheck },
   { id: "settings", label: "Settings", icon: Settings },
 ];
@@ -409,6 +411,12 @@ const settingsSectionConfig = {
     fields: [["upiId", "UPI ID"], ["terminal", "Card terminal"], ["wallets", "Wallets"], ["settlement", "Settlement account"]],
     defaults: { upiId: "vestora@upi", terminal: "PineLabs Counter 1", wallets: "Paytm, PhonePe, GPay", settlement: "HDFC Current Account" },
   },
+  "Online ordering integrations": {
+    description: "Set outlet IDs and check the setup requirements for Zomato and Swiggy order integration.",
+    action: "Save outlet details",
+    fields: [],
+    defaults: {},
+  },
   "Cloudflare R2": {
     description: "Cloud backup storage for bills, reports, and uploads.",
     action: "Test R2",
@@ -446,6 +454,7 @@ const storeSettingsSections = [
   "Print bill format",
   "Printer setup",
   "Payment providers",
+  "Online ordering integrations",
   "QR ordering",
   "Theme and language",
 ];
@@ -538,7 +547,6 @@ const defaultBillTemplate = {
   footer: "Thank you. Visit again.",
   terms: "Goods once sold cannot be returned.",
   qrText: "Scan to pay / follow us",
-  copyLabel: "Customer copy",
   showLogo: true,
   showAddress: true,
   showPhone: true,
@@ -599,12 +607,12 @@ const roleModuleAccess = {
   "Super Admin": modules.map((module) => module.id),
   "Restaurant Admin": modules.map((module) => module.id),
   "Restaurant Owner": modules.map((module) => module.id),
-  "Branch Manager": ["dashboard", "pos", "kds", "tables", "menu", "inventory", "production", "crm", "offers", "attendance", "reports", "settings"],
-  "HR Manager": ["dashboard", "attendance", "reports", "settings"],
+  "Branch Manager": ["dashboard", "pos", "kds", "tables", "menu", "inventory", "production", "item-stock", "crm", "offers", "attendance", "reports", "mis", "settings"],
+  "HR Manager": ["dashboard", "attendance", "reports", "mis", "settings"],
   Cashier: ["dashboard", "pos", "tables", "offers", "finance"],
   Waiter: ["tables", "kds"],
-  Chef: ["kds", "inventory", "production"],
-  Accountant: ["dashboard", "finance", "reports"],
+  Chef: ["kds", "inventory", "production", "item-stock"],
+  Accountant: ["dashboard", "finance", "reports", "mis"],
 };
 
 const adminRoleChoicesAll = ["Restaurant Admin", "Branch Manager", "Cashier", "Waiter", "Chef", "Accountant"];
@@ -630,11 +638,30 @@ function roleToAuthRole(role) {
   return "restaurant_user";
 }
 
+function roleLabelForAuthRole(role) {
+  const roleLabels = {
+    super_admin: "Super Admin",
+    owner: "Restaurant Owner",
+    restaurant_admin: "Restaurant Admin",
+    branch_manager: "Branch Manager",
+    manager: "Manager",
+    cashier: "Cashier",
+    waiter: "Waiter",
+    chef: "Chef",
+    kitchen_staff: "Chef",
+    inventory_manager: "Inventory Manager",
+    purchase_manager: "Purchase Manager",
+    hr_manager: "HR Manager",
+    accountant: "Accountant",
+    delivery_boy: "Delivery Boy",
+    supplier: "Supplier",
+  };
+  return roleLabels[role] || role || "Cashier";
+}
+
 function roleLabelForUser(user) {
   if (user?.appRole) return user.appRole;
-  if (["super_admin", "Super Admin"].includes(user?.role)) return "Super Admin";
-  if (["restaurant_admin", "Restaurant Admin"].includes(user?.role)) return "Restaurant Admin";
-  return user?.role || "Cashier";
+  return roleLabelForAuthRole(user?.role);
 }
 
 function normalizeStoreId(storeId) {
@@ -1180,26 +1207,32 @@ function CloudSyncBanner() {
   const status = useCloudSyncStatus();
   // Routine saving is silent. Only a real cloud error needs attention in the
   // bottom corner, where the operator can retry without losing local work.
-  if (status.state !== "error") return null;
+  // Cross-device merge conflicts remain protected in the sync layer, but hide
+  // their internal record key and person name from the operator-facing banner.
+  const isCrossDeviceConflict = /changed on another computer|changes are arriving from another computer/i.test(status.message || "");
+  if (status.state !== "error" || isCrossDeviceConflict) return null;
   return <div className="cloud-sync-banner cloud-sync-error" role="alert"><span>{status.message}</span><button type="button" onClick={() => syncLocalStateToSupabase().catch(() => {})}>Retry</button></div>;
 }
 
 function AuthenticatedApp() {
   const [currentUser, setCurrentUser] = useState(() => {
+    // A device can retain the last staff member's cached profile. Never use
+    // it for a cloud-backed session, because it could briefly expose that
+    // person's navigation while the actual signed-in role is verified.
+    if (supabaseConfigured) return null;
     const saved = localStorage.getItem("vestora-current-user");
     if (!saved) return null;
     const user = JSON.parse(saved);
     return { ...user, role: roleToAuthRole(user.role), appRole: user.appRole || roleLabelForUser(user) };
   });
   const [supabaseStateReady, setSupabaseStateReady] = useState(() => !supabaseConfigured);
-  const [cloudLoadError, setCloudLoadError] = useState("");
-  const [cloudLoadStage, setCloudLoadStage] = useState("Verifying your store sign-in…");
-  const [cloudRetry, setCloudRetry] = useState(0);
   const [active, setActive] = useState("dashboard");
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [returnModule, setReturnModule] = useState("dashboard");
   const [superAdminLanding, setSuperAdminLanding] = useState(() => currentUser?.role === "super_admin" && localStorage.getItem("vestora-super-admin-in-store") !== "true");
   const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia("(max-width: 760px)").matches);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [appInstalled, setAppInstalled] = useState(() => window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true);
   const [adminMenuOpen, setAdminMenuOpen] = useState(false);
   const [adminView, setAdminView] = useState("all");
   const [menuNavOpen, setMenuNavOpen] = useState(false);
@@ -1441,6 +1474,17 @@ function AuthenticatedApp() {
     window.scrollTo(0, 0);
   }
 
+  async function installWebApp() {
+    if (!installPrompt) {
+      notify("Use your browser menu and choose Install UVPRO to add the app to this device.", 4500);
+      return;
+    }
+    installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    setInstallPrompt(null);
+    if (choice?.outcome === "accepted") notify("UVPRO is installing on this device");
+  }
+
   function openOffersView(view) {
     setOffersView(view);
     setOffersNavOpen(true);
@@ -1492,34 +1536,48 @@ function AuthenticatedApp() {
       const isCurrent = () => mounted && attempt === generation;
       window.vestoraSupabaseStateReady = false;
       setSupabaseStateReady(false);
-      setCloudLoadError("");
-      setCloudLoadStage("Verifying your store sign-in…");
       const metadata = session.user.user_metadata || {};
+      const assigned = session.user.app_metadata?.vestora || {};
+      // Do not guess a cashier role while a legacy account's server profile
+      // is still loading. That guess briefly opened a store dashboard for
+      // Super Admins before their platform role was applied.
+      const assignedRole = assigned.role || metadata.role || "";
+      const fallbackRole = assignedRole || "cashier";
       let loginUser = {
         id: session.user.id,
         email: session.user.email || "",
         name: metadata.name || session.user.email || "Supabase user",
-        role: metadata.role || "cashier",
-        appRole: metadata.appRole || metadata.role || "Cashier",
-        storeId: metadata.storeId || "STORE-001",
+        role: roleToAuthRole(fallbackRole),
+        appRole: assigned.appRole || metadata.appRole || roleLabelForAuthRole(fallbackRole),
+        storeId: assigned.storeId || metadata.storeId || "STORE-001",
         status: "Active",
       };
-      setCurrentUser(loginUser);
+      if (assignedRole) {
+        if (loginUser.role === "super_admin") {
+          localStorage.removeItem("vestora-super-admin-in-store");
+          setSuperAdminLanding(true);
+        }
+        setCurrentUser(loginUser);
+      }
       try {
         const profile = await supabaseProfile();
         if (!isCurrent()) return;
         loginUser = { ...loginUser, ...profile, role: roleToAuthRole(profile.role), storeId: profile.storeId || "GLOBAL" };
-        setCloudLoadStage("Loading shared store records and recovering unsent changes…");
         // This includes the authorized directory; a separate directory read
         // delayed startup and its failure was previously hidden.
         await hydrateLocalStateFromSupabase();
         if (!isCurrent()) return;
+        const openSuperAdminLanding = loginUser.role === "super_admin";
+        if (openSuperAdminLanding) {
+          localStorage.removeItem("vestora-super-admin-in-store");
+          setSuperAdminLanding(true);
+        }
         setCurrentUser(loginUser);
         localStorage.setItem("vestora-current-user", JSON.stringify(loginUser));
         if (loginUser.role !== "super_admin") {
           setSelectedStoreId(normalizeStoreId(loginUser.storeId));
         }
-        setSuperAdminLanding(loginUser.role === "super_admin" && localStorage.getItem("vestora-super-admin-in-store") !== "true");
+        if (!openSuperAdminLanding) setSuperAdminLanding(false);
         const loginRole = roleLabelForUser(loginUser);
         const landingModule = loginRole === "Waiter" ? "tables" : loginRole === "Chef" ? "kds" : "dashboard";
         setActive(landingModule);
@@ -1527,8 +1585,10 @@ function AuthenticatedApp() {
         window.vestoraSupabaseStateReady = true;
         setSupabaseStateReady(true);
         loadedUserId = session.user.id;
-      } catch (error) {
-        if (isCurrent()) setCloudLoadError(error.message || "Store data could not be loaded. Please retry.");
+      } catch {
+        // The workspace remains usable from its saved local copy while the
+        // background connection is restored. Writes stay protected until
+        // hydration completes.
       } finally {
         if (isCurrent()) applying = false;
       }
@@ -1540,7 +1600,6 @@ function AuthenticatedApp() {
         generation++;
         applying = false;
         loadedUserId = "";
-        setCloudLoadError("");
         window.vestoraSupabaseStateReady = false;
         stopCloudSync();
         setCurrentUser(null);
@@ -1549,16 +1608,14 @@ function AuthenticatedApp() {
     });
     // Register the listener before loading the session so recovery links do
     // not lose the PASSWORD_RECOVERY event during Supabase initialization.
-    getSupabaseSession().then((session) => applySession(session)).catch((error) => {
-      if (mounted) setCloudLoadError(error.message);
-    });
+    getSupabaseSession().then((session) => applySession(session)).catch(() => {});
     return () => {
       mounted = false;
       generation++;
       stopCloudSync();
       listener.subscription.unsubscribe();
     };
-  }, [cloudRetry]);
+  }, []);
 
   useEffect(() => {
     if (!supabaseConfigured || !currentUser || !supabaseStateReady) return undefined;
@@ -1639,11 +1696,25 @@ function AuthenticatedApp() {
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
-    if (["localhost", "127.0.0.1"].includes(window.location.hostname)) {
-      navigator.serviceWorker.getRegistrations().then((registrations) => registrations.forEach((registration) => registration.unregister()));
-      return;
-    }
-    navigator.serviceWorker.register(publicAssetPath("service-worker.js"), { updateViaCache: "none" });
+    navigator.serviceWorker.register(publicAssetPath("service-worker.js"), { updateViaCache: "none" }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const captureInstallPrompt = (event) => {
+      event.preventDefault();
+      setInstallPrompt(event);
+    };
+    const markInstalled = () => {
+      setInstallPrompt(null);
+      setAppInstalled(true);
+      notify("UVPRO is installed and ready to open like an app");
+    };
+    window.addEventListener("beforeinstallprompt", captureInstallPrompt);
+    window.addEventListener("appinstalled", markInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", captureInstallPrompt);
+      window.removeEventListener("appinstalled", markInstalled);
+    };
   }, []);
 
   useEffect(() => {
@@ -1997,15 +2068,6 @@ function AuthenticatedApp() {
     notify(`Refund saved for ${refund.billId}`);
   }
 
-  if (supabaseConfigured && !supabaseStateReady && (currentUser || cloudLoadError)) {
-    return <div className="login-screen"><section className="store-loading-panel" aria-live="polite">
-      <h2>{cloudLoadError ? "Store connection needs attention" : "Loading your store data"}</h2>
-      <p role={cloudLoadError ? "alert" : "status"}>{cloudLoadError || cloudLoadStage}</p>
-      <p className="store-loading-note">Your saved records remain on this computer. Do not clear browser data.</p>
-      <div className="store-loading-actions"><button onClick={() => setCloudRetry((value) => value + 1)}>Retry connection</button><button onClick={handleLogout}>Sign out</button></div>
-    </section></div>;
-  }
-
   if (!currentUser) {
     return <LoginScreen onLogin={handleLogin} />;
   }
@@ -2059,11 +2121,20 @@ function AuthenticatedApp() {
     menu: <MenuManagement key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} productItems={productItems} setProductItems={setProductItems} activeView={menuView} editingItemId={menuItemEditId} onNavigate={openMenuView} />,
     inventory: <Inventory key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} cloudStateReady={supabaseStateReady} />,
     production: <Production key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} activeView={productionView} activeReport={productionReportView} onViewChange={setProductionView} foodStock={foodStock} onFoodStockChange={updateFoodStock} cloudStateReady={supabaseStateReady} />,
+    "item-stock": <ItemStock
+      key={activeStore.id}
+      foodStock={foodStock}
+      onFoodStockChange={updateFoodStock}
+      canManage={canManage}
+      notify={notify}
+      onOpenProduction={() => openProductionView("Food Stock")}
+    />,
     crm: <CRM notify={notify} canManageAll={canManage} storeId={activeStore.id} salesLedger={scopedSalesLedger} />,
-    attendance: <AttendanceModule key={activeStore.id} notify={notify} activeStore={activeStore} users={users} canManage={canManage} canManageAll={canManageAll} activeView={attendanceView} onViewChange={setAttendanceView} onOpenAdmin={() => openAdminView("create")} />,
+    attendance: <AttendanceModule key={activeStore.id} notify={notify} activeStore={activeStore} stores={stores} users={users} canManage={canManage} canManageAll={canManageAll} activeView={attendanceView} onViewChange={setAttendanceView} onOpenAdmin={() => openAdminView("create")} />,
     offers: <OffersPromotions key={activeStore.id} storeId={activeStore.id} productItems={productItems} notify={notify} canManage={canManage} activeView={offersView} onViewChange={setOffersView} />,
   finance: <Finance notify={notify} canManageAll={canManage} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} storeId={activeStore.id} view={financeView} />,
     reports: <Reports notify={notify} storeId={activeStore.id} salesLedger={scopedSalesLedger} voidLedger={scopedVoidLedger} refundLedger={scopedRefundLedger} onRefund={recordRefund} lastShiftClose={lastShiftClose} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} activeView={reportView} onReportChange={setReportView} />,
+    mis: <MISReports salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} notify={notify} />,
     admin: <Admin notify={notify} users={users} setUsers={setUsers} currentUser={currentUser} canManageAll={canManageAll} canManageStore={canManage} stores={stores} activeStore={activeStore} activeView={adminView} onViewChange={openAdminView} customRoles={customRoles} setCustomRoles={setCustomRoles} />,
     settings: <SettingsView notify={notify} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} canManage={canManage} canManageAll={canManageAll} activeStore={activeStore} setStores={setStores} themeConfig={{ ...themeConfig, mode: dark ? "Dark" : "Light" }} setThemeConfig={setThemeConfig} setDark={setDark} />,
   }[activeModule];
@@ -2263,6 +2334,7 @@ function AuthenticatedApp() {
               </>
             ) : <span className="pill store-pill">{activeStore.branch} store</span>}
             <span className="pill role-pill">{currentRoleLabel}</span>
+            {!appInstalled && <button className="install-app-button" type="button" onClick={installWebApp} title="Install UVPRO as an application"><Download size={16} /><span>Install app</span></button>}
             <button className="icon-btn" onClick={() => notify("No new notifications")} title="Notifications"><Bell size={18} /></button>
             <button className="icon-btn" onClick={() => setThemeConfig((current) => ({ ...current, mode: dark ? "Light" : "Dark" }))} title="Toggle theme">{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
             <button className="icon-btn" onClick={handleLogout} title="Logout"><LogOut size={18} /></button>
@@ -3255,6 +3327,353 @@ function Dashboard({ notify, salesLedger, refundLedger = [], kdsOrders, comparis
   );
 }
 
+function escapePdfText(value) {
+  return String(value ?? "").replace(/₹/g, "Rs. ").replace(/[^\x20-\x7E]/g, " ").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+}
+
+function downloadManagementReportPdf({ range, periodLabel, priorPeriodLabel, current, previous, performanceGraph, categoryData, topItems, salesActions }) {
+  const pageWidth = 595;
+  const pageHeight = 842;
+  const content = [];
+  const money = (value) => `Rs. ${Math.round(Number(value || 0)).toLocaleString("en-IN")}`;
+  const write = (x, y, size, value, { bold = false, color = "0.06 0.16 0.13" } = {}) => content.push(`BT /${bold ? "F2" : "F1"} ${size} Tf ${color} rg ${x} ${y} Td (${escapePdfText(value)}) Tj ET`);
+  const rectangle = (x, y, width, height, color) => content.push(`${color} rg ${x} ${y} ${width} ${height} re f`);
+  const line = (x1, y1, x2, y2, color = "0.82 0.88 0.85") => content.push(`${color} RG 0.6 w ${x1} ${y1} m ${x2} ${y2} l S`);
+  const wrap = (value, maxLength = 76) => {
+    const words = String(value).split(" ");
+    const lines = [];
+    let currentLine = "";
+    words.forEach((word) => {
+      const candidate = currentLine ? `${currentLine} ${word}` : word;
+      if (candidate.length > maxLength && currentLine) {
+        lines.push(currentLine);
+        currentLine = word;
+      } else currentLine = candidate;
+    });
+    if (currentLine) lines.push(currentLine);
+    return lines;
+  };
+  const maxSales = Math.max(1, ...performanceGraph.flatMap((entry) => [Number(entry.sales || 0), Number(entry.previousSales || 0)]));
+  const maxCategory = Math.max(1, ...categoryData.map((entry) => Number(entry.sales || 0)));
+
+  rectangle(0, 0, pageWidth, pageHeight, "0.98 0.99 0.98");
+  rectangle(0, 778, pageWidth, 64, "0.06 0.28 0.22");
+  write(42, 808, 18, "UVPRO | MANAGEMENT INFORMATION SYSTEM", { bold: true, color: "1 1 1" });
+  write(42, 789, 10, `${range.toUpperCase()} REPORT  •  ${periodLabel}`, { color: "0.85 0.94 0.9" });
+  write(42, 756, 9, `Generated ${new Date().toLocaleString("en-IN")}`, { color: "0.31 0.43 0.38" });
+
+  write(42, 728, 13, "Sales analysis", { bold: true, color: "0.08 0.28 0.22" });
+  rectangle(42, 692, 511, 22, "0.12 0.35 0.28");
+  const columns = [42, 128, 198, 285, 374, 461];
+  ["Period", "Total bills", "Gross sales", "Net sales", "GST", "ABV"].forEach((label, index) => write(columns[index] + 6, 700, 8, label, { bold: true, color: "1 1 1" }));
+  const rows = [
+    [periodLabel, current.orders, money(current.grossSales), money(current.netSales), money(current.tax), money(current.averageBill)],
+    [priorPeriodLabel, previous.orders, money(previous.grossSales), money(previous.netSales), money(previous.tax), money(previous.averageBill)],
+  ];
+  rows.forEach((row, rowIndex) => {
+    const rowY = 664 - rowIndex * 25;
+    rectangle(42, rowY - 7, 511, 23, rowIndex === 0 ? "0.92 0.97 0.94" : "1 1 1");
+    row.forEach((value, index) => write(columns[index] + 6, rowY, 8, value, { bold: index === 0, color: "0.08 0.19 0.15" }));
+  });
+
+  write(42, 605, 12, `${range} sales comparison`, { bold: true, color: "0.08 0.28 0.22" });
+  const chartBottom = 454;
+  const chartHeight = 122;
+  line(42, chartBottom, 553, chartBottom);
+  line(42, chartBottom + chartHeight, 553, chartBottom + chartHeight, "0.9 0.93 0.91");
+  performanceGraph.forEach((entry, index) => {
+    const groupWidth = 511 / performanceGraph.length;
+    const x = 54 + index * groupWidth;
+    const currentHeight = (Number(entry.sales || 0) / maxSales) * chartHeight;
+    const priorHeight = (Number(entry.previousSales || 0) / maxSales) * chartHeight;
+    rectangle(x, chartBottom, 14, currentHeight, "0.08 0.42 0.32");
+    rectangle(x + 17, chartBottom, 14, priorHeight, "0.72 0.78 0.75");
+    write(x - 2, chartBottom - 15, 7, entry.label, { color: "0.31 0.43 0.38" });
+  });
+  rectangle(42, 420, 10, 10, "0.08 0.42 0.32");
+  write(57, 422, 8, periodLabel, { color: "0.31 0.43 0.38" });
+  rectangle(126, 420, 10, 10, "0.72 0.78 0.75");
+  write(141, 422, 8, priorPeriodLabel, { color: "0.31 0.43 0.38" });
+
+  write(42, 389, 12, "Category-wise sales contribution", { bold: true, color: "0.08 0.28 0.22" });
+  categoryData.slice(0, 4).forEach((entry, index) => {
+    const y = 362 - index * 25;
+    write(42, y, 8, entry.category, { color: "0.17 0.28 0.24" });
+    rectangle(176, y - 5, 250 * (Number(entry.sales || 0) / maxCategory), 11, index % 2 ? "0.66 0.47 0.17" : "0.22 0.53 0.42");
+    write(435, y, 8, money(entry.sales), { bold: true, color: "0.17 0.28 0.24" });
+  });
+
+  write(42, 255, 12, "Top selling items", { bold: true, color: "0.08 0.28 0.22" });
+  topItems.slice(0, 2).forEach((item, index) => {
+    const y = 234 - index * 18;
+    write(42, y, 8, `${index + 1}. ${item.name}`, { bold: true, color: "0.17 0.28 0.24" });
+    write(292, y, 8, `${item.quantity} sold`, { color: "0.31 0.43 0.38" });
+    write(435, y, 8, money(item.sales), { bold: true, color: "0.17 0.28 0.24" });
+  });
+
+  write(42, 175, 12, "Recommended next sales actions", { bold: true, color: "0.08 0.28 0.22" });
+  let actionY = 155;
+  salesActions.slice(0, 4).forEach((action) => {
+    const actionLines = wrap(`${action.title}: ${action.text}`, 78);
+    actionLines.forEach((lineText, lineIndex) => {
+      write(54, actionY, 8.4, `${lineIndex === 0 ? "• " : "  "}${lineText}`, { color: "0.22 0.32 0.28" });
+      actionY -= 12;
+    });
+    actionY -= 3;
+  });
+  line(42, 42, 553, 42);
+  write(42, 27, 8, "UVPRO ERP & POS · Internal management report", { color: "0.31 0.43 0.38" });
+  write(476, 27, 8, "Page 1 of 1", { color: "0.31 0.43 0.38" });
+
+  const stream = content.join("\n");
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>`,
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(pdf.length);
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  offsets.slice(1).forEach((offset) => { pdf += `${String(offset).padStart(10, "0")} 00000 n \n`; });
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  const link = document.createElement("a");
+  const url = URL.createObjectURL(new Blob([pdf], { type: "application/pdf" }));
+  link.href = url;
+  link.download = `UVPRO-${range}-MIS-${localDateKey()}.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function MISReports({ salesLedger = [], refundLedger = [], notify }) {
+  const [range, setRange] = useState("Weekly");
+  const now = new Date();
+  const daysInRange = range === "Daily" ? 1 : range === "Weekly" ? 7 : 30;
+  const currentStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  currentStart.setDate(currentStart.getDate() - (daysInRange - 1));
+  const previousStart = new Date(currentStart);
+  previousStart.setDate(previousStart.getDate() - daysInRange);
+
+  function isWithin(value, start, end) {
+    const date = new Date(value);
+    return !Number.isNaN(date.getTime()) && date >= start && date < end;
+  }
+
+  function billsIn(start, end) {
+    return salesLedger.filter((bill) => isWithin(bill.createdAt, start, end));
+  }
+
+  function refundsIn(start, end) {
+    return refundLedger.filter((refund) => isWithin(refund.createdAt, start, end));
+  }
+
+  function summaryFor(bills, refunds) {
+    const grossSales = bills.reduce((sum, bill) => sum + Number(bill.total || 0), 0);
+    const refundAmount = refunds.reduce((sum, refund) => sum + Number(refund.amount || 0), 0);
+    const tax = bills.reduce((sum, bill) => sum + Number(bill.tax || 0), 0);
+    const discount = bills.reduce((sum, bill) => sum + Number(bill.discount || 0), 0);
+    return {
+      grossSales,
+      refunds: refundAmount,
+      netSales: grossSales - refundAmount,
+      orders: bills.length,
+      tax,
+      discount,
+      averageBill: bills.length ? (grossSales - refunds) / bills.length : 0,
+    };
+  }
+
+  const currentBills = billsIn(currentStart, now);
+  const previousBills = billsIn(previousStart, currentStart);
+  const current = summaryFor(currentBills, refundsIn(currentStart, now));
+  const previous = summaryFor(previousBills, refundsIn(previousStart, currentStart));
+  const percentageChange = (value, previousValue) => previousValue ? ((value - previousValue) / previousValue) * 100 : null;
+  const salesChange = percentageChange(current.netSales, previous.netSales);
+  const billsChange = percentageChange(current.orders, previous.orders);
+  const abvChange = percentageChange(current.averageBill, previous.averageBill);
+  const periodLabel = range === "Daily" ? "Today" : range === "Weekly" ? "Last 7 days" : "Last 30 days";
+  const priorPeriodLabel = range === "Daily" ? "Yesterday" : range === "Weekly" ? "Previous 7 days" : "Previous 30 days";
+
+  function bucketSummary(start, end) {
+    return summaryFor(billsIn(start, end), refundsIn(start, end));
+  }
+
+  const performanceGraph = range === "Daily"
+    ? Array.from({ length: 6 }, (_, index) => {
+      const start = new Date(currentStart);
+      start.setHours(index * 4, 0, 0, 0);
+      const end = new Date(start);
+      end.setHours(end.getHours() + 4);
+      const priorStart = new Date(previousStart);
+      priorStart.setHours(index * 4, 0, 0, 0);
+      const priorEnd = new Date(priorStart);
+      priorEnd.setHours(priorEnd.getHours() + 4);
+      const summary = bucketSummary(start, end);
+      const prior = bucketSummary(priorStart, priorEnd);
+      return { label: `${String(start.getHours()).padStart(2, "0")}:00`, sales: summary.netSales, previousSales: prior.netSales, orders: summary.orders, previousOrders: prior.orders };
+    })
+    : range === "Weekly"
+      ? Array.from({ length: 7 }, (_, index) => {
+        const start = new Date(currentStart);
+        start.setDate(start.getDate() + index);
+        const end = new Date(start);
+        end.setDate(end.getDate() + 1);
+        const priorStart = new Date(previousStart);
+        priorStart.setDate(priorStart.getDate() + index);
+        const priorEnd = new Date(priorStart);
+        priorEnd.setDate(priorEnd.getDate() + 1);
+        const summary = bucketSummary(start, end);
+        const prior = bucketSummary(priorStart, priorEnd);
+        return { label: start.toLocaleDateString("en-IN", { weekday: "short" }), sales: summary.netSales, previousSales: prior.netSales, orders: summary.orders, previousOrders: prior.orders };
+      })
+      : [0, 7, 14, 21].map((offset, index) => {
+        const length = index === 3 ? 9 : 7;
+        const start = new Date(currentStart);
+        start.setDate(start.getDate() + offset);
+        const end = new Date(start);
+        end.setDate(end.getDate() + length);
+        const priorStart = new Date(previousStart);
+        priorStart.setDate(priorStart.getDate() + offset);
+        const priorEnd = new Date(priorStart);
+        priorEnd.setDate(priorEnd.getDate() + length);
+        const summary = bucketSummary(start, end);
+        const prior = bucketSummary(priorStart, priorEnd);
+        return { label: `Week ${index + 1}`, sales: summary.netSales, previousSales: prior.netSales, orders: summary.orders, previousOrders: prior.orders };
+      });
+
+  const categoryData = Object.entries(currentBills.flatMap((bill) => bill.items || []).reduce((groups, item) => {
+    const category = item.category || "Menu sales";
+    groups[category] = (groups[category] || 0) + Number(item.price || 0) * Number(item.qty || 0);
+    return groups;
+  }, {})).map(([category, sales]) => ({ category, sales })).sort((first, second) => second.sales - first.sales).slice(0, 6);
+  const totalCategorySales = categoryData.reduce((sum, category) => sum + category.sales, 0);
+  const topCategory = categoryData[0];
+  const topItems = Object.entries(currentBills.flatMap((bill) => bill.items || []).reduce((items, item) => {
+    const name = item.name || "Unnamed item";
+    const currentItem = items[name] || { name, quantity: 0, sales: 0 };
+    currentItem.quantity += Number(item.qty || 0);
+    currentItem.sales += Number(item.price || 0) * Number(item.qty || 0);
+    items[name] = currentItem;
+    return items;
+  }, {})).map(([, item]) => item).sort((first, second) => second.sales - first.sales).slice(0, 5);
+  const topItem = topItems[0];
+  const channelData = Object.entries(currentBills.reduce((channels, bill) => {
+    const channel = bill.orderType || "Other";
+    const currentChannel = channels[channel] || { orders: 0, sales: 0 };
+    currentChannel.orders += 1;
+    currentChannel.sales += Number(bill.total || 0);
+    channels[channel] = currentChannel;
+    return channels;
+  }, {})).map(([channel, values]) => ({ channel, ...values })).sort((first, second) => second.sales - first.sales);
+  const topChannel = channelData[0];
+  const daypartData = [
+    { label: "Breakfast", start: 6, end: 11, orders: 0, sales: 0 },
+    { label: "Lunch", start: 11, end: 15, orders: 0, sales: 0 },
+    { label: "Evening", start: 15, end: 19, orders: 0, sales: 0 },
+    { label: "Dinner", start: 19, end: 24, orders: 0, sales: 0 },
+  ];
+  currentBills.forEach((bill) => {
+    const hour = new Date(bill.createdAt).getHours();
+    const daypart = daypartData.find((entry) => hour >= entry.start && hour < entry.end);
+    if (!daypart) return;
+    daypart.orders += 1;
+    daypart.sales += Number(bill.total || 0);
+  });
+  const strongestDaypart = [...daypartData].sort((first, second) => second.sales - first.sales)[0];
+  const managementNotes = [
+    current.orders
+      ? `${periodLabel} net sales are ${formatMoney(current.netSales)} from ${current.orders} bill${current.orders === 1 ? "" : "s"}.`
+      : `No completed bills have been recorded for ${periodLabel.toLowerCase()}.`,
+    salesChange === null
+      ? `Sales comparison will appear after ${priorPeriodLabel.toLowerCase()} has activity.`
+      : `Net sales are ${Math.abs(salesChange).toFixed(1)}% ${salesChange >= 0 ? "higher" : "lower"} than ${priorPeriodLabel.toLowerCase()}.`,
+    topCategory
+      ? `${topCategory.category} leads category contribution at ${totalCategorySales ? ((topCategory.sales / totalCategorySales) * 100).toFixed(1) : 0}% of item sales.`
+      : "Category contribution will appear after a bill with menu items is completed.",
+    current.refunds || current.discount
+      ? `Refunds and discounts total ${formatMoney(current.refunds + current.discount)}; review them with the finance team.`
+      : "No refunds or discounts were recorded in this period.",
+  ];
+  const salesActions = current.orders ? [
+    {
+      priority: "Priority now",
+      title: `Push ${topItem?.name || "your leading item"}`,
+      text: `${topItem?.quantity || 0} units generated ${formatMoney(topItem?.sales || 0)}. Feature it as a counter highlight and pair it with one profitable add-on.`,
+    },
+    {
+      priority: "Average bill value",
+      title: "Build a simple combo offer",
+      text: `Current average bill is ${formatMoney(current.averageBill)}. Aim for ${formatMoney(current.averageBill * 1.1)} by offering one beverage, dessert, or side at checkout.`,
+    },
+    {
+      priority: "Peak service",
+      title: `Staff for ${strongestDaypart?.label || "your busiest"}`,
+      text: `${strongestDaypart?.orders || 0} bills were recorded in this service window. Keep the top seller ready and use a quick upsell script during this period.`,
+    },
+    {
+      priority: "Channel growth",
+      title: `Strengthen ${topChannel?.channel || "your main"} sales`,
+      text: `${topChannel?.channel || "This channel"} contributes ${formatMoney(topChannel?.sales || 0)}. Promote a pickup or delivery offer to create an additional order channel.`,
+    },
+  ] : [
+    { priority: "Priority now", title: "Create a seven-day sales baseline", text: "Complete bills with item names and order channels so MIS can identify the most profitable products and service periods." },
+    { priority: "Menu visibility", title: "Feature three signature products", text: "Place them first in the menu and ask staff to recommend one add-on with every order." },
+    { priority: "Repeat demand", title: "Run one simple combo offer", text: "Use a food plus beverage or dessert offer during the main service period and track the bill value change." },
+  ];
+  const downloadPdf = () => {
+    downloadManagementReportPdf({ range, periodLabel, priorPeriodLabel, current, previous, performanceGraph, categoryData, topItems, salesActions });
+    notify?.(`${range} MIS report downloaded as PDF`);
+  };
+
+  return (
+    <section className="screen mis-screen">
+      <div className="panel mis-header-panel">
+        <PanelHead title="Management Information System" icon={Gauge} actions={["Daily", "Weekly", "Monthly"]} activeAction={range} onAction={setRange} />
+        <div className="mis-header-copy"><div><span>MANAGEMENT REPORT</span><h3>{periodLabel} performance summary</h3><p>Choose a report period, review the live management analysis, then download the selected PDF.</p></div><strong>Updated {now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</strong></div>
+        <div className="mis-report-actions"><div><span>Selected report</span><strong>{range}</strong></div><button type="button" onClick={downloadPdf}><Download size={17} /> Download {range} PDF</button></div>
+      </div>
+
+      <div className="metric-grid mis-metric-grid">
+        <Metric icon={BadgeIndianRupee} label="Net sales" value={formatMoney(current.netSales)} trend={salesChange === null ? "No prior comparison" : `${salesChange >= 0 ? "+" : ""}${salesChange.toFixed(1)}% vs previous`} danger={salesChange !== null && salesChange < 0} />
+        <Metric icon={ReceiptText} label="Total bills" value={String(current.orders)} trend={billsChange === null ? "No prior comparison" : `${billsChange >= 0 ? "+" : ""}${billsChange.toFixed(1)}% vs previous`} danger={billsChange !== null && billsChange < 0} />
+        <Metric icon={ShoppingCart} label="Average bill value" value={formatMoney(current.averageBill)} trend={abvChange === null ? "No prior comparison" : `${abvChange >= 0 ? "+" : ""}${abvChange.toFixed(1)}% vs previous`} danger={abvChange !== null && abvChange < 0} />
+        <Metric icon={Percent} label="GST collected" value={formatMoney(current.tax)} trend={current.refunds ? `${formatMoney(current.refunds)} refunded` : "No refunds"} />
+      </div>
+
+      <div className="mis-analysis-table panel">
+        <div className="mis-panel-title"><div><span>SALES ANALYSIS</span><h2>{periodLabel} versus {priorPeriodLabel}</h2></div><small>Live POS data</small></div>
+        <div className="mis-table-wrap"><table><thead><tr><th>Period</th><th>Total bills</th><th>Gross sales</th><th>Net sales</th><th>GST collected</th><th>Discount</th><th>Average bill value</th></tr></thead><tbody>
+          <tr><td><strong>{periodLabel}</strong></td><td>{current.orders}</td><td>{formatMoney(current.grossSales)}</td><td>{formatMoney(current.netSales)}</td><td>{formatMoney(current.tax)}</td><td>{formatMoney(current.discount)}</td><td>{formatMoney(current.averageBill)}</td></tr>
+          <tr><td><strong>{priorPeriodLabel}</strong></td><td>{previous.orders}</td><td>{formatMoney(previous.grossSales)}</td><td>{formatMoney(previous.netSales)}</td><td>{formatMoney(previous.tax)}</td><td>{formatMoney(previous.discount)}</td><td>{formatMoney(previous.averageBill)}</td></tr>
+        </tbody></table></div>
+      </div>
+
+      <div className="mis-chart-grid">
+        <div className="panel mis-chart-panel"><div className="mis-panel-title"><div><span>SALES</span><h2>{range} sales</h2></div><small>Current vs previous</small></div><ResponsiveContainer width="100%" height={290}><BarChart data={performanceGraph} barGap={6}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="label" /><YAxis tickFormatter={(value) => `₹${Math.round(value / 1000)}k`} /><Tooltip formatter={(value) => formatMoney(value)} /><Bar dataKey="sales" name={periodLabel} fill="#176b56" radius={[7, 7, 0, 0]} /><Bar dataKey="previousSales" name={priorPeriodLabel} fill="#b9c7c1" radius={[7, 7, 0, 0]} /></BarChart></ResponsiveContainer></div>
+        <div className="panel mis-chart-panel"><div className="mis-panel-title"><div><span>BILLS</span><h2>{range} bill count</h2></div><small>Current vs previous</small></div><ResponsiveContainer width="100%" height={290}><BarChart data={performanceGraph} barGap={6}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="label" /><YAxis allowDecimals={false} /><Tooltip /><Bar dataKey="orders" name={periodLabel} fill="#a9782b" radius={[7, 7, 0, 0]} /><Bar dataKey="previousOrders" name={priorPeriodLabel} fill="#e4d2ad" radius={[7, 7, 0, 0]} /></BarChart></ResponsiveContainer></div>
+      </div>
+
+      <div className="mis-bottom-grid">
+        <div className="panel mis-chart-panel"><div className="mis-panel-title"><div><span>CATEGORY CONTRIBUTION</span><h2>Sales contribution</h2></div><small>{categoryData.length} categories</small></div>{categoryData.length ? <ResponsiveContainer width="100%" height={Math.max(230, categoryData.length * 43)}><BarChart data={categoryData} layout="vertical" margin={{ left: 16 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" tickFormatter={(value) => `₹${Math.round(value / 1000)}k`} /><YAxis type="category" dataKey="category" width={105} /><Tooltip formatter={(value) => formatMoney(value)} /><Bar dataKey="sales" fill="#6b9a86" radius={[0, 7, 7, 0]} /></BarChart></ResponsiveContainer> : <div className="mis-empty-chart">Complete POS bills to view category contribution.</div>}</div>
+        <div className="panel mis-notes-panel"><div className="mis-panel-title"><div><span>MANAGEMENT NOTES</span><h2>Key observations</h2></div><FileBarChart size={20} /></div><ul>{managementNotes.map((note) => <li key={note}>{note}</li>)}</ul><div className="mis-note-footer"><span>Net sales</span><strong>{formatMoney(current.netSales)}</strong><span>Refunds</span><strong>{formatMoney(current.refunds)}</strong></div></div>
+      </div>
+      <div className="mis-bottom-grid">
+        <div className="panel mis-top-items-panel"><div className="mis-panel-title"><div><span>TOP SELLERS</span><h2>Products driving sales</h2></div><small>{topItems.length} products</small></div>{topItems.length ? <div className="mis-top-item-list">{topItems.map((item, index) => <div key={item.name}><span>{index + 1}</span><strong>{item.name}</strong><small>{item.quantity} sold</small><b>{formatMoney(item.sales)}</b></div>)}</div> : <div className="mis-empty-chart">Complete POS bills to identify top sellers.</div>}</div>
+        <div className="panel mis-actions-panel"><div className="mis-panel-title"><div><span>NEXT SALES ACTIONS</span><h2>What the store should do next</h2></div><Sparkles size={20} /></div><div className="mis-action-list">{salesActions.map((action) => <div key={action.title}><span>{action.priority}</span><strong>{action.title}</strong><p>{action.text}</p></div>)}</div></div>
+      </div>
+    </section>
+  );
+}
+
 function CashierLogin({ cashiers, activeStore, stores = [], currentShift, onAuthenticated, onExit, onLogout, onCreateCashier }) {
   const [selectedCashier, setSelectedCashier] = useState(null);
   const [password, setPassword] = useState("");
@@ -3403,7 +3822,8 @@ function BillReceiptHeader({ billTemplate }) {
         {billTemplate.tagline && <small>{billTemplate.tagline}</small>}
         {billTemplate.showAddress !== false && <span>{billTemplate.address}</span>}
         {(billTemplate.showPhone !== false || billTemplate.showEmail) && <span>{[billTemplate.showPhone !== false && billTemplate.phone, billTemplate.showEmail && billTemplate.email].filter(Boolean).join(" | ")}</span>}
-        {(billTemplate.showGst !== false || billTemplate.showFssai !== false) && <span>{[billTemplate.showGst !== false && `GST ${billTemplate.gst}`, billTemplate.showFssai !== false && `FSSAI ${billTemplate.fssai}`].filter(Boolean).join(" - ")}</span>}
+        {billTemplate.gst && <span className="bill-gstin">GSTIN: {billTemplate.gst}</span>}
+        {billTemplate.showFssai !== false && billTemplate.fssai && <span>FSSAI: {billTemplate.fssai}</span>}
       </div>
     </div>
   );
@@ -3414,8 +3834,7 @@ function BillReceiptFooter({ billTemplate }) {
     <>
       {billTemplate.showQrBox && <div className="bill-qr-box"><span>QR</span><strong>{billTemplate.qrText || "Scan to pay"}</strong></div>}
       {billTemplate.showTerms !== false && billTemplate.terms && <span className="bill-terms">{billTemplate.terms}</span>}
-      {billTemplate.footer && <span>{billTemplate.footer}</span>}
-      {billTemplate.copyLabel && <span className="bill-copy-label">{billTemplate.copyLabel}</span>}
+      {billTemplate.footer && <><span className="bill-footer-message">{billTemplate.footer}</span><div className="bill-tear-line" aria-hidden="true" /></>}
     </>
   );
 }
@@ -3717,6 +4136,9 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
 
   function printCompletedBill() {
     if (!completedBill) return;
+    const cleanup = () => document.body.classList.remove("printing-completed-bill");
+    document.body.classList.add("printing-completed-bill");
+    window.addEventListener("afterprint", cleanup, { once: true });
     notify("Opening print preview");
     window.setTimeout(() => window.print(), 80);
   }
@@ -3803,7 +4225,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
     setShowReceptionQueue(true);
   }
 
-  const billPaperClass = `bill-paper print-bill bill-layout-${String(billTemplate.layout || "Detailed").toLowerCase()}`;
+  const billPaperClass = `bill-paper print-bill bill-paper-size-${billTemplate.printerSize === "58mm" ? "58" : "80"} bill-layout-${String(billTemplate.layout || "Detailed").toLowerCase()}`;
   const previewBillPaperClass = completedBill ? billPaperClass.replace(" print-bill", "") : billPaperClass;
   const billPaperStyle = getBillPaperStyle(billTemplate);
 
@@ -4208,7 +4630,6 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
   const [qrTable, setQrTable] = useState(null);
   const [qrImage, setQrImage] = useState("");
   const [qrLoading, setQrLoading] = useState(false);
-  const tableSync = useCloudSyncStatus();
   const visibleTables = tables.filter((table) => table.floor === floor);
   const selectedTable = tables.find((table) => table.id === selected);
   const catalogItems = (items?.length ? items : menuItems).filter((item) => item.status !== "Inactive");
@@ -4597,10 +5018,6 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
 
   return (
     <section className="screen">
-      <div className="panel inventory-sync-status" role="status" aria-live="polite">
-        {tableSync.state === "synced" ? <CircleCheck size={18} /> : <AlertTriangle size={18} />}
-        <span>{cloudStateReady && supabaseConfigured ? tableSync.message : "Table layout is waiting for cloud sign-in before it can be shared."}</span>
-      </div>
       <div className="floorbar">
         <div className="floor-tabs-wrap">
           <div className="segmented floor-tabs">{floors.map((name) => <button key={name} className={floor === name ? "selected" : ""} onClick={() => { setFloor(name); setSelected(null); setGuestCount(1); setEditingId(null); setShowSetup(false); setShowFloorSetup(false); setDraft((current) => ({ ...current, floor: name })); }}>{name}</button>)}</div>
@@ -4808,24 +5225,13 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
   const [skuIsManual, setSkuIsManual] = useState(false);
   const [categoryCreatorOpen, setCategoryCreatorOpen] = useState(false);
   const [categoryDraft, setCategoryDraft] = useState("");
-  const [inventorySync, setInventorySync] = useState({ state: "pending", message: supabaseConfigured ? "Connecting to cloud inventory…" : "Saved on this computer only. Open uvpro.in to use shared inventory." });
-  const inventorySyncMounted = useRef(true);
   const inventorySyncJob = useRef(null);
 
   const refreshInventory = () => {
     if (inventorySyncJob.current) return inventorySyncJob.current;
-    if (supabaseConfigured && !cloudStateReady) {
-      setInventorySync({ state: "pending", message: "Cloud login is not ready. Inventory is saved on this computer; sign in again if this continues." });
-      return Promise.resolve();
-    }
-    setInventorySync({ state: "pending", message: "Saving and checking cloud inventory…" });
+    if (supabaseConfigured && !cloudStateReady) return Promise.resolve();
     const job = Promise.all([syncInventoryState(storageKey), syncInventoryState(categoryStorageKey)])
-      .then(() => {
-        if (inventorySyncMounted.current) setInventorySync({ state: "synced", message: "Inventory saved to cloud. Other systems signed into this branch can see it." });
-      })
-      .catch((error) => {
-        if (inventorySyncMounted.current) setInventorySync({ state: "error", message: `Not synced: ${error.message}` });
-      })
+      .catch(() => {})
       .finally(() => { inventorySyncJob.current = null; });
     inventorySyncJob.current = job;
     return job;
@@ -4844,7 +5250,6 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
   }, [categories, categoryStorageKey, cloudStateReady]);
 
   useEffect(() => {
-    inventorySyncMounted.current = true;
     const receive = (event) => {
       const { key, value } = event.detail;
       if (key === storageKey) setItems((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
@@ -4855,7 +5260,6 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
     window.addEventListener("focus", refreshInventory);
     const timer = window.setInterval(refreshInventory, 5000);
     return () => {
-      inventorySyncMounted.current = false;
       window.clearInterval(timer);
       window.removeEventListener("vestora-inventory-synced", receive);
       window.removeEventListener("online", refreshInventory);
@@ -4975,8 +5379,6 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
       updatedAt: new Date().toISOString(),
     };
     setItems((current) => editingId ? current.map((item) => item.id === editingId ? nextItem : item) : [nextItem, ...current]);
-    setInventorySync({ state: "pending", message: "Saved on this computer. Waiting for cloud confirmation…" });
-    notify(`${nextItem.name} saved locally; checking cloud sync`);
     closeEditor();
   };
   const deleteItem = (item) => {
@@ -5003,11 +5405,6 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
 
   return (
     <section className="screen inventory-screen">
-      <div className="panel inventory-sync-status" role="status" aria-live="polite">
-        {inventorySync.state === "synced" ? <CircleCheck size={18} /> : <AlertTriangle size={18} />}
-        <span>{inventorySync.message}</span>
-        <button type="button" onClick={refreshInventory}>Retry / refresh</button>
-      </div>
       <div className="inventory-page-head">
         <div className="inventory-title-block">
           <span className="inventory-title-icon"><Boxes size={24} /></span>
@@ -5073,6 +5470,135 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
               })}
               {!visibleItems.length && <tr><td className="inventory-empty" colSpan={canManageAll ? 7 : 6}><PackageSearch size={30} /><strong>No inventory items found</strong><span>Try another search or status filter.</span></td></tr>}
             </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ItemStock({ foodStock = [], onFoodStockChange, canManage = false, notify, onOpenProduction }) {
+  const [editingItemId, setEditingItemId] = useState("");
+  const [editDraft, setEditDraft] = useState({ item: "", unit: "plate", produced: "", threshold: "5" });
+  const items = Array.from(foodStock.reduce((grouped, record) => {
+    const key = normalizeFoodItemName(record.item) || String(record.id || record.item || "finished-item");
+    const existing = grouped.get(key) || {
+      id: record.id || key,
+      item: record.item || "Finished item",
+      unit: record.unit || "portion",
+      produced: 0,
+      sold: 0,
+      available: 0,
+      threshold: foodStockThreshold(record),
+    };
+    grouped.set(key, {
+      ...existing,
+      item: existing.item || record.item || "Finished item",
+      unit: record.unit || existing.unit || "portion",
+      produced: Number(existing.produced || 0) + Number(record.produced || 0),
+      sold: Number(existing.sold || 0) + Number(record.sold || 0),
+      available: Number(existing.available || 0) + Number(record.available || 0),
+      threshold: Math.max(Number(existing.threshold || 0), foodStockThreshold(record)),
+    });
+    return grouped;
+  }, new Map()).values()).sort((first, second) => String(first.item).localeCompare(String(second.item)));
+  const totalProduced = items.reduce((sum, item) => sum + Number(item.produced || 0), 0);
+  const totalAvailable = items.reduce((sum, item) => sum + Number(item.available || 0), 0);
+  const lowStockCount = items.filter((item) => Number(item.available || 0) <= foodStockThreshold(item)).length;
+  const editingItem = foodStock.find((record) => String(record.id) === String(editingItemId)) || null;
+
+  function closeEditor() {
+    setEditingItemId("");
+    setEditDraft({ item: "", unit: "plate", produced: "", threshold: "5" });
+  }
+
+  function startEdit(item) {
+    const source = foodStock.find((record) => String(record.id) === String(item.id));
+    if (!source) return;
+    setEditingItemId(source.id);
+    setEditDraft({
+      item: source.item || "",
+      unit: source.unit || "plate",
+      produced: String(Number(source.produced || 0)),
+      threshold: String(foodStockThreshold(source)),
+    });
+  }
+
+  function saveItemStock(event) {
+    event.preventDefault();
+    if (!canManage || !editingItem) return;
+    const item = String(editDraft.item || "").trim();
+    const produced = Number(editDraft.produced);
+    const threshold = Number(editDraft.threshold);
+    const sold = Number(editingItem.sold || 0);
+    if (!item) {
+      notify?.("Enter the finished item name");
+      return;
+    }
+    if (!Number.isFinite(produced) || produced < 0) {
+      notify?.("Enter a valid total produced quantity");
+      return;
+    }
+    if (produced < sold) {
+      notify?.(`Total produced cannot be below ${sold} POS ordered`);
+      return;
+    }
+    if (!Number.isFinite(threshold) || threshold < 0) {
+      notify?.("Enter a valid low-stock alert level");
+      return;
+    }
+    const unit = editDraft.unit || editingItem.unit || "plate";
+    onFoodStockChange?.((current) => current.map((record) => String(record.id) === String(editingItem.id) ? {
+      ...record,
+      item,
+      unit,
+      produced,
+      available: Math.max(0, produced - Number(record.sold || 0)),
+      threshold,
+      updatedAt: new Date().toISOString(),
+    } : record));
+    closeEditor();
+    notify?.(`${item} item stock updated`);
+  }
+
+  return (
+    <section className="screen item-stock-screen">
+      <div className="metric-grid compact">
+        <Metric icon={PackageSearch} label="Finished items" value={String(items.length)} trend="Production tracked" />
+        <Metric icon={DatabaseZap} label="Total produced" value={String(totalProduced)} trend="Completed production" />
+        <Metric icon={Boxes} label="Available now" value={String(totalAvailable)} trend="Ready for POS" />
+        <Metric icon={AlertTriangle} label="Low / out" value={String(lowStockCount)} trend="Needs production" danger={lowStockCount > 0} />
+      </div>
+      <div className="panel production-panel">
+        <PanelHead title="Item Stock" icon={PackageSearch} actions={["Add finished production"]} onAction={(action) => { if (action === "Add finished production") onOpenProduction?.(); }} />
+        <div className="production-report-head">
+          <div><h3>Finished production quantity</h3><span className="food-stock-table-note">Total production is added here; POS orders reduce the available quantity automatically.</span></div>
+          <strong>{items.length} tracked item{items.length === 1 ? "" : "s"}</strong>
+        </div>
+        {editingItem && (
+          <form className="inventory-editor" onSubmit={saveItemStock}>
+            <div className="inventory-editor-head">
+              <div><span>FINISHED ITEM</span><h3>Edit item stock</h3></div>
+              <button className="icon-button" type="button" onClick={closeEditor} aria-label="Close item stock editor"><X size={18} /></button>
+            </div>
+            <div className="inventory-form-grid">
+              <label><span>Item name</span><input autoFocus value={editDraft.item} onChange={(event) => setEditDraft((current) => ({ ...current, item: event.target.value }))} /></label>
+              <label><span>Unit</span><select value={editDraft.unit} onChange={(event) => setEditDraft((current) => ({ ...current, unit: event.target.value }))}>{Array.from(new Set([...productionOutputUnits, editDraft.unit].filter(Boolean))).map((unit) => <option key={unit}>{unit}</option>)}</select></label>
+              <label><span>Total produced</span><input type="number" min="0" step="0.01" value={editDraft.produced} onChange={(event) => setEditDraft((current) => ({ ...current, produced: event.target.value }))} /></label>
+              <label><span>Alert when remaining at or below</span><input type="number" min="0" step="1" value={editDraft.threshold} onChange={(event) => setEditDraft((current) => ({ ...current, threshold: event.target.value }))} /></label>
+            </div>
+            <p className="food-stock-table-note">POS ordered: {Number(editingItem.sold || 0)} {editingItem.unit || "portion"}. Available quantity updates automatically.</p>
+            <div className="inventory-editor-actions"><button type="button" onClick={closeEditor}>Cancel</button><button className="primary-action" type="submit"><Save size={18} /> Save item stock</button></div>
+          </form>
+        )}
+        <div className="production-table food-stock-table">
+          <table>
+            <thead><tr><th>Item</th><th>Total produced</th><th>POS ordered</th><th>Available now</th><th>Alert level</th><th>Status</th>{canManage && <th>Action</th>}</tr></thead>
+            <tbody>{items.length ? items.map((item) => {
+              const available = Number(item.available || 0);
+              const low = available <= foodStockThreshold(item);
+              return <tr key={item.id}><td><strong>{item.item}</strong><br /><small>{item.unit || "portion"}</small></td><td>{Number(item.produced || 0)} {item.unit || "portion"}</td><td>{Number(item.sold || 0)} {item.unit || "portion"}</td><td className={low ? "food-stock-remaining low" : "food-stock-remaining"}>{available} {item.unit || "portion"}</td><td>{foodStockThreshold(item)}</td><td><span className={available <= 0 ? "danger-chip" : low ? "food-stock-low-chip" : "active-chip"}>{available <= 0 ? "Out of stock" : low ? "Low stock" : "Healthy"}</span></td>{canManage && <td><div className="row-actions"><button type="button" onClick={() => startEdit(item)}><Pencil size={15} /> Edit</button></div></td>}</tr>;
+            }) : <tr><td colSpan={canManage ? "7" : "6"}>No finished production has been added yet. Use Add finished production to enter the quantity.</td></tr>}</tbody>
           </table>
         </div>
       </div>
@@ -7023,7 +7549,6 @@ function BillTemplateEditor({ billTemplate, setBillTemplate, notify }) {
     ["showAddress", "Address"],
     ["showPhone", "Phone"],
     ["showEmail", "Email"],
-    ["showGst", "GST"],
     ["showFssai", "FSSAI"],
     ["showCustomer", "Customer fields"],
     ["showOrderInfo", "Order info"],
@@ -7039,7 +7564,7 @@ function BillTemplateEditor({ billTemplate, setBillTemplate, notify }) {
   }
 
   const billFontSize = getBillFontSize(billTemplate.fontSize);
-  const billPreviewClass = `bill-paper print-bill bill-layout-${String(billTemplate.layout || "Detailed").toLowerCase()}`;
+  const billPreviewClass = `bill-paper print-bill bill-paper-size-${billTemplate.printerSize === "58mm" ? "58" : "80"} bill-layout-${String(billTemplate.layout || "Detailed").toLowerCase()}`;
   const billPreviewStyle = getBillPaperStyle({ ...billTemplate, fontSize: billFontSize });
 
   function updateBillFontSize(value) {
@@ -7136,12 +7661,11 @@ function BillTemplateEditor({ billTemplate, setBillTemplate, notify }) {
           </section>
 
           <section className="bill-editor-card">
-            <div className="bill-editor-card-head"><strong>Footer and QR</strong><span>Closing copy and optional QR placeholder</span></div>
+            <div className="bill-editor-card-head"><strong>Footer and QR</strong><span>Closing copy, tear line, and optional QR placeholder</span></div>
             <div className="bill-editor-grid">
               <label className="wide">Footer message<input value={billTemplate.footer} onChange={(event) => update("footer", event.target.value)} /></label>
               <label className="wide">Terms / policy<input value={billTemplate.terms || ""} onChange={(event) => update("terms", event.target.value)} /></label>
               <label>QR label<input value={billTemplate.qrText || ""} onChange={(event) => update("qrText", event.target.value)} /></label>
-              <label>Copy label<input value={billTemplate.copyLabel || ""} onChange={(event) => update("copyLabel", event.target.value)} /></label>
             </div>
           </section>
 
@@ -8183,12 +8707,12 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
             <PanelHead title={editingId ? "Edit user" : "Create user"} icon={UserPlus} actions={["Close"]} onAction={closeUserEditor} />
             <div className="user-form">
               <p className="permission-note">Create staff accounts for {activeStore.id === "GLOBAL" ? "a selected branch" : storeLabel(activeStore)}. Select <strong>Cashier</strong> for POS billing staff.</p>
-              <label>Name<input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Employee name" /></label>
-              <label>Email<input value={draft.email} onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} placeholder="user@restaurant.com" /></label>
+              <label>Name<input name="vestora-new-staff-name" autoComplete="off" value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Employee name" /></label>
+              <label>Email<input name="vestora-new-staff-email" type="email" autoComplete="off" data-lpignore="true" data-1p-ignore="true" value={draft.email} onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} placeholder="user@restaurant.com" /></label>
               {activeStore.id === "GLOBAL" && <label>Branch<select value={draft.storeId} onChange={(event) => setDraft((current) => ({ ...current, storeId: event.target.value }))}><option value="">Select branch</option>{stores.filter((store) => store.status !== "Inactive").map((store) => <option key={store.id} value={store.id}>{store.name} — {store.branch}</option>)}</select></label>}
               <label>Password
                 <span className="password-field">
-                  <input value={draft.password} type={showUserPassword ? "text" : "password"} onChange={(event) => setDraft((current) => ({ ...current, password: event.target.value }))} placeholder="Set login password" />
+                  <input name="vestora-new-staff-password" value={draft.password} type={showUserPassword ? "text" : "password"} autoComplete="new-password" data-lpignore="true" data-1p-ignore="true" onChange={(event) => setDraft((current) => ({ ...current, password: event.target.value }))} placeholder="Set login password" />
                   <button type="button" onClick={() => setShowUserPassword((value) => !value)} title={showUserPassword ? "Hide password" : "Show password"}>
                     {showUserPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
@@ -8690,7 +9214,7 @@ const attendanceTabs = ["Add Face ID", "Face Check In/Out", "Attendance Report",
 const defaultAttendanceTab = attendanceTabs[0];
 
 const defaultAttendanceSettings = {
-  confidenceThreshold: 80,
+  confidenceThreshold: 85,
   cooldownMinutes: 0,
   shiftStart: "09:30",
   fullDayHours: 8,
@@ -8698,41 +9222,54 @@ const defaultAttendanceSettings = {
   overtimeAfter: 9,
   storeFaceImages: false,
   deviceId: "SHOP-FIXED-CAM-01",
-  faceSafetyVersion: 2,
+  faceSafetyVersion: 3,
 };
 
 function attendanceSettingsWithSafetyDefaults(saved = {}) {
   saved = saved || {};
   const savedThreshold = Number(saved.confidenceThreshold || 0);
-  const needsSafetyUpgrade = Number(saved.faceSafetyVersion || 0) < 2;
+  const needsSafetyUpgrade = Number(saved.faceSafetyVersion || 0) < 3;
   return {
     ...defaultAttendanceSettings,
     ...saved,
-    confidenceThreshold: needsSafetyUpgrade ? Math.max(80, savedThreshold) : Math.max(75, savedThreshold || 80),
-    faceSafetyVersion: 2,
+    confidenceThreshold: needsSafetyUpgrade ? Math.max(85, savedThreshold) : Math.max(75, savedThreshold || 85),
+    faceSafetyVersion: 3,
   };
 }
 
-function isAdminCreatedAttendanceUser(user, activeStore) {
+function isAdminCreatedAttendanceUser(user, activeStore, canManageAll = false, stores = []) {
   const starterIds = new Set(starterUsers.map((item) => String(item.id)));
   const starterEmails = new Set(starterUsers.map((item) => item.email?.toLowerCase()));
-  const blockedRoles = new Set(["Super Admin", "Restaurant Admin", "supplier"]);
-  return normalizeStoreId(user.storeId) === activeStore.id
+  const blockedRoles = new Set(["super admin", "restaurant admin", "supplier"]);
+  const role = String(user.role || "").replaceAll("_", " ").toLowerCase();
+  const assignedStoreId = normalizeStoreId(user.storeId);
+  const assignedStore = stores.find((store) => store.id === assignedStoreId);
+  const storeNameMatches = [activeStore.name, activeStore.branch]
+    .some((label) => String(label || "").trim().toLowerCase() === String(user.storeId || "").trim().toLowerCase());
+  const isInScope = activeStore.id === "GLOBAL"
+    ? canManageAll && assignedStoreId !== "GLOBAL"
+    : assignedStoreId === activeStore.id || (!assignedStore && storeNameMatches);
+  return isInScope
     && user.status === "Active"
-    && !blockedRoles.has(user.role)
+    && !blockedRoles.has(role)
     && !starterIds.has(String(user.id))
     && !starterEmails.has(String(user.email || "").toLowerCase());
 }
 
-function buildAttendanceEmployees(users, activeStore, savedEmployees = []) {
+function buildAttendanceEmployees(users, activeStore, savedEmployees = [], canManageAll = false, stores = []) {
   const savedByUserId = new Map(savedEmployees.map((employee) => [String(employee.userId), employee]));
   return users
-    .filter((user) => isAdminCreatedAttendanceUser(user, activeStore))
+    .filter((user) => isAdminCreatedAttendanceUser(user, activeStore, canManageAll, stores))
     .map((user, index) => {
       const saved = savedByUserId.get(String(user.id)) || {};
+      const userStoreId = normalizeStoreId(user.storeId);
+      const userStore = stores.find((store) => store.id === userStoreId);
       return {
         id: `EMP-${user.id}`,
         userId: user.id,
+        storeId: userStoreId,
+        storeName: userStore?.name || activeStore.name,
+        branch: userStore?.branch || activeStore.branch,
         name: user.name || user.email || `Employee ${index + 1}`,
         code: saved.code || `VST-${String(index + 1).padStart(3, "0")}`,
         mobile: user.mobile || saved.mobile || "",
@@ -8750,7 +9287,15 @@ function buildAttendanceEmployees(users, activeStore, savedEmployees = []) {
 }
 
 function hasVerifiedFaceEnrollment(employee) {
-  return Boolean(employee?.active && employee.faceConsent && employee.faceDescriptor?.length && Number(employee.faceSamples || 0) >= 5);
+  const descriptors = getFaceDescriptorSamples(employee?.faceDescriptor);
+  return Boolean(employee?.active && employee.faceConsent && descriptors.length && Number(employee.faceSamples || 0) >= 5);
+}
+
+function getFaceDescriptorSamples(value) {
+  if (!Array.isArray(value) || !value.length) return [];
+  // Older enrollments stored one averaged 128-value descriptor.
+  if (typeof value[0] === "number") return [value];
+  return value.filter((descriptor) => Array.isArray(descriptor) && descriptor.length > 0);
 }
 
 function formatAttendanceTime(value) {
@@ -8801,48 +9346,38 @@ function calculateAttendanceStatus(log, settings) {
   return inTime > settings.shiftStart ? "Late" : "Present";
 }
 
-function averageFaceDescriptors(samples) {
-  if (!samples.length) return [];
-  const length = samples[0].length;
-  return Array.from({ length }, (_, index) => {
-    const total = samples.reduce((sum, sample) => sum + Number(sample[index] || 0), 0);
-    return Number((total / samples.length).toFixed(8));
-  });
-}
-
 function euclideanDistance(a, b) {
   if (!a?.length || !b?.length || a.length !== b.length) return Infinity;
   return Math.sqrt(a.reduce((sum, value, index) => sum + ((Number(value) - Number(b[index])) ** 2), 0));
 }
 
-const faceMatchDistance = {
-  strict: 0.42,
-  loose: 0.68,
-};
-const minimumFaceDistanceGap = 0.08;
+const minimumFaceDistanceGap = 0.10;
 const requiredFaceVerificationScans = 3;
 
 function maxFaceDistanceForThreshold(confidenceThreshold) {
   const threshold = Math.max(75, Math.min(95, Number(confidenceThreshold || 80)));
-  const strictRange = 0.6 - faceMatchDistance.strict;
-  return 0.6 - ((threshold - 56) / 39) * strictRange;
+  return 0.44 - ((threshold - 75) / 20) * 0.10;
 }
 
-function faceDistanceToConfidence(distance) {
+function faceDistanceToConfidence(distance, confidenceThreshold) {
   if (!Number.isFinite(distance)) return 0;
-  if (distance <= faceMatchDistance.strict) {
-    return Math.max(88, Math.min(100, Math.round(100 - (distance / faceMatchDistance.strict) * 12)));
-  }
-  const range = faceMatchDistance.loose - faceMatchDistance.strict;
-  return Math.max(0, Math.min(88, Math.round(88 - ((distance - faceMatchDistance.strict) / range) * 58)));
+  const limit = maxFaceDistanceForThreshold(confidenceThreshold);
+  return Math.max(0, Math.min(100, Math.round(100 - (distance / limit) * 15)));
 }
 
 function bestFaceMatch(descriptor, employees, confidenceThreshold) {
   const enrolled = employees.filter(hasVerifiedFaceEnrollment);
   if (!descriptor?.length || !enrolled.length) return null;
   const matches = enrolled.map((employee) => {
-    const distance = euclideanDistance(descriptor, employee.faceDescriptor);
-    const confidence = faceDistanceToConfidence(distance);
+    const samples = getFaceDescriptorSamples(employee.faceDescriptor);
+    const distances = samples.map((sample) => euclideanDistance(descriptor, sample)).sort((a, b) => a - b);
+    // Requiring agreement with several enrollment samples prevents one bad or
+    // unusually similar sample from identifying the wrong employee.
+    const supportingDistances = distances.slice(0, Math.min(distances.length, 3));
+    const distance = supportingDistances.length
+      ? supportingDistances.reduce((sum, item) => sum + item, 0) / supportingDistances.length
+      : Infinity;
+    const confidence = faceDistanceToConfidence(distance, confidenceThreshold);
     return { employee, distance, confidence };
   }).sort((a, b) => a.distance - b.distance);
   const best = matches[0];
@@ -8864,16 +9399,21 @@ function downloadCsv(filename, columns, rows) {
   URL.revokeObjectURL(url);
 }
 
-function AttendanceModule({ notify, activeStore, users, canManage, canManageAll, activeView = defaultAttendanceTab, onViewChange, onOpenAdmin }) {
+function AttendanceModule({ notify, activeStore, stores = [], users, canManage, canManageAll, activeView = defaultAttendanceTab, onViewChange, onOpenAdmin }) {
   const employeesKey = `vestora-attendance-employees-${activeStore.id}`;
   const logsKey = `vestora-attendance-logs-${activeStore.id}`;
   const settingsKey = `vestora-attendance-settings-${activeStore.id}`;
   const leaveRequestsKey = `vestora-leave-requests-${activeStore.id}`;
   const activeTab = activeView === "Attendance Logs" ? "Attendance Records" : (attendanceTabs.includes(activeView) ? activeView : defaultAttendanceTab);
-  const [employees, setEmployees] = useBusinessState(employeesKey, () => {
-    const saved = loadStoredArray(employeesKey);
-    return buildAttendanceEmployees(users, activeStore, saved);
-  });
+  const [savedEmployees, setSavedEmployees] = useBusinessState(employeesKey, () => loadStoredArray(employeesKey));
+  const employees = useMemo(
+    () => buildAttendanceEmployees(users || [], activeStore, savedEmployees || [], canManageAll, stores),
+    [users, activeStore, savedEmployees, canManageAll, stores],
+  );
+  const setEmployees = useCallback((update) => {
+    const current = buildAttendanceEmployees(users || [], activeStore, savedEmployees || [], canManageAll, stores);
+    setSavedEmployees(typeof update === "function" ? update(current) : update);
+  }, [users, activeStore, savedEmployees, canManageAll, stores, setSavedEmployees]);
   const [logs, setLogs] = useBusinessState(logsKey, () => loadStoredArray(logsKey));
   const [leaveRequests, setLeaveRequests] = useBusinessState(leaveRequestsKey, () => loadStoredArray(leaveRequestsKey));
   const [leaveForm, setLeaveForm] = useState({ employeeId: "", type: "Casual leave", from: "", to: "", reason: "" });
@@ -8898,6 +9438,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
   const streamRef = useRef(null);
   const faceApiRef = useRef(null);
   const scanTimerRef = useRef(null);
+  const scanInProgressRef = useRef(false);
   const candidateMatchRef = useRef({ employeeId: "", count: 0 });
   const employeesRef = useRef(employees);
   const settingsRef = useRef(settings);
@@ -8912,7 +9453,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
 
   useEffect(() => {
     const saved = loadStoredArray(employeesKey);
-    setEmployees(buildAttendanceEmployees(users, activeStore, saved));
+    setEmployees(buildAttendanceEmployees(users, activeStore, saved, canManageAll, stores));
     setLogs(loadStoredArray(logsKey));
     setLeaveRequests(loadStoredArray(leaveRequestsKey));
     setLeaveForm({ employeeId: "", type: "Casual leave", from: "", to: "", reason: "" });
@@ -8921,7 +9462,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
     setSelectedEmployeeId("");
     setManualEmployeeId("");
     setSamples([]);
-  }, [activeStore.id, users]);
+  }, [activeStore.id, users, stores, canManageAll]);
 
   useEffect(() => {
     localStorage.setItem(employeesKey, JSON.stringify(employees));
@@ -9021,6 +9562,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
   function stopCamera() {
     window.clearInterval(scanTimerRef.current);
     scanTimerRef.current = null;
+    scanInProgressRef.current = false;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
@@ -9033,20 +9575,29 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
     window.clearInterval(scanTimerRef.current);
     scanTimerRef.current = window.setInterval(async () => {
       if (!faceApiRef.current || !videoRef.current || videoRef.current.readyState < 2) return;
+      if (scanInProgressRef.current) return;
+      scanInProgressRef.current = true;
       try {
         const faceapi = faceApiRef.current;
-        const detection = await faceapi
-          .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.35 }))
+        const detections = await faceapi
+          .detectAllFaces(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.45 }))
           .withFaceLandmarks()
-          .withFaceDescriptor();
-        if (!detection) {
+          .withFaceDescriptors();
+        if (detections.length !== 1) {
           candidateMatchRef.current = { employeeId: "", count: 0 };
           setMatchedFace(null);
           setCurrentDescriptor([]);
-          setScanStatus("No face detected");
+          setScanStatus(detections.length ? "Multiple faces detected — show one person" : "No face detected");
           return;
         }
-        const descriptor = Array.from(detection.descriptor || []);
+        const descriptor = Array.from(detections[0].descriptor || []);
+        if (descriptor.length !== 128) {
+          candidateMatchRef.current = { employeeId: "", count: 0 };
+          setMatchedFace(null);
+          setCurrentDescriptor([]);
+          setScanStatus("Face scan incomplete — hold still and try again");
+          return;
+        }
         const match = bestFaceMatch(descriptor, employeesRef.current, settingsRef.current.confidenceThreshold);
         setCurrentDescriptor(descriptor);
         if (!match) {
@@ -9066,7 +9617,12 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
         setMatchedFace(match);
         setScanStatus(`${match.employee.name} verified`);
       } catch {
+        candidateMatchRef.current = { employeeId: "", count: 0 };
+        setMatchedFace(null);
+        setCurrentDescriptor([]);
         setScanStatus("Face scan waiting");
+      } finally {
+        scanInProgressRef.current = false;
       }
     }, 1400);
   }
@@ -9106,7 +9662,14 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
       notify("Capture all 5 face samples before saving");
       return;
     }
-    const descriptor = averageFaceDescriptors(samples);
+    const largestSampleDifference = Math.max(...samples.flatMap((sample, index) =>
+      samples.slice(index + 1).map((other) => euclideanDistance(sample, other))));
+    if (!Number.isFinite(largestSampleDifference) || largestSampleDifference > 0.52) {
+      setSamples([]);
+      notify("The samples do not look consistent. Keep only the selected employee in view and capture all 5 again.");
+      return;
+    }
+    const descriptor = samples.map((sample) => [...sample]);
     setEmployees((current) => current.map((employee) => employee.id === selectedEmployee.id ? {
       ...employee,
       faceDescriptor: descriptor,
@@ -9147,7 +9710,7 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
   }
 
   function markAttendance(type, employeeOverride = null) {
-    const employee = employeeOverride || matchedFace?.employee || manualEmployee;
+    const employee = employeeOverride || matchedFace?.employee;
     if (!employee) {
       notify("No recognized employee selected");
       return;
@@ -9182,9 +9745,9 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
       employeeId: employee.id,
       employeeName: employee.name,
       employeeCode: employee.code,
-      branch: activeStore.branch,
-      storeId: activeStore.id,
-      storeName: activeStore.name,
+      branch: employee.branch || activeStore.branch,
+      storeId: employee.storeId || activeStore.id,
+      storeName: employee.storeName || activeStore.name,
       date: todayKey,
       checkIn: now.toISOString(),
       checkOut: "",
@@ -9555,11 +10118,12 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
               </div>
               {cameraError && <p className="permission-note">{cameraError}</p>}
             </div>
-            <div className="attendance-enroll-controls">
-              <label>Employee<select value={selectedEmployee?.id || ""} onChange={(event) => { setSelectedEmployeeId(event.target.value); setSamples([]); }}>
-                {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} - {employee.code}</option>)}
-              </select></label>
-              <label>Samples captured<input value={`${samples.length}/5`} readOnly /></label>
+            <div className="face-sample-progress" aria-label={`${samples.length} of 5 images captured`}>
+              <div className="face-sample-progress-head">
+                <span>Images captured</span>
+                <strong aria-live="polite">{samples.length} / 5</strong>
+              </div>
+              <div className="sample-meter">{Array.from({ length: 5 }, (_, index) => <span key={index} className={samples[index] ? "filled" : ""} />)}</div>
             </div>
             {selectedEmployee?.faceDescriptor?.length ? (
               <div className="selected-face-id-panel">
@@ -9580,7 +10144,12 @@ function AttendanceModule({ notify, activeStore, users, canManage, canManageAll,
                 </div>
               </div>
             )}
-            <div className="sample-meter">{Array.from({ length: 5 }, (_, index) => <span key={index} className={samples[index] ? "filled" : ""} />)}</div>
+            <div className="attendance-enroll-controls">
+              <label>Employee<select value={selectedEmployee?.id || ""} onChange={(event) => { setSelectedEmployeeId(event.target.value); setSamples([]); }}>
+                {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} - {employee.code}</option>)}
+              </select></label>
+            </div>
+            <p className="permission-note">Before saving, confirm the person in the camera is {selectedEmployee?.name || "the selected employee"}. Keep other faces out of frame.</p>
           </div>
           <div className="panel">
             <PanelHead title="User source" icon={Users} actions={["Open Admin"]} onAction={() => onOpenAdmin?.()} />
@@ -9857,6 +10426,88 @@ function StoreQrOrderingSettings({ activeStore, notify, canManage, onBack }) {
   );
 }
 
+function OnlineOrderingIntegrationSettings({ activeStore, canManage, notify, onBack }) {
+  const integrationStorageKey = `vestora-online-order-integrations-${activeStore?.id || "global"}`;
+  const [outlets, setOutlets] = useBusinessState(integrationStorageKey, () => {
+    const saved = localStorage.getItem(integrationStorageKey);
+    return saved ? JSON.parse(saved) : { zomatoOutletId: "", swiggyOutletId: "" };
+  });
+
+  useEffect(() => {
+    localStorage.setItem(integrationStorageKey, JSON.stringify(outlets));
+    syncLocalStateKeyToSupabase(integrationStorageKey).catch(() => {});
+  }, [integrationStorageKey, outlets]);
+
+  function updateOutlet(field, value) {
+    if (!canManage) return;
+    setOutlets((current) => ({ ...current, [field]: value }));
+  }
+
+  function saveOutletDetails() {
+    if (!canManage) {
+      notify("Admin permission required");
+      return;
+    }
+    localStorage.setItem(integrationStorageKey, JSON.stringify(outlets));
+    syncLocalStateKeyToSupabase(integrationStorageKey).catch(() => {});
+    notify("Outlet IDs saved. Platform order sync is not connected yet.");
+  }
+
+  const platforms = [
+    {
+      name: "Zomato",
+      field: "zomatoOutletId",
+      label: "Zomato outlet ID",
+      description: "Use the outlet ID shown in your Zomato restaurant account.",
+      href: "https://www.zomato.com/developer/integration/",
+      linkLabel: "Zomato POS partner onboarding",
+    },
+    {
+      name: "Swiggy",
+      field: "swiggyOutletId",
+      label: "Swiggy outlet ID",
+      description: "Use the outlet ID shown in your Swiggy restaurant account.",
+      href: "https://developers.swiggy.com/",
+      linkLabel: "Swiggy developer portal",
+    },
+  ];
+
+  return (
+    <section className="screen settings-detail-screen">
+      <button className="settings-back-button" onClick={onBack}><PanelLeftClose size={17} /> Back to settings</button>
+      <div className="panel settings-detail-panel online-integration-panel">
+        <PanelHead title="Online ordering integrations" icon={ShoppingCart} actions={canManage ? ["Save outlet details"] : []} onAction={saveOutletDetails} />
+        <p className="settings-description">Configure the platform outlet IDs for {activeStore?.name || "this UVPRO branch"}.</p>
+        <div className="online-integration-notice" role="status">
+          <span className="online-integration-status"><span /> Not connected</span>
+          <div>
+            <strong>Orders are not syncing to UVPRO yet</strong>
+            <small>Saving outlet IDs records your setup details only. Live orders require platform partner approval, API access, and a secure UVPRO server connection.</small>
+          </div>
+        </div>
+        <div className="online-platform-grid">
+          {platforms.map((platform) => (
+            <article className="online-platform-card" key={platform.name}>
+              <div className="online-platform-heading">
+                <div><span className="online-platform-mark">{platform.name === "Zomato" ? "Z" : "S"}</span><h3>{platform.name}</h3></div>
+                <span className="online-integration-status"><span /> Not connected</span>
+              </div>
+              <p>{platform.description}</p>
+              <label>{platform.label}
+                <input value={outlets[platform.field] || ""} onChange={(event) => updateOutlet(platform.field, event.target.value)} disabled={!canManage} placeholder="Enter outlet ID" autoComplete="off" />
+              </label>
+              <a href={platform.href} target="_blank" rel="noreferrer">{platform.linkLabel}</a>
+            </article>
+          ))}
+        </div>
+        <div className="online-integration-footnote"><ShieldCheck size={17} /><span>Do not enter platform passwords or API keys here. API credentials must be stored securely on the UVPRO backend after partner access is approved.</span></div>
+        {!canManage && <p className="permission-note">Admin permission required to edit outlet details.</p>}
+        <div className="row-actions menu-admin-actions"><button onClick={saveOutletDetails} disabled={!canManage}>Save outlet details</button></div>
+      </div>
+    </section>
+  );
+}
+
 function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, canManage, canManageAll, activeStore, setStores, themeConfig, setThemeConfig, setDark }) {
   const sectionNames = canManageAll ? Object.keys(settingsSectionConfig) : storeSettingsSections;
   const [selectedSetting, setSelectedSetting] = useState(null);
@@ -9867,6 +10518,7 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
     "Print bill format": ReceiptText,
     "Printer setup": Printer,
     "Payment providers": CreditCard,
+    "Online ordering integrations": ShoppingCart,
     "Cloudflare R2": DatabaseZap,
     "WhatsApp templates": Bell,
     "Backup policy": DatabaseZap,
@@ -9888,6 +10540,10 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
 
   if (selectedSetting === "QR ordering") {
     return <StoreQrOrderingSettings activeStore={activeStore} notify={notify} canManage={canManage} onBack={() => setSelectedSetting(null)} />;
+  }
+
+  if (selectedSetting === "Online ordering integrations") {
+    return <OnlineOrderingIntegrationSettings activeStore={activeStore} canManage={canManage} notify={notify} onBack={() => setSelectedSetting(null)} />;
   }
 
   if (selectedSetting) {

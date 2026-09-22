@@ -3,7 +3,11 @@ import { isInventoryStateKey } from "./inventory-sync.js";
 import { createSharedSync } from "./shared-sync.js";
 import { isBusinessKey, stateStore, sanitize } from "./business-state.js";
 
-const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+// UVPRO's shared store records live in this project. A stale static-site
+// environment must never send sign-ins or business data to a different one.
+const uvproSupabaseUrl = "https://vqinmequtjkuzrtzkzsk.supabase.co";
+const configuredSupabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+const supabaseUrl = configuredSupabaseUrl === uvproSupabaseUrl ? configuredSupabaseUrl : uvproSupabaseUrl;
 const supabaseAnonKey = String(
   import.meta.env.VITE_SUPABASE_ANON_KEY
   || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
