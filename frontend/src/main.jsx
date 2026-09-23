@@ -594,6 +594,7 @@ const defaultKotPrinter = {
   paper: "80mm",
   copies: 1,
   autoPrint: true,
+  autoPrintBill: true,
   status: "Disconnected",
 };
 
@@ -672,6 +673,32 @@ function normalizeStoreId(storeId) {
 function storeLabel(store) {
   if (!store) return "UVPRO / All stores";
   return `${store.name} / ${store.branch}`;
+}
+
+function storeSubscriptionExpiry(store) {
+  return String(store?.subscriptionExpiresAt || "").slice(0, 10);
+}
+
+function isStoreSubscriptionExpired(store) {
+  const expiry = storeSubscriptionExpiry(store);
+  return Boolean(expiry && expiry < localDateKey());
+}
+
+function storeSubscriptionDaysRemaining(store) {
+  const expiry = storeSubscriptionExpiry(store);
+  if (!expiry) return null;
+  const today = new Date(`${localDateKey()}T00:00:00`);
+  const expiryDate = new Date(`${expiry}T00:00:00`);
+  if (Number.isNaN(expiryDate.getTime())) return null;
+  return Math.ceil((expiryDate.getTime() - today.getTime()) / 86400000);
+}
+
+function formatStoreSubscription(store) {
+  const expiry = storeSubscriptionExpiry(store);
+  if (!expiry) return "No expiry set";
+  const formatted = new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+    .format(new Date(`${expiry}T00:00:00`));
+  return isStoreSubscriptionExpired(store) ? `Expired ${formatted}` : `Renews ${formatted}`;
 }
 
 function poTotal(order) {
@@ -1325,6 +1352,33 @@ function AuthenticatedApp() {
   const assignedStoreId = normalizeStoreId(currentUser?.storeId);
   const activeStoreId = canManageAll ? selectedStoreId : assignedStoreId === "GLOBAL" ? selectedStoreId : assignedStoreId;
   const activeStore = stores.find((store) => store.id === activeStoreId) || emptyStoreContext;
+  const softwareSubscriptionExpired = Boolean(currentUser && currentUser.role !== "super_admin" && (currentUser.subscriptionExpired || (supabaseStateReady && isStoreSubscriptionExpired(activeStore))));
+  const softwareSubscriptionExpiry = currentUser?.subscriptionExpiresAt || activeStore?.subscriptionExpiresAt || "";
+  const [showSubscriptionWarning, setShowSubscriptionWarning] = useState(false);
+  useEffect(() => {
+    const warningStore = activeStore?.subscriptionExpiresAt ? activeStore : { ...activeStore, subscriptionExpiresAt: softwareSubscriptionExpiry };
+    const daysRemaining = storeSubscriptionDaysRemaining(warningStore);
+    const shouldWarn = Boolean(currentUser && currentUser.role !== "super_admin" && !softwareSubscriptionExpired && daysRemaining !== null && daysRemaining >= 0 && daysRemaining <= 10);
+    if (!shouldWarn) {
+      setShowSubscriptionWarning(false);
+      return undefined;
+    }
+    let hideTimer;
+    const showWarning = () => {
+      setShowSubscriptionWarning(true);
+      window.clearTimeout(hideTimer);
+      hideTimer = window.setTimeout(() => setShowSubscriptionWarning(false), 5000);
+    };
+    showWarning();
+    const interval = window.setInterval(showWarning, 2 * 60 * 60 * 1000);
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(hideTimer);
+    };
+  }, [activeStore?.id, activeStore?.subscriptionExpiresAt, currentUser?.id, currentUser?.role, softwareSubscriptionExpired, softwareSubscriptionExpiry]);
+  const subscriptionWarning = currentUser && currentUser.role !== "super_admin" && !softwareSubscriptionExpired
+    ? <SubscriptionWarningBanner activeStore={activeStore} expiresAt={softwareSubscriptionExpiry} visible={showSubscriptionWarning} />
+    : null;
   useEffect(() => {
     if (supabaseStateReady && sharedShifts.length) localStorage.setItem(`vestora-shifts-${settingsStoreId}`, JSON.stringify(sharedShifts));
   }, [supabaseStateReady, settingsStoreId, sharedShifts]);
@@ -1565,6 +1619,13 @@ function AuthenticatedApp() {
         const profile = await supabaseProfile();
         if (!isCurrent()) return;
         loginUser = { ...loginUser, ...profile, role: roleToAuthRole(profile.role), storeId: profile.storeId || "GLOBAL" };
+        if (loginUser.role !== "super_admin" && loginUser.subscriptionExpired) {
+          setCurrentUser(loginUser);
+          window.vestoraSupabaseStateReady = true;
+          setSupabaseStateReady(true);
+          loadedUserId = session.user.id;
+          return;
+        }
         // This includes the authorized directory; a separate directory read
         // delayed startup and its failure was previously hidden.
         await hydrateLocalStateFromSupabase();
@@ -2088,8 +2149,12 @@ function AuthenticatedApp() {
     return <LoginScreen onLogin={handleLogin} />;
   }
 
+  if (softwareSubscriptionExpired) {
+    return <><CloudSyncBanner /><SubscriptionExpiredScreen activeStore={activeStore} expiresAt={softwareSubscriptionExpiry} onLogout={handleLogout} /></>;
+  }
+
   if (currentUser.role === "supplier") {
-    return <><CloudSyncBanner /><SupplierPortal currentUser={currentUser} orders={supplierOrders} setOrders={setSupplierOrders} onLogout={handleLogout} /></>;
+    return <><CloudSyncBanner />{subscriptionWarning}<SupplierPortal currentUser={currentUser} orders={supplierOrders} setOrders={setSupplierOrders} onLogout={handleLogout} /></>;
   }
 
   if (currentUser.role === "super_admin" && superAdminLanding) {
@@ -2131,7 +2196,7 @@ function AuthenticatedApp() {
         return true;
       }} onExit={exitPOS} onLogout={handleLogout} onCreateCashier={() => openAdminView("create")} />
       : currentShift
-        ? <POS cart={cart} setCart={setCart} items={productItems} storeId={activeStore.id} foodStock={foodStock} onFoodStockChange={updateFoodStock} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onLogout={handleLogout} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
+        ? <POS cart={cart} setCart={setCart} items={productItems} storeId={activeStore.id} foodStock={foodStock} onFoodStockChange={updateFoodStock} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} kotPrinter={kotPrinter} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onLogout={handleLogout} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
         : <ShiftOpening online={online} onOpenShift={openShift} onExit={exitPOS} onLogout={handleLogout} cashier={posCashier} />,
     kds: <KDS notify={notify} orders={scopedKdsOrders} setOrders={setKdsOrders} kotPrinter={kotPrinter} />,
     tables: <Tables key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} items={productItems} currentUser={currentUser} tableOrders={scopedTableOrders} onSaveOrder={saveTableOrder} onSendKot={sendTableKot} onSendReception={sendTableToReception} onCancelOrder={cancelTableOrder} onCancelItem={cancelTableOrderItem} kotPrinter={kotPrinter} cloudStateReady={supabaseStateReady} />,
@@ -2160,6 +2225,7 @@ function AuthenticatedApp() {
     return (
       <div className={dark ? "pos-page dark" : "pos-page"} style={themeVariables}>
         <CloudSyncBanner />
+        {subscriptionWarning}
         {content}
         {toast && <div className="toast">{toast}</div>}
       </div>
@@ -2169,6 +2235,7 @@ function AuthenticatedApp() {
   return (
     <div className={`${dark ? "app dark" : "app"} ${sidebarOpen ? "sidebar-expanded" : "sidebar-collapsed"}`} style={themeVariables}>
       <CloudSyncBanner />
+      {subscriptionWarning}
       <aside id="primary-navigation" className={sidebarOpen ? "sidebar" : "sidebar collapsed"}>
         <div className="brand">
           <img src={vestoraLogoPath} alt="" />
@@ -2451,6 +2518,37 @@ function CustomerTableOrdering() {
   );
 }
 
+function SubscriptionExpiredScreen({ activeStore, expiresAt, onLogout }) {
+  const expiryText = expiresAt
+    ? new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(`${String(expiresAt).slice(0, 10)}T00:00:00`))
+    : "the renewal date";
+  return (
+    <div className="login-screen subscription-expired-screen">
+      <div className="login-card subscription-expired-card">
+        <div className="login-brand-panel">
+          <img src={vestoraLogoPath} alt="" />
+          <div><span>UVPRO ERP & POS</span><h1>Renewal required</h1><p>{activeStore?.name || "This store"}{activeStore?.branch ? ` / ${activeStore.branch}` : ""}</p></div>
+        </div>
+        <div className="subscription-expired-message">
+          <strong>This store's software access expired on {expiryText}.</strong>
+          <span>Contact 9249536161 to renew the software before signing in again.</span>
+        </div>
+        <button className="login-submit" type="button" onClick={onLogout}>Sign out</button>
+      </div>
+    </div>
+  );
+}
+
+function SubscriptionWarningBanner({ activeStore, expiresAt, visible }) {
+  const store = activeStore?.subscriptionExpiresAt ? activeStore : { ...activeStore, subscriptionExpiresAt: expiresAt };
+  const daysRemaining = storeSubscriptionDaysRemaining(store);
+  if (!visible || daysRemaining === null || daysRemaining < 0 || daysRemaining > 10) return null;
+  const expiryText = new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+    .format(new Date(`${storeSubscriptionExpiry(store)}T00:00:00`));
+  const dayLabel = daysRemaining === 0 ? "today" : `in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`;
+  return <div className="subscription-warning-banner" role="alert"><strong>Software renewal warning</strong><span>{activeStore?.name || "This store"} access expires {dayLabel} ({expiryText}). Contact 9249536161 to renew.</span></div>;
+}
+
 function LoginScreen({ onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -2540,6 +2638,7 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, st
     pincode: "",
     counterCode: "",
     hours: "",
+    subscriptionExpiresAt: "",
     status: "Active",
   };
   const [storeDraft, setStoreDraft] = useState(emptyStoreDraft);
@@ -2592,6 +2691,7 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, st
       pincode: storeDraft.pincode.trim(),
       counterCode: storeDraft.counterCode.trim(),
       hours: storeDraft.hours.trim(),
+      subscriptionExpiresAt: editingStoreId ? (storeDraft.subscriptionExpiresAt || "") : (storeDraft.subscriptionExpiresAt || parentStore?.subscriptionExpiresAt || ""),
       type: storeFormMode === "branch" ? "Branch" : "Store",
       status: storeDraft.status,
     };
@@ -2606,6 +2706,7 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, st
             email: store.email,
             gst: store.gst,
             fssai: store.fssai,
+            subscriptionExpiresAt: store.subscriptionExpiresAt,
             status: store.status,
           };
           return currentStore.id === editingStoreId ? { ...currentStore, ...store, ...restaurantFields, type: currentStore.type || "Store" } : { ...currentStore, ...restaurantFields };
@@ -2648,6 +2749,7 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, st
       pincode: branch.pincode.trim() || store.pincode,
       counterCode: branch.counterCode.trim(),
       hours: branch.hours.trim() || store.hours,
+      subscriptionExpiresAt: branch.subscriptionExpiresAt || store.subscriptionExpiresAt || "",
       type: "Branch",
       status: branch.status,
     }));
@@ -2681,6 +2783,7 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, st
       pincode: storeDraft.pincode,
       counterCode: "",
       hours: storeDraft.hours,
+      subscriptionExpiresAt: storeDraft.subscriptionExpiresAt,
       status: storeDraft.status,
     }]);
   }
@@ -2723,6 +2826,7 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, st
       pincode: store?.pincode || "",
       counterCode: store?.counterCode || "",
       hours: store?.hours || "",
+      subscriptionExpiresAt: store?.subscriptionExpiresAt || "",
       status: store?.status || "Active",
     };
   }
@@ -2848,6 +2952,8 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, st
                       <dd>{store.owner || "Restaurant Admin"}</dd>
                       <dt>Contact</dt>
                       <dd>{store.phone || store.adminMobile || "Not set"}</dd>
+                      <dt>Software renewal</dt>
+                      <dd className={isStoreSubscriptionExpired(store) ? "subscription-expired" : "subscription-current"}>{formatStoreSubscription(store)}</dd>
                     </dl>
                     <div className="branch-login-credential">
                       <span>Branch login</span>
@@ -2904,6 +3010,7 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, st
               <label className="details-extra-field">Pincode<input value={storeDraft.pincode} onChange={(event) => setStoreDraft((current) => ({ ...current, pincode: event.target.value }))} placeholder="Pincode" /></label>
               <label className="details-extra-field">Counter code<input value={storeDraft.counterCode} onChange={(event) => setStoreDraft((current) => ({ ...current, counterCode: event.target.value }))} placeholder="POS-01" /></label>
               <label className="details-extra-field">Opening hours<input value={storeDraft.hours} onChange={(event) => setStoreDraft((current) => ({ ...current, hours: event.target.value }))} placeholder="10:00 AM - 11:30 PM" /></label>
+              <label>Software renewal expiry<input type="date" value={storeDraft.subscriptionExpiresAt} onChange={(event) => setStoreDraft((current) => ({ ...current, subscriptionExpiresAt: event.target.value }))} /><small>Leave blank for unlimited access.</small></label>
               <label>Status<select value={storeDraft.status} onChange={(event) => setStoreDraft((current) => ({ ...current, status: event.target.value }))}><option>Active</option><option>Inactive</option><option>Suspended</option></select></label>
             </div>
             {storeFormMode === "store" && editingStoreId && (
@@ -2944,6 +3051,7 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, st
                   <label>Owner number<input value={branch.adminMobile} onChange={(event) => setNewBranchDrafts((current) => current.map((item) => item.draftKey === branch.draftKey ? { ...item, adminMobile: event.target.value } : item))} placeholder="+91 owner number" /></label>
                   <label>Store phone<input value={branch.phone} onChange={(event) => setNewBranchDrafts((current) => current.map((item) => item.draftKey === branch.draftKey ? { ...item, phone: event.target.value } : item))} placeholder="Branch contact number" /></label>
                   <label>Address<input value={branch.address} onChange={(event) => setNewBranchDrafts((current) => current.map((item) => item.draftKey === branch.draftKey ? { ...item, address: event.target.value } : item))} placeholder="Full branch address" /></label>
+                  <label>Software renewal expiry<input type="date" value={branch.subscriptionExpiresAt} onChange={(event) => setNewBranchDrafts((current) => current.map((item) => item.draftKey === branch.draftKey ? { ...item, subscriptionExpiresAt: event.target.value } : item))} /><small>Leave blank to use the store expiry.</small></label>
                   <label>Status<select value={branch.status} onChange={(event) => setNewBranchDrafts((current) => current.map((item) => item.draftKey === branch.draftKey ? { ...item, status: event.target.value } : item))}><option>Active</option><option>Inactive</option><option>Suspended</option></select></label>
                 </div>
               </section>
@@ -3867,7 +3975,7 @@ function BillReceiptMeta({ billTemplate, rows }) {
   );
 }
 
-function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange, orderType, setOrderType, online, notify, billTemplate, onSale, onVoidItem, onExit, onLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
+function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange, orderType, setOrderType, online, notify, billTemplate, kotPrinter, onSale, onVoidItem, onExit, onLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
   const catalogItems = (items?.length ? items : menuItems).filter((item) => item.status !== "Inactive");
   const categories = ["All", ...Array.from(new Set(catalogItems.map((item) => item.category).filter(Boolean))), "Favourites"];
   const [category, setCategory] = useState("All");
@@ -3903,6 +4011,23 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
   const billItemsRef = useRef(null);
   const [orderNumber, setOrderNumber] = useState(() => `ORD-${Date.now().toString().slice(-6)}`);
   const [orderCreatedAt, setOrderCreatedAt] = useState(() => new Date());
+  const autoPrintedBillRef = useRef("");
+
+  useEffect(() => {
+    if (kotPrinter?.type !== "QZ Tray" || !kotPrinter.name?.trim() || kotPrinter.autoPrintBill !== true || !completedBill?.id) return undefined;
+    if (autoPrintedBillRef.current === completedBill.id) return undefined;
+    autoPrintedBillRef.current = completedBill.id;
+    const timer = window.setTimeout(async () => {
+      try {
+        await printReceiptWithQz({ printerName: kotPrinter.name, paper: billTemplate.printerSize, copies: 1, selector: ".completed-print-receipt" });
+        notify(`Bill auto-printed on ${kotPrinter.name}`);
+      } catch (error) {
+        autoPrintedBillRef.current = "";
+        notify(`Bill auto-print failed: ${error?.message || "Install and open QZ Tray"}`);
+      }
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [billTemplate.printerSize, completedBill?.id, kotPrinter?.autoPrintBill, kotPrinter?.name, kotPrinter?.type, notify]);
 
   const filtered = catalogItems.filter((item) => {
     const inCategory = category === "All" || item.category === category || (category === "Favourites" && item.fav);
@@ -4151,8 +4276,17 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
     completeCheckout("Split", payments);
   }
 
-  function printCompletedBill() {
+  async function printCompletedBill() {
     if (!completedBill) return;
+    if (kotPrinter?.type === "QZ Tray" && kotPrinter.name?.trim()) {
+      try {
+        await printReceiptWithQz({ printerName: kotPrinter.name, paper: billTemplate.printerSize, copies: 1, selector: ".completed-print-receipt" });
+        notify(`Bill printed on ${kotPrinter.name}`);
+      } catch (error) {
+        notify(`Direct bill print failed: ${error?.message || "Check QZ Tray and printer connection"}`);
+      }
+      return;
+    }
     const cleanup = () => document.body.classList.remove("printing-completed-bill");
     document.body.classList.add("printing-completed-bill");
     window.addEventListener("afterprint", cleanup, { once: true });
@@ -4160,8 +4294,17 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
     window.setTimeout(() => window.print(), 80);
   }
 
-  function reprintHistoryBill() {
+  async function reprintHistoryBill() {
     if (!selectedHistoryBill) return;
+    if (kotPrinter?.type === "QZ Tray" && kotPrinter.name?.trim()) {
+      try {
+        await printReceiptWithQz({ printerName: kotPrinter.name, paper: billTemplate.printerSize, copies: 1, selector: ".history-print-receipt" });
+        notify(`Bill reprinted on ${kotPrinter.name}`);
+      } catch (error) {
+        notify(`Direct bill print failed: ${error?.message || "Check QZ Tray and printer connection"}`);
+      }
+      return;
+    }
     const cleanup = () => document.body.classList.remove("printing-history-bill");
     document.body.classList.add("printing-history-bill");
     window.addEventListener("afterprint", cleanup, { once: true });
@@ -7763,6 +7906,52 @@ async function printKotWithQz({ printerName, paper, copies = 1, order, isTest = 
   return qz.print(config, [{ type: "pixel", format: "html", flavor: "plain", data: html }]);
 }
 
+async function printReceiptWithQz({ printerName, paper, copies = 1, selector }) {
+  if (!printerName?.trim()) throw new Error("Choose a printer in KOT Printer settings");
+  const receipt = document.querySelector(selector);
+  if (!receipt) throw new Error("The bill is not ready to print");
+  if (!qz.websocket.isActive()) await qz.websocket.connect();
+
+  const width = paper === "58mm" ? "54mm" : "72mm";
+  const clone = receipt.cloneNode(true);
+  clone.removeAttribute("aria-hidden");
+  Object.assign(clone.style, {
+    position: "static",
+    top: "auto",
+    left: "auto",
+    transform: "none",
+    width,
+    minHeight: "0",
+    maxHeight: "none",
+    overflow: "visible",
+    margin: "0",
+    padding: "3mm 4mm 4mm",
+    border: "0",
+    borderRadius: "0",
+    boxShadow: "none",
+    background: "#fff",
+    color: "#000",
+    fontSize: paper === "58mm" ? "10px" : "11px",
+    lineHeight: "1.28",
+    visibility: "visible",
+    pointerEvents: "auto",
+  });
+  clone.querySelectorAll("img").forEach((img) => {
+    if (img.getAttribute("src")) img.src = new URL(img.getAttribute("src"), window.location.href).href;
+  });
+
+  const css = Array.from(document.styleSheets).flatMap((sheet) => {
+    try {
+      return Array.from(sheet.cssRules, (rule) => rule.cssText);
+    } catch {
+      return [];
+    }
+  }).join("\n");
+  const html = `<!doctype html><html><head><meta charset="utf-8"><base href="${escapePrintHtml(window.location.href)}"><style>${css}\n@page{size:auto;margin:0}html,body{margin:0!important;padding:0!important;width:${width}!important;background:#fff!important;color:#000!important}.completed-print-receipt,.history-print-receipt{display:block!important;position:static!important;left:auto!important;top:auto!important;transform:none!important;visibility:visible!important}.bill-items{min-height:0!important;max-height:none!important;overflow:visible!important}</style></head><body>${clone.outerHTML}</body></html>`;
+  const config = qz.configs.create(printerName, { copies: Math.max(1, Math.min(5, Number(copies) || 1)), margins: 0 });
+  return qz.print(config, [{ type: "pixel", format: "html", flavor: "plain", data: html }]);
+}
+
 const offerWeekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 function offerIconForType(type) {
@@ -8946,6 +9135,7 @@ function KotPrinterSetup({ kotPrinter, setKotPrinter, notify, canManage }) {
       </div>
       {kotPrinter.type === "QZ Tray" && <div className="settings-printer-status"><div><strong>QZ Tray must be installed and running on this computer.</strong><small>On first use, approve UVPRO in the QZ Tray permission prompt. Printers connected to this computer will appear here.</small></div><button type="button" onClick={() => discoverQzPrinters().catch((error) => notify(`QZ Tray: ${error?.message || "Could not find printers"}`))} disabled={!canManage || qzBusy}>{qzBusy ? "Searching…" : "Find printers"}</button></div>}
       <label className="kot-toggle"><input type="checkbox" checked={kotPrinter.autoPrint} onChange={(event) => update("autoPrint", event.target.checked)} disabled={!canManage} /> Auto send KOT to kitchen queue when order is created</label>
+      {kotPrinter.type === "QZ Tray" && <label className="kot-toggle"><input type="checkbox" checked={kotPrinter.autoPrintBill !== false} onChange={(event) => update("autoPrintBill", event.target.checked)} disabled={!canManage} /> Auto print customer bill after payment (no Windows print dialog)</label>}
       <div className="editor-row">
         <button onClick={connectPrinter} disabled={!canManage || qzBusy}>{qzBusy ? "Connecting…" : "Connect printer"}</button>
         <button onClick={testPrinter} disabled={qzBusy}>Test KOT</button>

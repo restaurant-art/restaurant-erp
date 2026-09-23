@@ -1854,6 +1854,14 @@ h3 {
   font-weight: 800;
 }
 
+.branch-card dd.subscription-current {
+  color: #17604b;
+}
+
+.branch-card dd.subscription-expired {
+  color: #b5483c;
+}
+
 .branch-login-credential {
   display: grid !important;
   grid-template-columns: minmax(110px, 0.75fr) minmax(0, 1fr) auto;
@@ -10436,6 +10444,25 @@ h3 {
   color: #9f4d38;
 }
 
+.subscription-expired-card {
+  gap: 18px;
+}
+
+.subscription-expired-message {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid rgba(181, 72, 60, 0.24);
+  border-radius: 10px;
+  background: #fff5f2;
+  color: #7e342c;
+}
+
+.subscription-expired-message span {
+  color: #9f4d38;
+  font-size: 13px;
+}
+
 .dark .menu-setup-header,
 .dark .menu-admin-detail,
 .dark .menu-record-table,
@@ -15947,6 +15974,8 @@ button.chart-account-row:hover {
   }
 }
 .cloud-sync-banner { position: fixed; bottom: 12px; right: 12px; z-index: 2000; max-width: min(620px, calc(100vw - 24px)); display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 8px; background: #e9f7ef; color: #14532d; box-shadow: 0 2px 12px #0002; font-size: 12px; }
+.subscription-warning-banner { position: fixed; top: 18px; left: 50%; z-index: 2100; display: flex; align-items: center; justify-content: center; gap: 8px; width: min(680px, calc(100vw - 32px)); padding: 12px 16px; transform: translateX(-50%); border: 1px solid #e7c56a; border-radius: 10px; background: #fff4d6; color: #76530d; box-shadow: 0 12px 32px rgba(102, 73, 12, 0.2); font-size: 13px; text-align: center; }
+.subscription-warning-banner strong { color: #5f4208; }
 .cloud-sync-error { background: #fff0ed; color: #9c261d; }
 .store-loading-panel { width: min(540px, calc(100vw - 32px)); padding: 28px; border: 1px solid #dce3df; border-radius: 14px; background: #fff; color: #192d25; box-shadow: 0 14px 48px #16332712; }
 .store-loading-panel h2 { margin: 0 0 16px; font-size: 22px; font-weight: 650; }

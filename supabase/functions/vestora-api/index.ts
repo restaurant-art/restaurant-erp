@@ -71,12 +71,17 @@ Deno.serve(async (request) => {
     if (isPlatformAdmin || stateStore(key) || !Array.isArray(value)) return value;
     return value.filter((item) => key === "vestora-stores" ? canStore(String(item.id)) : canStore(String(item.storeId || "")));
   };
+  const accessStoreId = String(assignedStore || allowedStoreIds[0] || "");
+  const accessStore = directory.find((store) => String(store.id) === accessStoreId);
+  const subscriptionExpiresAt = String(accessStore?.subscriptionExpiresAt || "").slice(0, 10);
+  const subscriptionExpired = Boolean(!isPlatformAdmin && subscriptionExpiresAt && subscriptionExpiresAt < new Date().toISOString().slice(0, 10));
 
   const url = new URL(request.url);
   const pathParts = url.pathname.split("/").filter(Boolean);
   const apiIndex = pathParts.indexOf("vestora-api");
   const resource = apiIndex >= 0 ? pathParts[apiIndex + 1] : undefined;
   const recordId = apiIndex >= 0 ? pathParts[apiIndex + 2] : undefined;
+  if (subscriptionExpired && resource !== "profile") return json({ error: "Software renewal expired for this store" }, 403);
   if (resource === "profile") {
     if (!profile) return json({ error: "This login is not linked to a VESTORA restaurant profile" }, 403);
     const appRoleByType: Record<string, string> = {
@@ -106,6 +111,8 @@ Deno.serve(async (request) => {
       status: "Active",
       storeId: assignedStore || allowedStoreIds[0] || "GLOBAL",
       allowedStoreIds,
+      subscriptionExpiresAt: subscriptionExpiresAt || null,
+      subscriptionExpired,
     });
   }
   if (resource === "health") {
@@ -216,7 +223,7 @@ Deno.serve(async (request) => {
         const old = Array.isArray(previous?.state_value) ? previous.state_value : [];
         if (body.key === "vestora-stores") {
           if (!managesStaff || value.some((item) => !old.some((entry) => entry.id === item.id)) || value.length !== old.filter((entry) => canStore(String(entry.id))).length) return json({ error: "Super Admin permission required to create or delete stores" }, 403);
-          const protectedFields = ["id", "parentStoreId", "restaurantId", "adminEmail", "status"];
+          const protectedFields = ["id", "parentStoreId", "restaurantId", "adminEmail", "status", "subscriptionExpiresAt"];
           if (value.some((item) => protectedFields.some((field) => JSON.stringify(item[field]) !== JSON.stringify(old.find((entry) => entry.id === item.id)?.[field])))) return json({ error: "Super Admin permission required to change store access" }, 403);
         }
         if (body.key === "vestora-users") {
