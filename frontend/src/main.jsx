@@ -1758,7 +1758,18 @@ function AuthenticatedApp() {
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.register(publicAssetPath("service-worker.js"), { updateViaCache: "none" }).catch(() => {});
+    let reloadOnControllerChange = true;
+    const handleControllerChange = () => {
+      if (!reloadOnControllerChange) return;
+      reloadOnControllerChange = false;
+      window.location.reload();
+    };
+    navigator.serviceWorker.addEventListener("controllerchange", handleControllerChange, { once: true });
+    navigator.serviceWorker.register(publicAssetPath("service-worker.js"), { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
+    return () => {
+      reloadOnControllerChange = false;
+      navigator.serviceWorker.removeEventListener("controllerchange", handleControllerChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -2166,7 +2177,10 @@ function AuthenticatedApp() {
           setStores={setStores}
           users={users}
           activeStore={activeStore}
-          storeAccessReady={supabaseStateReady}
+          // Super Admins can switch into a branch using the already-loaded
+          // directory while the larger cloud-state hydration continues in the
+          // background. The sync gate still protects all cloud writes.
+          storeAccessReady={currentUser.role === "super_admin" || supabaseStateReady}
           onEnterStore={enterStore}
           onUpdatePassword={() => setPasswordDialogOpen(true)}
           onLogout={handleLogout}
