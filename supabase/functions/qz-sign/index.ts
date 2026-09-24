@@ -50,14 +50,85 @@ function pemToBytes(pem: string) {
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
-async function signRequest(requestText: string, privateKeyPem: string) {
-  const key = await crypto.subtle.importKey(
-    "pkcs8",
-    pemToBytes(privateKeyPem),
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" },
-    false,
-    ["sign"],
-  );
+type DerElement = { tag: number; start: number; contentStart: number; end: number };
+
+function readDerElement(bytes: Uint8Array, offset: number): DerElement {
+  if (offset + 2 > bytes.length) throw new Error("The QZ certificate DER is incomplete");
+  const start = offset;
+  const tag = bytes[offset++];
+  const lengthByte = bytes[offset++];
+  let length = lengthByte;
+  if (lengthByte & 0x80) {
+    const lengthBytes = lengthByte & 0x7f;
+    if (!lengthBytes || lengthBytes > 4 || offset + lengthBytes > bytes.length) throw new Error("The QZ certificate DER length is invalid");
+    length = 0;
+    for (let index = 0; index < lengthBytes; index += 1) length = (length * 256) + bytes[offset++];
+  }
+  const end = offset + length;
+  if (end > bytes.length) throw new Error(`ASN.1 DER message is incomplete: expected ${end}, actual ${bytes.length} at DER byte ${offset}`);
+  return { tag, start, contentStart: offset, end };
+}
+
+function certificateSpki(certificatePem: string) {
+  const bytes = pemToBytes(certificatePem);
+  const certificate = readDerElement(bytes, 0);
+  const tbsCertificate = readDerElement(bytes, certificate.contentStart);
+  if (certificate.tag !== 0x30 || tbsCertificate.tag !== 0x30) throw new Error("The QZ certificate is not valid X.509 DER");
+  let offset = tbsCertificate.contentStart;
+  let element = readDerElement(bytes, offset);
+  if (element.tag === 0xa0) {
+    offset = element.end;
+    element = readDerElement(bytes, offset);
+  }
+  // serialNumber, signature, issuer, validity and subject precede SPKI.
+  for (let index = 0; index < 5; index += 1) {
+    offset = element.end;
+    element = readDerElement(bytes, offset);
+  }
+  if (element.tag !== 0x30) throw new Error("The QZ certificate public key is invalid");
+  return bytes.slice(element.start, element.end);
+}
+
+const rsaAlgorithm = { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" };
+let signingKeyPromise: Promise<CryptoKey> | null = null;
+
+async function importSigningKey(privateKeyPem: string, certificatePem: string) {
+  const privateKeyBytes = pemToBytes(privateKeyPem);
+  try {
+    return await crypto.subtle.importKey("pkcs8", privateKeyBytes, rsaAlgorithm, false, ["sign"]);
+  } catch (error) {
+    // Recover a known one-byte truncation caused by an earlier secret upload.
+    // Every candidate is verified against the configured certificate, so no
+    // guessed key can ever be used to sign a print request.
+    let declaredEnd = 0;
+    try {
+      declaredEnd = readDerElement(new Uint8Array([...privateKeyBytes, 0]), 0).end;
+    } catch {
+      throw error;
+    }
+    if (declaredEnd !== privateKeyBytes.length + 1) throw error;
+
+    const publicKey = await crypto.subtle.importKey("spki", certificateSpki(certificatePem), rsaAlgorithm, false, ["verify"]);
+    const probe = new TextEncoder().encode("uvpro-qz-key-recovery");
+    const candidateBytes = new Uint8Array(privateKeyBytes.length + 1);
+    candidateBytes.set(privateKeyBytes);
+    for (let byte = 0; byte <= 255; byte += 1) {
+      candidateBytes[candidateBytes.length - 1] = byte;
+      try {
+        const candidate = await crypto.subtle.importKey("pkcs8", candidateBytes, rsaAlgorithm, false, ["sign"]);
+        const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", candidate, probe);
+        if (await crypto.subtle.verify("RSASSA-PKCS1-v1_5", publicKey, signature, probe)) return candidate;
+      } catch {
+        // Try the next possible final byte.
+      }
+    }
+    throw new Error("The QZ private key is truncated and does not match the configured certificate");
+  }
+}
+
+async function signRequest(requestText: string, privateKeyPem: string, certificatePem: string) {
+  signingKeyPromise ||= importSigningKey(privateKeyPem, certificatePem);
+  const key = await signingKeyPromise;
   const signature = await crypto.subtle.sign(
     "RSASSA-PKCS1-v1_5",
     key,
@@ -80,7 +151,7 @@ Deno.serve(async (request) => {
     if (body?.action !== "sign" || typeof body.request !== "string" || !body.request) {
       return json(request, { error: "A QZ signing request is required" }, 400);
     }
-    return json(request, { signature: await signRequest(body.request, privateKey) });
+    return json(request, { signature: await signRequest(body.request, privateKey, certificate) });
   } catch (error) {
     return json(request, { error: error instanceof Error ? error.message : "QZ signing failed" }, 401);
   }
