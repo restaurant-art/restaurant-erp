@@ -14,11 +14,20 @@ function corsHeaders(request: Request) {
 
 const json = (request: Request, body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
-  headers: { ...corsHeaders(request), "Content-Type": "application/json" },
+  headers: { ...corsHeaders(request), "Cache-Control": "no-store", "Content-Type": "application/json" },
 });
 
+function normalizePem(value: string) {
+  return String(value)
+    .trim()
+    .replace(/^['"]|['"]$/g, "")
+    .replace(/\\r?\\n/g, "\n");
+}
+
 function pemToBytes(pem: string) {
-  const base64 = pem.replace(/-----BEGIN [^-]+-----|-----END [^-]+-----|\s+/g, "");
+  const normalized = normalizePem(pem);
+  const base64 = normalized.replace(/-----BEGIN [^-]+-----|-----END [^-]+-----|\s+/g, "");
+  if (!base64 || /[^A-Za-z0-9+/=]/.test(base64)) throw new Error("The QZ private key format is invalid");
   const binary = atob(base64);
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
@@ -57,8 +66,8 @@ Deno.serve(async (request) => {
 
   try {
     await getAuthenticatedUser(request);
-    const certificate = Deno.env.get("QZ_CERTIFICATE")?.trim();
-    const privateKey = Deno.env.get("QZ_PRIVATE_KEY")?.trim();
+    const certificate = Deno.env.get("QZ_CERTIFICATE") ? normalizePem(Deno.env.get("QZ_CERTIFICATE") as string) : "";
+    const privateKey = Deno.env.get("QZ_PRIVATE_KEY") ? normalizePem(Deno.env.get("QZ_PRIVATE_KEY") as string) : "";
     if (!certificate || !privateKey) return json(request, { error: "QZ signing is not configured" }, 503);
 
     const body = await request.json().catch(() => null) as { action?: string; request?: string } | null;
