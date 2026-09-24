@@ -26,6 +26,10 @@ const globalKeys = new Set(["vestora-stores", "vestora-users", "vestora-custom-r
 const storePrefixes = ["active-settings","attendance-employees","attendance-logs","attendance-records","attendance-report","attendance-settings","finance-bank-accounts","finance-expenses","finance-journals","finance-ledgers","finance-receipts","finance-vendor-payments","finished-goods","floors","food-stock","inventory-categories","inventory-transactions","inventory","last-shift-close","shifts", "shift-history","leave-requests","menu-items","menu-setup","offers","payroll-attendance","production-batches","production-categories","production-wastage","recipes","tables","bill-template","theme-config","supplier-documents","customer-details"];
 const stateStore = (key: string) => { const prefix = storePrefixes.find((name) => key.startsWith(`vestora-${name}-`)); return prefix ? key.slice(`vestora-${prefix}-`.length) : null; };
 const isBusinessKey = (key: string) => globalKeys.has(key) || stateStore(key) !== null;
+const normalizedStaffStatus = (value: unknown) => String(value || "Active").trim().toLowerCase();
+const normalizedStaffRole = (value: unknown) => String(value || "").trim().replaceAll("_", " ").toLowerCase();
+const isActiveStaff = (entry: any) => normalizedStaffStatus(entry?.status) === "active";
+const isCashierStaff = (entry: any) => normalizedStaffRole(entry?.role) === "cashier";
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -57,15 +61,26 @@ Deno.serve(async (request) => {
   if (profile?.is_active === false || assigned?.active === false) return json({ error: "This account is inactive" }, 403);
   const isPlatformAdmin = Boolean(profile?.is_superuser || profile?.user_type === "super_admin");
   const { data: directoryRow, error: directoryError } = await admin.from("vestora_shared_app_state").select("state_value").eq("state_key", "vestora-stores").maybeSingle();
-  const { data: staffRow, error: staffError } = await admin.from("vestora_shared_app_state").select("state_value").eq("state_key", "vestora-users").maybeSingle();
-  if (directoryError || staffError) return json({ error: "Store access could not be verified" }, 503);
+  const { data: staffRow, error: staffError } = await admin.from("vestora_shared_app_state").select("state_value,updated_at").eq("state_key", "vestora-users").maybeSingle();
+  const { data: customRoleRow, error: customRoleError } = await admin.from("vestora_shared_app_state").select("state_value").eq("state_key", "vestora-custom-roles").maybeSingle();
+  if (directoryError || staffError || customRoleError) return json({ error: "Store access could not be verified" }, 503);
   const directory = Array.isArray(directoryRow?.state_value) ? directoryRow.state_value : [];
   const staff = Array.isArray(staffRow?.state_value) ? staffRow.state_value : [];
+  const customRoles = Array.isArray(customRoleRow?.state_value) ? customRoleRow.state_value : [];
   const email = String(user.email || "").toLowerCase();
-  const linkedStaff = staff.find((entry) => String(entry.email || "").toLowerCase() === email && entry.status !== "Inactive");
+  const linkedStaff = staff.find((entry) => String(entry.email || "").toLowerCase() === email && isActiveStaff(entry));
   const assignedStore = assigned?.storeId || linkedStaff?.storeId;
   const allowedStoreIds = directory.filter((store) => isPlatformAdmin || String(store.id) === String(assignedStore || "") || String(store.adminEmail || "").toLowerCase() === email || (profile?.restaurant_id != null && String(store.restaurantId || "") === String(profile.restaurant_id))).map((store) => String(store.id));
   const canStore = (storeId: string) => isPlatformAdmin || allowedStoreIds.includes(String(storeId));
+  const canOperatePos = (entry: any) => {
+    if (!isActiveStaff(entry)) return false;
+    if (isCashierStaff(entry)) return true;
+    const role = customRoles.find((candidate) => normalizedStaffRole(candidate?.name) === normalizedStaffRole(entry?.role)
+      && normalizedStaffStatus(candidate?.status) === "active"
+      && Array.isArray(candidate?.modules) && candidate.modules.includes("pos")
+      && (String(candidate?.storeId || "GLOBAL") === "GLOBAL" || String(candidate?.storeId) === String(entry?.storeId)));
+    return Boolean(role);
+  };
   const canKey = (key: string) => isBusinessKey(key) && (!stateStore(key) || canStore(stateStore(key)!));
   const scopeValue = (key: string, value: unknown) => {
     if (isPlatformAdmin || stateStore(key) || !Array.isArray(value)) return value;
@@ -75,6 +90,25 @@ Deno.serve(async (request) => {
   const accessStore = directory.find((store) => String(store.id) === accessStoreId);
   const subscriptionExpiresAt = String(accessStore?.subscriptionExpiresAt || "").slice(0, 10);
   const subscriptionExpired = Boolean(!isPlatformAdmin && subscriptionExpiresAt && subscriptionExpiresAt < new Date().toISOString().slice(0, 10));
+  const writeStaffDirectory = async (mutate: (current: any[]) => any[]) => {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const { data: latestRow, error: latestError } = await admin.from("vestora_shared_app_state").select("state_value,updated_at").eq("state_key", "vestora-users").maybeSingle();
+      if (latestError) throw latestError;
+      const current = Array.isArray(latestRow?.state_value) ? latestRow.state_value : [];
+      const next = stripStateSecrets(mutate(current));
+      const { data, error: writeError } = await admin.rpc("vestora_write_shared_state", {
+        p_user_id: user.id,
+        p_operation_id: crypto.randomUUID(),
+        p_key: "vestora-users",
+        p_value: next,
+        p_request_value: next,
+        p_expected: latestRow?.updated_at ?? null,
+      });
+      if (writeError) throw writeError;
+      if (!data?.conflict) return data;
+    }
+    throw new Error("Staff directory changed on another device; retry the operation");
+  };
 
   const url = new URL(request.url);
   const pathParts = url.pathname.split("/").filter(Boolean);
@@ -123,7 +157,7 @@ Deno.serve(async (request) => {
   if (resource === "cashier-login" && request.method === "POST") {
     if (!profile) return json({ error: "Staff sign-in required" }, 403);
     const body = await request.json().catch(() => null);
-    const cashier = staff.find((entry) => String(entry.email || "").toLowerCase() === String(body?.email || "").toLowerCase() && entry.role === "Cashier" && entry.status === "Active");
+    const cashier = staff.find((entry) => String(entry.email || "").toLowerCase() === String(body?.email || "").toLowerCase() && canOperatePos(entry));
     if (!cashier || !canStore(String(cashier.storeId))) return json({ error: "Cashier is not available in this store" }, 403);
     const isolated = createClient(supabaseUrl, anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
     const { data, error: loginError } = await isolated.auth.signInWithPassword({ email: cashier.email, password: String(body?.password || "") });
@@ -143,30 +177,46 @@ Deno.serve(async (request) => {
     if (protectedProfileError) return json({ error: "Unable to verify the protected account" }, 503);
     if (protectedProfile?.is_superuser || protectedProfile?.user_type === "super_admin") return json({ error: "Super Admin accounts cannot be reassigned as staff users." }, 403);
     const assignedRole = roleNames[body.role] || "cashier";
+    const directoryStaff = staff.find((entry) => String(entry.id || "") === String(body?.id || "") || String(entry.email || "").toLowerCase() === email);
     let authUser = null;
     for (let page = 1; page <= 100; page++) {
       const { data, error: listError } = await admin.auth.admin.listUsers({ page, perPage: 100 });
       if (listError) return json({ error: "Unable to verify staff account" }, 503);
-      authUser = data.users.find((entry) => String(entry.email).toLowerCase() === email);
+      authUser = data.users.find((entry) => String(entry.id) === String(directoryStaff?.authUserId || "") || String(entry.email).toLowerCase() === email || (body?.action === "update" && String(entry.email).toLowerCase() === String(directoryStaff?.email || "").toLowerCase()));
       if (authUser || data.users.length < 100) break;
     }
+    if (!isPlatformAdmin && ["update", "delete"].includes(String(body?.action || ""))) {
+      if (!directoryStaff || !canStore(String(directoryStaff.storeId || "")) || String(directoryStaff.storeId || "") !== storeId) return json({ error: "Store access denied" }, 403);
+      if (["Restaurant Admin", "Restaurant Owner", "Super Admin"].includes(String(directoryStaff.role || ""))) return json({ error: "This login cannot be changed by this administrator" }, 403);
+    }
     if (body?.action === "delete") {
-      if (!authUser) return json({ deleted: true });
-      if (!isPlatformAdmin) {
+      if (authUser && !isPlatformAdmin) {
         const assignedStoreId = String(authUser.app_metadata?.vestora?.storeId || "");
         if (!directory.some((store) => store.id === storeId) || !canStore(storeId) || assignedStoreId !== storeId) return json({ error: "Store access denied" }, 403);
         if (["owner", "restaurant_admin", "super_admin"].includes(String(authUser.app_metadata?.vestora?.role || ""))) return json({ error: "This login cannot be deleted by this administrator" }, 403);
       }
-      const { error: deleteError } = await admin.auth.admin.deleteUser(authUser.id);
-      if (deleteError) return json({ error: deleteError.message }, 400);
+      if (authUser) {
+        const { error: deleteError } = await admin.auth.admin.deleteUser(authUser.id);
+        if (deleteError) return json({ error: deleteError.message }, 400);
+      }
+      try {
+        await writeStaffDirectory((current) => current.filter((entry) => String(entry.id || "") !== String(body?.id || "") && String(entry.email || "").toLowerCase() !== email));
+      } catch (directoryWriteError) {
+        return json({ error: `Login was removed, but the staff directory could not be updated: ${directoryWriteError.message}` }, 503);
+      }
       return json({ deleted: true });
+    }
+    if (body?.action === "create" && directoryStaff && !authUser) {
+      const oldStoreId = String(directoryStaff.storeId || "");
+      const replaceable = isPlatformAdmin && (normalizedStaffStatus(directoryStaff.status) !== "active" || (oldStoreId && !directory.some((store) => store.id === oldStoreId)));
+      if (!replaceable) return json({ error: "This email is already present in the staff directory. Delete the old user first to create a new ID." }, 409);
     }
     if (body?.action === "create" && authUser) {
       // Legacy staff assignments are stored in shared app state as well as
       // Supabase Auth metadata. Some older accounts have no vestora metadata,
       // so use the server-owned staff record to recognize users from a deleted
       // branch or an inactive login when a Super Admin reuses their email.
-      const priorStaff = staff.find((entry) => String(entry.email || "").toLowerCase() === email);
+      const priorStaff = directoryStaff;
       const oldStoreId = String(authUser.app_metadata?.vestora?.storeId || priorStaff?.storeId || "");
       const oldLoginWasDeleted = authUser.app_metadata?.vestora?.active === false || priorStaff?.status === "Inactive";
       const oldStoreWasDeleted = Boolean(oldStoreId) && !directory.some((store) => store.id === oldStoreId);
@@ -184,12 +234,35 @@ Deno.serve(async (request) => {
     if (authUser && !isPlatformAdmin && (!canStore(String(authUser.app_metadata?.vestora?.storeId || "")) || ["owner", "restaurant_admin", "super_admin"].includes(authUser.app_metadata?.vestora?.role))) return json({ error: "This login cannot be reassigned by this administrator" }, 403);
     const password = String(body.password || "");
     if ((!authUser || password) && password.length < 8) return json({ error: "Use a password of at least 8 characters" }, 400);
-    const app_metadata = { ...(authUser?.app_metadata || {}), vestora: { storeId, role: assignedRole, appRole: body.role, active: body.status !== "Inactive" } };
+    const app_metadata = { ...(authUser?.app_metadata || {}), vestora: { storeId, role: assignedRole, appRole: body.role, active: normalizedStaffStatus(body.status) === "active" } };
+    const createdAuthUser = !authUser;
     const result = authUser
-      ? await admin.auth.admin.updateUserById(authUser.id, { app_metadata, user_metadata: { name }, ...(password ? { password } : {}) })
+      ? await admin.auth.admin.updateUserById(authUser.id, { email, app_metadata, user_metadata: { name }, ...(password ? { password } : {}) })
       : await admin.auth.admin.createUser({ email, password, email_confirm: true, app_metadata, user_metadata: { name } });
     if (result.error) return json({ error: result.error.message }, 400);
-    return json({ authUserId: result.data.user.id });
+    const staffRecord: any = stripStateSecrets({
+      id: body?.id || crypto.randomUUID(),
+      name,
+      email,
+      storeId,
+      role: body.role,
+      status: body.status || "Active",
+      authUserId: result.data.user.id,
+      ...(body?.mobile ? { mobile: String(body.mobile) } : {}),
+      ...(body?.salary != null ? { salary: Number(body.salary) || 0 } : {}),
+    });
+    try {
+      await writeStaffDirectory((current) => {
+        const match = (entry: any) => String(entry.id || "") === String(staffRecord.id || "") || String(entry.email || "").toLowerCase() === email;
+        const existingIndex = current.findIndex(match);
+        if (existingIndex < 0) return [...current, staffRecord];
+        return current.map((entry, index) => index === existingIndex ? { ...entry, ...staffRecord } : entry);
+      });
+    } catch (directoryWriteError) {
+      if (createdAuthUser) await admin.auth.admin.deleteUser(result.data.user.id).catch(() => {});
+      return json({ error: `Staff directory could not be updated: ${directoryWriteError.message}` }, 503);
+    }
+    return json({ authUserId: result.data.user.id, staff: staffRecord });
   }
   if (resource === "state") {
     if (!profile) return json({ error: "This login is not linked to a VESTORA restaurant profile" }, 403);

@@ -1283,15 +1283,24 @@ function AuthenticatedApp() {
   const [themeConfig, setThemeConfig] = useBusinessState(`vestora-theme-config-${settingsStoreId}`, () => normalizeThemeConfig(loadStoredObject("vestora-theme-config")));
   const [dark, setDark] = useState(() => themeConfig.mode === "Dark");
   const [cart, setCart] = useState([]);
-  const [posCashier, setPosCashier] = useState(() => loadStoredObject("vestora-pos-cashier"));
+  // Always require an explicit cashier choice when POS is entered. The saved
+  // record is retained only to recover a legacy offline shift after refresh.
+  const [posCashier, setPosCashier] = useState(null);
   const [orderType, setOrderType] = useState("Dine-in");
   const [toast, setToast] = useState("");
   const [lastShiftClose, setLastShiftClose] = useBusinessState(`vestora-last-shift-close-${settingsStoreId}`, () => loadStoredObject(`vestora-last-shift-close-${settingsStoreId}`));
   const [sharedShifts, setSharedShifts] = useBusinessState(`vestora-shifts-${settingsStoreId}`, () => {
     const saved = localStorage.getItem("vestora-current-shift");
-    return saved && posCashier?.storeId === settingsStoreId ? [JSON.parse(saved)] : [];
+    const savedCashier = loadStoredObject("vestora-pos-cashier");
+    if (!saved) return [];
+    const parsedShift = JSON.parse(saved);
+    return normalizeStoreId(parsedShift.storeId || savedCashier?.storeId) === settingsStoreId ? [parsedShift] : [];
   });
-  const currentShift = sharedShifts.find((shift) => !shift.closedAt && String(shift.cashierId) === String(posCashier?.id)) || null;
+  const openShifts = sharedShifts.filter((shift) => !shift.closedAt);
+  const activeStoreShift = openShifts[0] || null;
+  const currentShift = posCashier
+    ? openShifts.find((shift) => String(shift.cashierId) === String(posCashier.id)) || null
+    : null;
   function setCurrentShift(shift) {
     if (shift) setSharedShifts((current) => [...current.filter((entry) => entry.id !== shift.id), shift]);
   }
@@ -1424,7 +1433,16 @@ function AuthenticatedApp() {
   const scopedRefundLedger = refundLedger.filter((entry) => normalizeStoreId(entry.storeId) === activeStore.id);
   const scopedKdsOrders = kdsOrders.filter((order) => normalizeStoreId(order.storeId) === activeStore.id);
   const scopedTableOrders = tableOrders.filter((order) => normalizeStoreId(order.storeId) === activeStore.id);
-  const activeCashiers = users.filter((user) => (activeStore.id === "GLOBAL" || normalizeStoreId(user.storeId) === activeStore.id) && user.role === "Cashier" && user.status === "Active");
+  const posCustomRoleNames = new Set(customRoles
+    .filter((role) => String(role.status || "Active").trim().toLowerCase() === "active" && role.modules?.includes("pos") && (role.storeId === "GLOBAL" || normalizeStoreId(role.storeId) === activeStore.id))
+    .map((role) => String(role.name || "").trim().toLowerCase()));
+  const activeCashiers = users.filter((user) => {
+    const role = String(user.role || "").trim().replaceAll("_", " ").toLowerCase();
+    const status = String(user.status || "Active").trim().toLowerCase();
+    return (activeStore.id === "GLOBAL" || normalizeStoreId(user.storeId) === activeStore.id)
+      && (role === "cashier" || posCustomRoleNames.has(role))
+      && status === "active";
+  });
   const comparisonStores = (canManageAll ? stores.filter((store) => store.name === activeStore.name) : [activeStore])
     .filter((store) => store && store.status !== "Inactive" && (store.branch || store.id === activeStore.id));
   const comparisonSalesLedger = canManageAll ? salesLedger : scopedSalesLedger;
@@ -1713,22 +1731,54 @@ function AuthenticatedApp() {
 
   function exitPOS() {
     const fallback = visibleModules.some((module) => module.id === returnModule) ? returnModule : "dashboard";
+    setPosCashier(null);
+    localStorage.removeItem("vestora-pos-cashier");
     setActive(fallback);
     notify("POS closed");
   }
 
+  function changeCashier() {
+    setPosCashier(null);
+    localStorage.removeItem("vestora-pos-cashier");
+    notify(activeStoreShift ? `Select ${activeStoreShift.cashierName || "the active cashier"} to resume this shift` : "Select cashier");
+  }
+
+  function showOperationalNotifications() {
+    if (queuedOrders) {
+      notify(`${queuedOrders} offline bill${queuedOrders === 1 ? " is" : "s are"} waiting to sync`);
+      return;
+    }
+    if (activeStoreShift) {
+      notify(`${activeStoreShift.cashierName || "A cashier"} has an open POS shift`);
+      return;
+    }
+    if (!activeCashiers.length) {
+      notify("No active cashier is assigned to this branch");
+      return;
+    }
+    notify("No operational alerts");
+  }
+
   function openShift(openingBalance) {
+    if (activeStoreShift && String(activeStoreShift.cashierId) !== String(posCashier?.id)) {
+      notify(`${activeStoreShift.cashierName || "Another cashier"} must close the active shift first`);
+      return false;
+    }
     const balance = Number(openingBalance);
     const shift = {
       id: `SHIFT-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       openingBalance: balance,
       openedAt: new Date().toISOString(),
+      storeId: activeStore.id,
+      storeName: activeStore.name,
+      branch: activeStore.branch,
       cashierId: posCashier?.id || "",
       cashierName: posCashier?.name || "POS User",
     };
     setCurrentShift(shift);
     localStorage.setItem("vestora-current-shift", JSON.stringify(shift));
     notify("Shift opened");
+    return true;
   }
 
   function closeShift(closingBalance, closeDetails = {}) {
@@ -2195,9 +2245,9 @@ function AuthenticatedApp() {
   const content = {
     dashboard: <Dashboard notify={notify} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} kdsOrders={scopedKdsOrders} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} storeId={activeStore.id} onNavigate={setActive} />,
     pos: !posCashier
-      ? <CashierLogin cashiers={activeCashiers} activeStore={activeStore} stores={stores} currentShift={currentShift} onAuthenticated={(cashier) => {
-        if (currentShift?.cashierId && String(currentShift.cashierId) !== String(cashier.id)) {
-          notify(`${currentShift.cashierName || "Another cashier"} must close the active shift first`);
+      ? <CashierLogin cashiers={activeCashiers} activeStore={activeStore} stores={stores} currentShift={activeStoreShift} onAuthenticated={(cashier) => {
+        if (activeStoreShift?.cashierId && String(activeStoreShift.cashierId) !== String(cashier.id)) {
+          notify(`${activeStoreShift.cashierName || "Another cashier"} must close the active shift first`);
           return false;
         }
         const cashierStoreId = normalizeStoreId(cashier.storeId);
@@ -2210,7 +2260,7 @@ function AuthenticatedApp() {
         return true;
       }} onExit={exitPOS} onLogout={handleLogout} onCreateCashier={() => openAdminView("create")} />
       : currentShift
-        ? <POS cart={cart} setCart={setCart} items={productItems} storeId={activeStore.id} foodStock={foodStock} onFoodStockChange={updateFoodStock} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} kotPrinter={kotPrinter} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onLogout={handleLogout} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
+        ? <POS cart={cart} setCart={setCart} items={productItems} storeId={activeStore.id} foodStock={foodStock} onFoodStockChange={updateFoodStock} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} kotPrinter={kotPrinter} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onChangeCashier={changeCashier} onLogout={handleLogout} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
         : <ShiftOpening online={online} onOpenShift={openShift} onExit={exitPOS} onLogout={handleLogout} cashier={posCashier} />,
     kds: <KDS notify={notify} orders={scopedKdsOrders} setOrders={setKdsOrders} kotPrinter={kotPrinter} />,
     tables: <Tables key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} items={productItems} currentUser={currentUser} tableOrders={scopedTableOrders} onSaveOrder={saveTableOrder} onSendKot={sendTableKot} onSendReception={sendTableToReception} onCancelOrder={cancelTableOrder} onCancelItem={cancelTableOrderItem} kotPrinter={kotPrinter} cloudStateReady={supabaseStateReady} />,
@@ -2433,7 +2483,7 @@ function AuthenticatedApp() {
             ) : <span className="pill store-pill">{activeStore.branch} store</span>}
             <span className="pill role-pill">{currentRoleLabel}</span>
             {!appInstalled && <button className="install-app-button" type="button" onClick={installWebApp} title="Install UVPRO as an application"><Download size={16} /><span>Install app</span></button>}
-            <button className="icon-btn" onClick={() => notify("No new notifications")} title="Notifications"><Bell size={18} /></button>
+            <button className="icon-btn" onClick={showOperationalNotifications} title="Operational alerts"><Bell size={18} /></button>
             <button className="icon-btn" onClick={() => setThemeConfig((current) => ({ ...current, mode: dark ? "Light" : "Dark" }))} title="Toggle theme">{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
             <button className="icon-btn" onClick={handleLogout} title="Logout"><LogOut size={18} /></button>
           </div>
@@ -3862,10 +3912,11 @@ function CashierLogin({ cashiers, activeStore, stores = [], currentShift, onAuth
                 {cashiers.map((cashier) => {
                   const hasThisShift = currentShift?.cashierId && String(currentShift.cashierId) === String(cashier.id);
                   const branch = stores.find((store) => store.id === normalizeStoreId(cashier.storeId))?.branch;
+                  const blockedByAnotherShift = currentShift?.cashierId && String(currentShift.cashierId) !== String(cashier.id);
                   return (
-                    <button type="button" className="cashier-account" key={cashier.id} onClick={() => selectCashier(cashier)}>
+                    <button type="button" className="cashier-account" key={cashier.id} onClick={() => selectCashier(cashier)} disabled={Boolean(blockedByAnotherShift)} title={blockedByAnotherShift ? `${currentShift.cashierName || "Another cashier"} has the active shift` : "Select cashier"}>
                       <span className="cashier-avatar">{cashier.name.trim().slice(0, 1).toUpperCase()}</span>
-                      <span><strong>{cashier.name}</strong><small>{hasThisShift ? "Open shift" : branch ? `Cashier · ${branch}` : "Cashier"}</small></span>
+                      <span><strong>{cashier.name}</strong><small>{hasThisShift ? "Open shift" : blockedByAnotherShift ? "Unavailable while another shift is open" : branch ? `${cashier.role || "Cashier"} · ${branch}` : cashier.role || "Cashier"}</small></span>
                       <ChevronRight size={19} />
                     </button>
                   );
@@ -3989,7 +4040,7 @@ function BillReceiptMeta({ billTemplate, rows }) {
   );
 }
 
-function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange, orderType, setOrderType, online, notify, billTemplate, kotPrinter, onSale, onVoidItem, onExit, onLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
+function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange, orderType, setOrderType, online, notify, billTemplate, kotPrinter, onSale, onVoidItem, onExit, onChangeCashier, onLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
   const catalogItems = (items?.length ? items : menuItems).filter((item) => item.status !== "Inactive");
   const categories = ["All", ...Array.from(new Set(catalogItems.map((item) => item.category).filter(Boolean))), "Favourites"];
   const [category, setCategory] = useState("All");
@@ -4225,6 +4276,19 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
       notify("Enter a valid 10-digit customer mobile number");
       return false;
     }
+    if (selectedPayment === "Credit" && (!customerName.trim() || !customerMobile)) {
+      notify("Customer name and mobile are required for a credit sale");
+      return false;
+    }
+    if (["UPI", "Card", "Wallet"].includes(selectedPayment) && !window.confirm(`Confirm ${formatMoney(total)} was received by ${selectedPayment} on the external payment provider.`)) {
+      notify(`${selectedPayment} payment was not confirmed`);
+      return false;
+    }
+    const externalSplitPayments = selectedPayment === "Split" ? splitPayments.filter((entry) => ["UPI", "Card", "Wallet"].includes(entry.method)) : [];
+    if (externalSplitPayments.length && !window.confirm(`Confirm the external split payments were received: ${externalSplitPayments.map((entry) => `${entry.method} ${formatMoney(entry.amount)}`).join(", ")}.`)) {
+      notify("Split payment was not confirmed");
+      return false;
+    }
     for (const { record, quantity } of foodStockRequirements.values()) {
       const available = Number(record.available || 0);
       if (quantity > available) {
@@ -4232,7 +4296,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
         return false;
       }
     }
-    const bill = { id: `BILL-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, orderNumber, cashier: currentUser?.name || "POS User", customerName: customerName.trim(), customerMobile, orderType, tableOrderId: sourceTableOrder?.id || "", tableName: sourceTableOrder?.tableName || "", waiter: sourceTableOrder?.waiterName || "", guestCount: Number(sourceTableOrder?.guestCount || 0), items: cart, subtotal, cgst, sgst, tax, discount: totalDiscount, appliedOffer, total, payment: selectedPayment, splitPayments, itemCount: cart.reduce((sum, item) => sum + item.qty, 0), syncStatus: online ? "Synced" : "Pending sync", completedAt: new Date().toISOString() };
+    const bill = { id: `BILL-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, orderNumber, cashier: currentUser?.name || "POS User", customerName: customerName.trim(), customerMobile, orderType, tableOrderId: sourceTableOrder?.id || "", tableName: sourceTableOrder?.tableName || "", waiter: sourceTableOrder?.waiterName || "", guestCount: Number(sourceTableOrder?.guestCount || 0), items: cart, subtotal, cgst, sgst, tax, discount: totalDiscount, appliedOffer, total, payment: selectedPayment, paymentStatus: ["Cash", "Credit"].includes(selectedPayment) ? "Recorded" : "Manually confirmed", splitPayments, itemCount: cart.reduce((sum, item) => sum + item.qty, 0), syncStatus: online ? "Synced" : "Pending sync", completedAt: new Date().toISOString() };
     if (!online) {
       const queued = JSON.parse(localStorage.getItem("vestora-offline-orders") || "[]");
       localStorage.setItem("vestora-offline-orders", JSON.stringify([...queued, bill]));
@@ -4418,6 +4482,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
           <span className="shift-pill"><small>Cash sales</small><strong>{formatMoney(shiftCashSales)}</strong></span>
           <span className={online ? "pill online pos-network-pill" : "pill offline pos-network-pill"}>{online ? <Wifi size={15} /> : <WifiOff size={15} />} {online ? "Online" : "Offline"}</span>
           <button className={pendingTableOrders.length ? "reception-queue-button has-orders" : "reception-queue-button"} onClick={openReceptionQueue}><ReceiptText size={16} /> Reception {pendingTableOrders.length ? `(${pendingTableOrders.length})` : ""}</button>
+          <button className="pos-exit-button" onClick={onChangeCashier}><Users size={17} /> Change cashier</button>
           <button className="pos-close-shift" onClick={() => setShowCloseShift(true)}>Close shift</button>
           <button className="pos-exit-button" onClick={onExit}><PanelLeftClose size={17} /> Exit POS</button>
           <button className="pos-exit-button" onClick={onLogout}><LogOut size={17} /> Logout</button>
@@ -4613,7 +4678,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
               {completedBill.customerName && <span><small>Customer name</small><strong>{completedBill.customerName}</strong></span>}
               {completedBill.customerMobile && <span><small>Customer mobile</small><strong>{completedBill.customerMobile}</strong></span>}
               <span><small>Items</small><strong>{completedBill.itemCount}</strong></span>
-              <span><small>Status</small><strong>Paid</strong></span>
+              <span><small>Status</small><strong>{completedBill.paymentStatus || "Recorded"}</strong></span>
             </div>
             <div className={`${billPaperClass} completed-receipt completed-print-receipt`} style={billPaperStyle} aria-hidden="true">
               <BillReceiptHeader billTemplate={billTemplate} />
@@ -8689,7 +8754,7 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, onRef
       payment: refundDraft.payment,
       taxAmount: bill.total ? Number((Number(bill.tax || 0) * (amount / Number(bill.total))).toFixed(2)) : 0,
       reason: refundDraft.reason.trim(),
-      status: "Refund posted",
+      status: refundDraft.payment === "Cash" ? "Refund recorded" : "External reversal required",
     });
     setRefundDraft({ billId: "", amount: "", payment: "Cash", reason: "" });
     selectReport("Void and refund", false);
@@ -8883,12 +8948,14 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       storeId: targetStoreId,
     };
     delete scopedDraft.password;
+    let savedStaff = null;
     try {
       // The server reads the verified store directory itself. Saving that
       // directory first made an otherwise authorized owner unable to add a
       // staff user when directory saving was restricted or temporarily busy.
-      const result = await supabaseApiRequest("staff-account", { method: "POST", body: JSON.stringify({ ...scopedDraft, action: editingId ? "update" : "create", password: draft.password }) });
+      const result = await supabaseApiRequest("staff-account", { method: "POST", body: JSON.stringify({ ...scopedDraft, id: editingId || undefined, action: editingId ? "update" : "create", password: draft.password }) });
       scopedDraft.authUserId = result.authUserId;
+      savedStaff = result.staff || null;
     } catch (error) { notify(`User was not saved: ${error.message}`, 10000); return; }
     if (editingId) {
       const targetUser = users.find((user) => user.id === editingId);
@@ -8898,13 +8965,13 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       }
       setUsers((current) => current.map((user) => {
         if (user.id !== editingId) return user;
-        return { ...user, ...scopedDraft };
+        return { ...user, ...scopedDraft, ...(savedStaff || {}) };
       }));
       notify("User updated");
     } else {
       setUsers((current) => [
         ...current.filter((user) => user.id !== replaceableDeletedLogin?.id),
-        { ...scopedDraft, id: crypto.randomUUID() },
+        savedStaff || { ...scopedDraft, id: crypto.randomUUID() },
       ]);
       notify(replaceableDeletedLogin ? "Old login removed. New user ID created." : "New user created");
     }
@@ -8932,6 +8999,15 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
     } catch (error) { notify(`User was not removed: ${error.message}`, 10000); return; }
     setUsers((current) => current.filter((user) => user.id !== id));
     notify("User ID and login deleted. Its email can now be used for a new account.");
+  }
+
+  function exportUsers() {
+    downloadCsv(
+      `uvpro-users-${activeStore.id}-${new Date().toISOString().slice(0, 10)}.csv`,
+      ["name", "email", "role", "storeId", "status"],
+      visibleUsers.map(({ name, email, role, storeId, status }) => ({ name, email, role, storeId, status })),
+    );
+    notify(`${visibleUsers.length} users exported`);
   }
 
   return (
@@ -9017,7 +9093,7 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
           </div>
         )}
         {!showUserEditor && !showRoleEditor && <div className="panel table-panel user-list-panel">
-          <PanelHead title="User access" icon={Users} actions={["Export"]} onAction={() => notify("Users exported")} />
+          <PanelHead title="User access" icon={Users} actions={["Export"]} onAction={exportUsers} />
           {!canManageUsers && <p className="permission-note">Logged in as {currentUser.name}. User creation is available only for an administrator.</p>}
           {canManageUsers && !visibleUsers.length && <div className="user-empty-state"><Users size={22} /><strong>No staff users yet</strong><span>Create the first user for this branch.</span></div>}
           {visibleUsers.length > 0 && <table>
@@ -9108,17 +9184,13 @@ function KotPrinterSetup({ kotPrinter, setKotPrinter, notify, canManage }) {
       }
       return;
     }
-    setKotPrinter((current) => ({ ...current, enabled: false, status: "Checking connection" }));
-    window.setTimeout(() => {
-      setKotPrinter((current) => {
-        if (!canConnectPrinter(current)) {
-          notify("KOT printer connection failed. Check printer details");
-          return { ...current, enabled: false, status: "Disconnected" };
-        }
-        notify("KOT printer connected successfully");
-        return { ...current, enabled: true, status: "Connected" };
-      });
-    }, 500);
+    if (!canConnectPrinter(kotPrinter)) {
+      setKotPrinter((current) => ({ ...current, enabled: false, status: "Disconnected" }));
+      notify("KOT printer details are incomplete");
+      return;
+    }
+    setKotPrinter((current) => ({ ...current, enabled: false, status: "Manual print only" }));
+    notify("Direct automatic printing requires QZ Tray. This printer can use the system print dialog.", 9000);
   }
 
   async function disconnectPrinter() {
@@ -9138,21 +9210,21 @@ function KotPrinterSetup({ kotPrinter, setKotPrinter, notify, canManage }) {
   }
 
   async function testPrinter() {
+    if (kotPrinter.type !== "QZ Tray") {
+      notify(`Opening a system print test for ${kotPrinter.name}`);
+      window.setTimeout(() => window.print(), 100);
+      return;
+    }
     if (!kotPrinter.enabled || kotPrinter.status !== "Connected") {
       notify("Connect KOT printer first");
       return;
     }
-    if (kotPrinter.type === "QZ Tray") {
-      try {
-        await printKotWithQz({ printerName: kotPrinter.name, paper: kotPrinter.paper, copies: kotPrinter.copies, isTest: true });
-        notify(`Test KOT printed on ${kotPrinter.name}`);
-      } catch (error) {
-        notify(`QZ Tray test print failed: ${error?.message || "Check QZ Tray and printer connection"}`);
-      }
-      return;
+    try {
+      await printKotWithQz({ printerName: kotPrinter.name, paper: kotPrinter.paper, copies: kotPrinter.copies, isTest: true });
+      notify(`Test KOT printed on ${kotPrinter.name}`);
+    } catch (error) {
+      notify(`QZ Tray test print failed: ${error?.message || "Check QZ Tray and printer connection"}`);
     }
-    notify(`Test KOT sent to ${kotPrinter.name}`);
-    window.setTimeout(() => window.print(), 100);
   }
 
   return (
@@ -9328,16 +9400,64 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
     notify(`${activeSection} reset`);
   }
 
+  function downloadLocalBackup() {
+    const state = {};
+    Object.keys(localStorage)
+      .filter((key) => key.startsWith("vestora-") && !/(password|token|credential|secret|access.?key|api.?key)/i.test(key))
+      .forEach((key) => {
+        try { state[key] = JSON.parse(localStorage.getItem(key)); }
+        catch { state[key] = localStorage.getItem(key); }
+      });
+    const payload = JSON.stringify({ version: 1, createdAt: new Date().toISOString(), storeId: activeStore.id, state }, (key, value) => /(password|token|credential|secret|access.?key|api.?key)/i.test(key) ? undefined : value, 2);
+    const blob = new Blob([payload], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `uvpro-backup-${activeStore.id}-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
   function runSectionAction() {
     if (!canManage) {
       notify("Admin permission required");
       return;
     }
     applySettingsToStore(activeSection, draft);
+    if (activeSection === "Restaurant profile") {
+      const valid = draft.restaurantName?.trim() && /^\S+@\S+\.\S+$/.test(String(draft.email || ""));
+      notify(valid ? "Profile fields are valid" : "Enter a restaurant name and valid email address");
+      return;
+    }
+    if (activeSection === "GST and FSSAI") {
+      const gstValid = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][A-Z0-9]Z[A-Z0-9]$/.test(String(draft.gst || "").trim().toUpperCase());
+      const fssaiValid = /^\d{14}$/.test(String(draft.fssai || "").trim());
+      notify(gstValid && fssaiValid ? "GSTIN and FSSAI formats are valid" : "Check GSTIN and 14-digit FSSAI formats");
+      return;
+    }
+    if (activeSection === "Backup policy") {
+      downloadLocalBackup();
+      notify("Local backup downloaded. Cloud backup requires an R2 connection.");
+      return;
+    }
+    if (activeSection === "Payment providers") {
+      notify("Provider settings saved. Live payment testing requires gateway credentials.", 9000);
+      return;
+    }
+    if (activeSection === "Cloudflare R2") {
+      notify("R2 settings saved. A server-side R2 connector is required for a live connection test.", 9000);
+      return;
+    }
+    if (activeSection === "WhatsApp templates") {
+      notify("Templates saved. A WhatsApp Business provider is required to send a test message.", 9000);
+      return;
+    }
     notify(`${config.action} completed`);
   }
 
-  function testPrinterRouting() {
+  async function testPrinterRouting() {
     if (!canManage) {
       notify("Admin permission required");
       return;
@@ -9346,13 +9466,24 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
       notify("Enter a KOT printer name before testing");
       return;
     }
+    if (kotPrinter.type !== "QZ Tray") {
+      setSettings((current) => ({ ...current, [activeSection]: { ...(current[activeSection] || config.defaults), connectionStatus: "Not tested" } }));
+      notify("Use KOT printer connection and select QZ Tray for a verified hardware test.", 9000);
+      return;
+    }
     setSettings((current) => ({ ...current, [activeSection]: { ...(current[activeSection] || config.defaults), connectionStatus: "Testing connection" } }));
     setKotPrinter((current) => ({ ...current, name: draft.kotPrinter, enabled: false, status: "Checking connection" }));
-    window.setTimeout(() => {
+    try {
+      const printers = await connectQzTray();
+      if (!printers.includes(draft.kotPrinter)) throw new Error(`${draft.kotPrinter} was not found in Windows`);
       setSettings((current) => ({ ...current, [activeSection]: { ...(current[activeSection] || config.defaults), connectionStatus: "Connected" } }));
       setKotPrinter((current) => ({ ...current, name: draft.kotPrinter, enabled: true, status: "Connected" }));
-      notify("Printer routing is active. KOT printer connected successfully");
-    }, 500);
+      notify("Printer routing verified through QZ Tray");
+    } catch (error) {
+      setSettings((current) => ({ ...current, [activeSection]: { ...(current[activeSection] || config.defaults), connectionStatus: "Disconnected" } }));
+      setKotPrinter((current) => ({ ...current, enabled: false, status: "Disconnected" }));
+      notify(`Printer test failed: ${error?.message || "Check QZ Tray and the selected printer"}`, 10000);
+    }
   }
 
   function applySettingsToStore(section, values) {
@@ -9603,7 +9734,7 @@ function isAdminCreatedAttendanceUser(user, activeStore, canManageAll = false, s
     ? canManageAll && assignedStoreId !== "GLOBAL"
     : assignedStoreId === activeStore.id || (!assignedStore && storeNameMatches);
   return isInScope
-    && user.status === "Active"
+    && String(user.status || "Active").trim().toLowerCase() === "active"
     && !blockedRoles.has(role)
     && !starterIds.has(String(user.id))
     && !starterEmails.has(String(user.email || "").toLowerCase());
@@ -9629,7 +9760,7 @@ function buildAttendanceEmployees(users, activeStore, savedEmployees = [], canMa
         designation: user.role || saved.designation || "Staff",
         salary: Number(user.salary || saved.salary || 0),
         overtimeRate: Number(saved.overtimeRate || 0),
-        active: user.status === "Active",
+        active: String(user.status || "Active").trim().toLowerCase() === "active",
         faceDescriptor: saved.faceDescriptor || [],
         faceConsent: Boolean(saved.faceConsent),
         faceEnrolledAt: saved.faceEnrolledAt || "",
@@ -11308,10 +11439,20 @@ function DataTable({ title, icon, columns, rows, onRowsChange, notify, canManage
     notify(`${newRow[0]} added to ${title}`);
   }
 
+  function exportRows() {
+    const records = visibleRows.map((row) => Object.fromEntries(columns.map((column, index) => [column, row[index] ?? ""])));
+    downloadCsv(`${title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-")}-${new Date().toISOString().slice(0, 10)}.csv`, columns, records);
+    notify(`${records.length} ${title.toLowerCase()} rows exported`);
+  }
+
   return (
     <section className="screen">
       <div className="panel table-panel">
-        <PanelHead title={title} icon={Icon} actions={[...(allowAdd ? [addLabel] : []), "Filter", "Date range", "Export"]} activeAction={filterOn ? "Filter" : ""} onAction={(action) => { if (action === addLabel && allowAdd) { openNewRow(); return; } if (action === "Filter") setFilterOn((value) => !value); notify(`${title} ${action.toLowerCase()} clicked`); }} />
+        <PanelHead title={title} icon={Icon} actions={[...(allowAdd ? [addLabel] : []), "Filter", "Export"]} activeAction={filterOn ? "Filter" : ""} onAction={(action) => {
+          if (action === addLabel && allowAdd) { openNewRow(); return; }
+          if (action === "Filter") { setFilterOn((value) => !value); return; }
+          if (action === "Export") exportRows();
+        }} />
         <table>
           <thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}{canManageAll && <th>Actions</th>}</tr></thead>
           <tbody>
