@@ -81,6 +81,7 @@ import "./styles.css";
 import { businessStorage as localStorage, stopCloudSync } from "./lib/supabase";
 import { useBusinessState, useCloudSyncStatus } from "./lib/use-business-state";
 import { fetchSharedSuperAdminStores, getSupabaseSession, hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseApiList, supabaseApiRequest, supabaseConfigured, supabaseFunctionJson, supabaseProfile, syncInventoryState, syncLocalStateKeyToSupabase, syncLocalStateToSupabase, updateSupabasePassword } from "./lib/supabase";
+import { canCashierUseOpenShift, findOpenStoreShift, isEligiblePosCashier } from "./lib/pos-access";
 
 const appBaseUrl = import.meta.env.BASE_URL || "/";
 const localAuthEnabled = String(import.meta.env.VITE_LOCAL_AUTH_ENABLED || "").toLowerCase() === "true";
@@ -1297,7 +1298,7 @@ function AuthenticatedApp() {
     return normalizeStoreId(parsedShift.storeId || savedCashier?.storeId) === settingsStoreId ? [parsedShift] : [];
   });
   const openShifts = sharedShifts.filter((shift) => !shift.closedAt);
-  const activeStoreShift = openShifts[0] || null;
+  const activeStoreShift = findOpenStoreShift(sharedShifts);
   const currentShift = posCashier
     ? openShifts.find((shift) => String(shift.cashierId) === String(posCashier.id)) || null
     : null;
@@ -1433,16 +1434,7 @@ function AuthenticatedApp() {
   const scopedRefundLedger = refundLedger.filter((entry) => normalizeStoreId(entry.storeId) === activeStore.id);
   const scopedKdsOrders = kdsOrders.filter((order) => normalizeStoreId(order.storeId) === activeStore.id);
   const scopedTableOrders = tableOrders.filter((order) => normalizeStoreId(order.storeId) === activeStore.id);
-  const posCustomRoleNames = new Set(customRoles
-    .filter((role) => String(role.status || "Active").trim().toLowerCase() === "active" && role.modules?.includes("pos") && (role.storeId === "GLOBAL" || normalizeStoreId(role.storeId) === activeStore.id))
-    .map((role) => String(role.name || "").trim().toLowerCase()));
-  const activeCashiers = users.filter((user) => {
-    const role = String(user.role || "").trim().replaceAll("_", " ").toLowerCase();
-    const status = String(user.status || "Active").trim().toLowerCase();
-    return (activeStore.id === "GLOBAL" || normalizeStoreId(user.storeId) === activeStore.id)
-      && (role === "cashier" || posCustomRoleNames.has(role))
-      && status === "active";
-  });
+  const activeCashiers = users.filter((user) => isEligiblePosCashier(user, customRoles, activeStore.id));
   const comparisonStores = (canManageAll ? stores.filter((store) => store.name === activeStore.name) : [activeStore])
     .filter((store) => store && store.status !== "Inactive" && (store.branch || store.id === activeStore.id));
   const comparisonSalesLedger = canManageAll ? salesLedger : scopedSalesLedger;
@@ -1760,7 +1752,7 @@ function AuthenticatedApp() {
   }
 
   function openShift(openingBalance) {
-    if (activeStoreShift && String(activeStoreShift.cashierId) !== String(posCashier?.id)) {
+    if (!canCashierUseOpenShift(posCashier, activeStoreShift)) {
       notify(`${activeStoreShift.cashierName || "Another cashier"} must close the active shift first`);
       return false;
     }
@@ -2246,7 +2238,7 @@ function AuthenticatedApp() {
     dashboard: <Dashboard notify={notify} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} kdsOrders={scopedKdsOrders} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} storeId={activeStore.id} onNavigate={setActive} />,
     pos: !posCashier
       ? <CashierLogin cashiers={activeCashiers} activeStore={activeStore} stores={stores} currentShift={activeStoreShift} onAuthenticated={(cashier) => {
-        if (activeStoreShift?.cashierId && String(activeStoreShift.cashierId) !== String(cashier.id)) {
+        if (!canCashierUseOpenShift(cashier, activeStoreShift)) {
           notify(`${activeStoreShift.cashierName || "Another cashier"} must close the active shift first`);
           return false;
         }
