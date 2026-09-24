@@ -4027,6 +4027,14 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
   const [orderCreatedAt, setOrderCreatedAt] = useState(() => new Date());
   const autoPrintedBillRef = useRef("");
 
+  function openSystemPrintDialog(bodyClass, message) {
+    const cleanup = () => document.body.classList.remove(bodyClass);
+    document.body.classList.add(bodyClass);
+    window.addEventListener("afterprint", cleanup, { once: true });
+    notify(message);
+    window.setTimeout(() => window.print(), 80);
+  }
+
   useEffect(() => {
     if (kotPrinter?.type !== "QZ Tray" || !kotPrinter.name?.trim() || kotPrinter.autoPrintBill !== true || !completedBill?.id) return undefined;
     if (autoPrintedBillRef.current === completedBill.id) return undefined;
@@ -4037,7 +4045,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
         notify(`Bill auto-printed on ${kotPrinter.name}`);
       } catch (error) {
         autoPrintedBillRef.current = "";
-        notify(`Bill auto-print failed: ${error?.message || "Install and open QZ Tray"}`);
+        openSystemPrintDialog("printing-completed-bill", `Direct printer unavailable; opening system print dialog (${error?.message || "check QZ Tray"})`);
       }
     }, 150);
     return () => window.clearTimeout(timer);
@@ -4297,15 +4305,11 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
         await printReceiptWithQz({ printerName: kotPrinter.name, paper: billTemplate.printerSize, copies: 1, selector: ".completed-print-receipt" });
         notify(`Bill printed on ${kotPrinter.name}`);
       } catch (error) {
-        notify(`Direct bill print failed: ${error?.message || "Check QZ Tray and printer connection"}`);
+        openSystemPrintDialog("printing-completed-bill", `Direct printer unavailable; opening system print dialog (${error?.message || "check QZ Tray"})`);
       }
       return;
     }
-    const cleanup = () => document.body.classList.remove("printing-completed-bill");
-    document.body.classList.add("printing-completed-bill");
-    window.addEventListener("afterprint", cleanup, { once: true });
-    notify("Opening print preview");
-    window.setTimeout(() => window.print(), 80);
+    openSystemPrintDialog("printing-completed-bill", "Opening print preview");
   }
 
   async function reprintHistoryBill() {
@@ -4315,15 +4319,11 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
         await printReceiptWithQz({ printerName: kotPrinter.name, paper: billTemplate.printerSize, copies: 1, selector: ".history-print-receipt" });
         notify(`Bill reprinted on ${kotPrinter.name}`);
       } catch (error) {
-        notify(`Direct bill print failed: ${error?.message || "Check QZ Tray and printer connection"}`);
+        openSystemPrintDialog("printing-history-bill", `Direct printer unavailable; opening system print dialog (${error?.message || "check QZ Tray"})`);
       }
       return;
     }
-    const cleanup = () => document.body.classList.remove("printing-history-bill");
-    document.body.classList.add("printing-history-bill");
-    window.addEventListener("afterprint", cleanup, { once: true });
-    notify(`Reprinting ${selectedHistoryBill.orderNumber || selectedHistoryBill.id}`);
-    window.setTimeout(() => window.print(), 80);
+    openSystemPrintDialog("printing-history-bill", `Reprinting ${selectedHistoryBill.orderNumber || selectedHistoryBill.id}`);
   }
 
   function confirmCloseShift(event) {

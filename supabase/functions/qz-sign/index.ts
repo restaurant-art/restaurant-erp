@@ -19,14 +19,34 @@ function normalizePem(value: string) {
   return String(value)
     .trim()
     .replace(/^['"]|['"]$/g, "")
-    .replace(/\\r?\\n/g, "\n");
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\[nr]/g, "\n");
 }
 
 function pemToBytes(pem: string) {
   const normalized = normalizePem(pem);
-  const base64 = normalized.replace(/-----BEGIN [^-]+-----|-----END [^-]+-----|\s+/g, "");
-  if (!base64 || /[^A-Za-z0-9+/=]/.test(base64)) throw new Error("The QZ private key format is invalid");
-  const binary = atob(base64);
+  const pemMatch = normalized.match(/-----BEGIN ([A-Z0-9 ]+)-----([\s\S]*?)-----END \1-----/);
+  if (normalized.includes("-----BEGIN") && !pemMatch) throw new Error("The QZ private key PEM header or footer is invalid");
+
+  // Secret managers and shell commands commonly remove trailing base64
+  // padding or preserve URL-safe base64. Web Crypto accepts the same DER
+  // after those transport differences are normalized.
+  const compact = (pemMatch?.[2] || normalized)
+    .replace(/\s+/g, "")
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+  if (!compact || /[^A-Za-z0-9+/=]/.test(compact) || /=/.test(compact.replace(/=+$/, ""))) {
+    throw new Error("The QZ private key contains invalid base64 characters");
+  }
+  const unpadded = compact.replace(/=+$/, "");
+  if (unpadded.length % 4 === 1) throw new Error("The QZ private key base64 is truncated");
+  const base64 = unpadded.padEnd(unpadded.length + ((4 - (unpadded.length % 4)) % 4), "=");
+  let binary: string;
+  try {
+    binary = atob(base64);
+  } catch {
+    throw new Error("The QZ private key base64 could not be decoded");
+  }
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
