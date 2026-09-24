@@ -29,3 +29,4 @@ jobs:
           supabase functions deploy vestora-api --project-ref vqinmequtjkuzrtzkzsk
           supabase functions deploy vestora-public-order --project-ref vqinmequtjkuzrtzkzsk
           supabase functions deploy vestora-delivery --project-ref vqinmequtjkuzrtzkzsk
+          supabase functions deploy qz-sign --project-ref vqinmequtjkuzrtzkzsk

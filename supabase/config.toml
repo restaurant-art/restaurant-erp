@@ -5,3 +5,6 @@ verify_jwt = true
 
 [functions.vestora-public-order]
 verify_jwt = false
+
+[functions.qz-sign]
+verify_jwt = true

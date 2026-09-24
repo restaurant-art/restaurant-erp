@@ -7900,13 +7900,37 @@ function escapePrintHtml(value) {
   })[character]);
 }
 
+let qzSecurityConfigured = false;
+
+async function configureQzSecurity() {
+  if (qzSecurityConfigured) return;
+  qz.security.setSignatureAlgorithm("SHA512");
+  qz.security.setCertificatePromise((resolve, reject) => {
+    supabaseFunctionJson("qz-sign", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "certificate" }),
+    }).then((result) => resolve(result.certificate)).catch(reject);
+  });
+  qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
+    supabaseFunctionJson("qz-sign", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "sign", request: toSign }),
+    }).then((result) => resolve(result.signature)).catch(reject);
+  });
+  qzSecurityConfigured = true;
+}
+
 async function connectQzTray() {
+  await configureQzSecurity();
   if (!qz.websocket.isActive()) await qz.websocket.connect();
   return qz.printers.find();
 }
 
 async function printKotWithQz({ printerName, paper, copies = 1, order, isTest = false }) {
   if (!printerName?.trim()) throw new Error("Choose a printer from the QZ Tray printer list");
+  await configureQzSecurity();
   if (!qz.websocket.isActive()) await qz.websocket.connect();
   const ticketId = isTest ? "TEST-KOT" : order?.kotId || order?.orderNumber || "KOT";
   const title = isTest ? "QZ TRAY TEST PRINT" : "KITCHEN ORDER TICKET";
@@ -7924,6 +7948,7 @@ async function printReceiptWithQz({ printerName, paper, copies = 1, selector }) 
   if (!printerName?.trim()) throw new Error("Choose a printer in KOT Printer settings");
   const receipt = document.querySelector(selector);
   if (!receipt) throw new Error("The bill is not ready to print");
+  await configureQzSecurity();
   if (!qz.websocket.isActive()) await qz.websocket.connect();
 
   const width = paper === "58mm" ? "54mm" : "72mm";

@@ -1,0 +1,73 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const allowedOrigins = new Set(["https://uvpro.in", "https://www.uvpro.in", "http://localhost:4173", "http://127.0.0.1:4173"]);
+
+function corsHeaders(request: Request) {
+  const origin = request.headers.get("Origin") || "";
+  return {
+    "Access-Control-Allow-Origin": allowedOrigins.has(origin) ? origin : "https://uvpro.in",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Vary": "Origin",
+  };
+}
+
+const json = (request: Request, body: unknown, status = 200) => new Response(JSON.stringify(body), {
+  status,
+  headers: { ...corsHeaders(request), "Content-Type": "application/json" },
+});
+
+function pemToBytes(pem: string) {
+  const base64 = pem.replace(/-----BEGIN [^-]+-----|-----END [^-]+-----|\s+/g, "");
+  const binary = atob(base64);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+async function getAuthenticatedUser(request: Request) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!supabaseUrl || !anonKey) throw new Error("Supabase function is not configured");
+  const client = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: request.headers.get("Authorization") ?? "" } },
+  });
+  const { data: { user }, error } = await client.auth.getUser();
+  if (error || !user) throw new Error("Authentication required");
+  return user;
+}
+
+async function signRequest(requestText: string, privateKeyPem: string) {
+  const key = await crypto.subtle.importKey(
+    "pkcs8",
+    pemToBytes(privateKeyPem),
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    key,
+    new TextEncoder().encode(requestText),
+  );
+  return btoa(String.fromCharCode(...new Uint8Array(signature)));
+}
+
+Deno.serve(async (request) => {
+  if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders(request) });
+  if (request.method !== "POST") return json(request, { error: "POST required" }, 405);
+
+  try {
+    await getAuthenticatedUser(request);
+    const certificate = Deno.env.get("QZ_CERTIFICATE")?.trim();
+    const privateKey = Deno.env.get("QZ_PRIVATE_KEY")?.trim();
+    if (!certificate || !privateKey) return json(request, { error: "QZ signing is not configured" }, 503);
+
+    const body = await request.json().catch(() => null) as { action?: string; request?: string } | null;
+    if (body?.action === "certificate") return json(request, { certificate });
+    if (body?.action !== "sign" || typeof body.request !== "string" || !body.request) {
+      return json(request, { error: "A QZ signing request is required" }, 400);
+    }
+    return json(request, { signature: await signRequest(body.request, privateKey) });
+  } catch (error) {
+    return json(request, { error: error instanceof Error ? error.message : "QZ signing failed" }, 401);
+  }
+});
