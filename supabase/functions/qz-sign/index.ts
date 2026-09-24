@@ -1,5 +1,3 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
 const allowedOrigins = new Set(["https://uvpro.in", "https://www.uvpro.in", "http://localhost:4173", "http://127.0.0.1:4173"]);
 
 function corsHeaders(request: Request) {
@@ -32,18 +30,6 @@ function pemToBytes(pem: string) {
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
-async function getAuthenticatedUser(request: Request) {
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
-  if (!supabaseUrl || !anonKey) throw new Error("Supabase function is not configured");
-  const client = createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: request.headers.get("Authorization") ?? "" } },
-  });
-  const { data: { user }, error } = await client.auth.getUser();
-  if (error || !user) throw new Error("Authentication required");
-  return user;
-}
-
 async function signRequest(requestText: string, privateKeyPem: string) {
   const key = await crypto.subtle.importKey(
     "pkcs8",
@@ -65,7 +51,6 @@ Deno.serve(async (request) => {
   if (request.method !== "POST") return json(request, { error: "POST required" }, 405);
 
   try {
-    await getAuthenticatedUser(request);
     const certificate = Deno.env.get("QZ_CERTIFICATE") ? normalizePem(Deno.env.get("QZ_CERTIFICATE") as string) : "";
     const privateKey = Deno.env.get("QZ_PRIVATE_KEY") ? normalizePem(Deno.env.get("QZ_PRIVATE_KEY") as string) : "";
     if (!certificate || !privateKey) return json(request, { error: "QZ signing is not configured" }, 503);
