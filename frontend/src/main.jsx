@@ -2271,7 +2271,7 @@ function AuthenticatedApp() {
     attendance: <AttendanceModule key={activeStore.id} notify={notify} activeStore={activeStore} stores={stores} users={users} canManage={canManage} canManageAll={canManageAll} activeView={attendanceView} onViewChange={setAttendanceView} onOpenAdmin={() => openAdminView("create")} />,
     offers: <OffersPromotions key={activeStore.id} storeId={activeStore.id} productItems={productItems} notify={notify} canManage={canManage} activeView={offersView} onViewChange={setOffersView} />,
   finance: <Finance notify={notify} canManageAll={canManage} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} storeId={activeStore.id} view={financeView} />,
-    reports: <Reports notify={notify} storeId={activeStore.id} salesLedger={scopedSalesLedger} voidLedger={scopedVoidLedger} refundLedger={scopedRefundLedger} onRefund={recordRefund} lastShiftClose={lastShiftClose} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} activeView={reportView} onReportChange={setReportView} />,
+    reports: <Reports notify={notify} storeId={activeStore.id} salesLedger={scopedSalesLedger} voidLedger={scopedVoidLedger} refundLedger={scopedRefundLedger} lastShiftClose={lastShiftClose} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} activeView={reportView} onReportChange={setReportView} />,
     mis: <MISReports salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} notify={notify} />,
     admin: <Admin notify={notify} users={users} setUsers={setUsers} currentUser={currentUser} canManageAll={canManageAll} canManageStore={canManage} stores={stores} activeStore={activeStore} activeView={adminView} onViewChange={openAdminView} customRoles={customRoles} setCustomRoles={setCustomRoles} />,
     settings: <SettingsView notify={notify} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} canManage={canManage} canManageAll={canManageAll} activeStore={activeStore} setStores={setStores} menuItems={productItems} themeConfig={{ ...themeConfig, mode: dark ? "Dark" : "Light" }} setThemeConfig={setThemeConfig} setDark={setDark} />,
@@ -8534,13 +8534,12 @@ function OffersPromotions({ notify, canManage, storeId, productItems = [], activ
   );
 }
 
-function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, onRefund, lastShiftClose, comparisonStores = [], comparisonSalesLedger = [], activeView = "Daily sales", onReportChange }) {
+function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastShiftClose, comparisonStores = [], comparisonSalesLedger = [], activeView = "Daily sales", onReportChange }) {
   const [selectedReport, setSelectedReport] = useState(activeView);
   const [range, setRange] = useState("Today");
   const [reportSearch, setReportSearch] = useState("");
   const [reportDate, setReportDate] = useState("");
   const [reportFilter, setReportFilter] = useState("All");
-  const [refundDraft, setRefundDraft] = useState({ billId: "", amount: "", payment: "Cash", reason: "" });
   const [reportInventory] = useBusinessState(`vestora-inventory-${storeId}`, () => stripUntouchedDefaultRecords(loadStoredArray(`vestora-inventory-${storeId}`), defaultInventoryItems, ["updatedAt"]));
   const [reportRecipes] = useBusinessState(`vestora-recipes-${storeId}`, () => stripUntouchedDefaultRecords(loadStoredArray(`vestora-recipes-${storeId}`), defaultRecipes, ["changedAt", "changedBy"]));
 
@@ -8802,11 +8801,6 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, onRef
   }
 
   function handleReportAction(action) {
-    if (action === "Add refund") {
-      selectReport("Void and refund", false);
-      notify("Refund form is below the report total");
-      return;
-    }
     if (action === "CSV" || action === "Excel") {
       downloadReport(action);
       return;
@@ -8817,57 +8811,10 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, onRef
     }
   }
 
-  function saveRefund(event) {
-    event.preventDefault();
-    const amount = Number(refundDraft.amount);
-    if (!refundDraft.billId.trim()) {
-      notify("Enter bill number for refund");
-      return;
-    }
-    if (Number.isNaN(amount) || amount <= 0) {
-      notify("Enter valid refund amount");
-      return;
-    }
-    if (refundDraft.reason.trim().length < 5) {
-      notify("Enter refund reason");
-      return;
-    }
-    const bill = salesLedger.find((entry) => entry.id === refundDraft.billId.trim() || entry.orderNumber === refundDraft.billId.trim());
-    if (!bill) {
-      notify("Select a completed bill before recording a refund");
-      return;
-    }
-    const originalPaymentAmount = bill.payment === "Split"
-      ? Number((bill.splitPayments || []).find((entry) => entry.method === refundDraft.payment)?.amount || 0)
-      : bill.payment === refundDraft.payment ? Number(bill.total || 0) : 0;
-    if (originalPaymentAmount <= 0) {
-      notify(`This bill has no ${refundDraft.payment} payment to refund`);
-      return;
-    }
-    const refundedAmount = refundLedger
-      .filter((entry) => (entry.billId === bill.id || entry.billId === bill.orderNumber) && entry.payment === refundDraft.payment)
-      .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
-    if (amount > originalPaymentAmount - refundedAmount + 0.000001) {
-      notify(`Refund exceeds the remaining ${refundDraft.payment} payment amount`);
-      return;
-    }
-    onRefund({
-      billId: bill.id,
-      orderNumber: bill.orderNumber,
-      amount,
-      payment: refundDraft.payment,
-      taxAmount: bill.total ? Number((Number(bill.tax || 0) * (amount / Number(bill.total))).toFixed(2)) : 0,
-      reason: refundDraft.reason.trim(),
-      status: refundDraft.payment === "Cash" ? "Refund recorded" : "External reversal required",
-    });
-    setRefundDraft({ billId: "", amount: "", payment: "Cash", reason: "" });
-    selectReport("Void and refund", false);
-  }
-
   return (
     <section className="screen">
       <div className="panel large report-main-panel report-focus-panel print-report">
-        <PanelHead title={selectedReport} icon={FileBarChart} actions={selectedReport === "Void and refund" ? ["Add refund", "Excel", "PDF", "CSV", "Print"] : ["Excel", "PDF", "CSV", "Print"]} activeAction={selectedReport === "Void and refund" ? "Add refund" : ""} onAction={handleReportAction} />
+        <PanelHead title={selectedReport} icon={FileBarChart} actions={["Excel", "PDF", "CSV", "Print"]} onAction={handleReportAction} />
         <div className="report-focus-controls">
           <label>Report<select value={selectedReport} onChange={(event) => selectReport(event.target.value)}>{reports.map((name) => <option key={name}>{name}</option>)}</select></label>
           <div className="report-range-actions">{["Today", "7 days", "Month", "All"].map((option) => <button key={option} type="button" className={!reportDate && range === option ? "active" : ""} onClick={() => { setReportDate(""); setRange(option); notify(`${option} report range selected`); }}>{option}</button>)}</div>
@@ -8879,16 +8826,6 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, onRef
           <button type="button" onClick={() => { setReportDate(""); notify("Date filter cleared"); }}>Clear date</button>
           <span>{filteredReportRows.length} rows</span>
         </div>
-        {selectedReport === "Void and refund" && (
-          <form className="refund-entry-panel" onSubmit={saveRefund}>
-            <div><strong>Add refund</strong><span>Enter completed bill refund details here.</span></div>
-            <label>Bill number<input value={refundDraft.billId} onChange={(event) => setRefundDraft((current) => ({ ...current, billId: event.target.value }))} placeholder="BILL-..." /></label>
-            <label>Amount<input type="number" min="1" value={refundDraft.amount} onChange={(event) => setRefundDraft((current) => ({ ...current, amount: event.target.value }))} placeholder="0" /></label>
-            <label>Payment<select value={refundDraft.payment} onChange={(event) => setRefundDraft((current) => ({ ...current, payment: event.target.value }))}><option>Cash</option><option>UPI</option><option>Card</option><option>Wallet</option><option>Credit</option></select></label>
-            <label>Reason<input value={refundDraft.reason} onChange={(event) => setRefundDraft((current) => ({ ...current, reason: event.target.value }))} placeholder="Customer refund reason" /></label>
-            <button className="primary-table-action" type="submit">Save refund</button>
-          </form>
-        )}
         <div className="professional-report-table">
           <ExcelReportSheet title={selectedReport} range={range} columns={activeTable.columns} rows={visibleReportRows} columnTotals={reportColumnTotals} />
         </div>
