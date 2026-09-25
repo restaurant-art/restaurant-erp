@@ -3444,6 +3444,79 @@ h3 {
   font-size: 12px;
 }
 
+.pos-refund-modal {
+  width: min(520px, 100%);
+  gap: 12px;
+}
+
+.pos-refund-modal select,
+.pos-refund-modal input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(16, 35, 31, 0.12);
+  border-radius: 8px;
+  padding: 0 11px;
+  background: #ffffff;
+  color: #10231f;
+  font: inherit;
+}
+
+.pos-refund-help {
+  margin: 0;
+  color: #60736a;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.pos-refund-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pos-refund-balance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(194, 138, 58, 0.25);
+  border-radius: 8px;
+  background: rgba(194, 138, 58, 0.1);
+  color: #795116;
+  font-size: 13px;
+}
+
+.pos-refund-balance strong {
+  font-size: 17px;
+}
+
+.pos-refund-actions {
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.pos-refund-actions button {
+  min-height: 40px;
+  padding: 0 14px;
+}
+
+.dark .pos-refund-modal select,
+.dark .pos-refund-modal input {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: #1d2a27;
+  color: #edf5ef;
+}
+
+.dark .pos-refund-help {
+  color: #a8bbb2;
+}
+
+.dark .pos-refund-balance {
+  background: rgba(194, 138, 58, 0.16);
+  color: #f0cb82;
+}
+
 .split-payment-total {
   display: flex;
   align-items: center;
@@ -4617,6 +4690,12 @@ h3 {
   color: #17604b;
 }
 
+.bill-actions .refund-action {
+  border-color: #e5c58c;
+  background: #fff6e4;
+  color: #8a5a1f;
+}
+
 .bill-actions .wallet-action:hover {
   border-color: #6ba9cc;
   background: #d6ebf7;
@@ -4635,6 +4714,12 @@ h3 {
   color: #104c3c;
 }
 
+.bill-actions .refund-action:hover {
+  border-color: #c59643;
+  background: #fbe9c2;
+  color: #68450d;
+}
+
 .bill-actions .wallet-action.active-pay {
   border-color: #245f7f;
   background: #245f7f;
@@ -4650,6 +4735,12 @@ h3 {
 .bill-actions .history-action.active-secondary-action {
   border-color: #17604b;
   background: #17604b;
+  color: #ffffff;
+}
+
+.bill-actions .refund-action.active-secondary-action {
+  border-color: #8a5a1f;
+  background: #8a5a1f;
   color: #ffffff;
 }
 
@@ -11073,6 +11164,10 @@ th {
   }
 
   .ticket-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .pos-refund-fields {
     grid-template-columns: 1fr;
   }
 

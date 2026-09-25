@@ -2252,7 +2252,7 @@ function AuthenticatedApp() {
         return true;
       }} onExit={exitPOS} onLogout={handleLogout} onCreateCashier={() => openAdminView("create")} />
       : currentShift
-        ? <POS cart={cart} setCart={setCart} items={productItems} storeId={activeStore.id} foodStock={foodStock} onFoodStockChange={updateFoodStock} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} kotPrinter={kotPrinter} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onChangeCashier={changeCashier} onLogout={handleLogout} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
+        ? <POS cart={cart} setCart={setCart} items={productItems} storeId={activeStore.id} foodStock={foodStock} onFoodStockChange={updateFoodStock} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} kotPrinter={kotPrinter} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onChangeCashier={changeCashier} onLogout={handleLogout} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} refundLedger={scopedRefundLedger} onRefund={recordRefund} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
         : <ShiftOpening online={online} onOpenShift={openShift} onExit={exitPOS} onLogout={handleLogout} cashier={posCashier} />,
     kds: <KDS notify={notify} orders={scopedKdsOrders} setOrders={setKdsOrders} kotPrinter={kotPrinter} />,
     tables: <Tables key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} items={productItems} currentUser={currentUser} tableOrders={scopedTableOrders} onSaveOrder={saveTableOrder} onSendKot={sendTableKot} onSendReception={sendTableToReception} onCancelOrder={cancelTableOrder} onCancelItem={cancelTableOrderItem} kotPrinter={kotPrinter} cloudStateReady={supabaseStateReady} />,
@@ -4032,7 +4032,7 @@ function BillReceiptMeta({ billTemplate, rows }) {
   );
 }
 
-function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange, orderType, setOrderType, online, notify, billTemplate, kotPrinter, onSale, onVoidItem, onExit, onChangeCashier, onLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
+function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange, orderType, setOrderType, online, notify, billTemplate, kotPrinter, onSale, onVoidItem, onExit, onChangeCashier, onLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], refundLedger = [], onRefund, orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
   const catalogItems = (items?.length ? items : menuItems).filter((item) => item.status !== "Inactive");
   const categories = ["All", ...Array.from(new Set(catalogItems.map((item) => item.category).filter(Boolean))), "Favourites"];
   const [category, setCategory] = useState("All");
@@ -4053,6 +4053,8 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
   const [varianceNote, setVarianceNote] = useState("");
   const [showCloseShift, setShowCloseShift] = useState(false);
   const [showOrderHistory, setShowOrderHistory] = useState(false);
+  const [showRefund, setShowRefund] = useState(false);
+  const [refundDraft, setRefundDraft] = useState({ billId: "", payment: "", amount: "", reason: "" });
   const [showReceptionQueue, setShowReceptionQueue] = useState(false);
   const [selectedReceptionOrderId, setSelectedReceptionOrderId] = useState("");
   const [expandedReceptionOrderId, setExpandedReceptionOrderId] = useState("");
@@ -4138,6 +4140,25 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
   const selectedHistoryTax = Number(selectedHistoryBill?.tax || 0);
   const selectedHistoryCgst = Number(selectedHistoryBill?.cgst ?? Math.round(selectedHistoryTax / 2));
   const selectedHistorySgst = Number(selectedHistoryBill?.sgst ?? selectedHistoryTax - selectedHistoryCgst);
+  const refundBill = refundDraft.billId
+    ? (orderHistory || []).find((bill) => bill.id === refundDraft.billId || bill.orderNumber === refundDraft.billId) || null
+    : null;
+  const refundPaymentOptions = refundBill
+    ? (refundBill.payment === "Split"
+      ? (refundBill.splitPayments || []).filter((entry) => Number(entry.amount || 0) > 0).map((entry) => entry.method)
+      : [refundBill.payment].filter(Boolean))
+    : [];
+  const refundOriginalAmount = refundBill
+    ? (refundBill.payment === "Split"
+      ? Number((refundBill.splitPayments || []).find((entry) => entry.method === refundDraft.payment)?.amount || 0)
+      : refundBill.payment === refundDraft.payment ? Number(refundBill.total || 0) : 0)
+    : 0;
+  const refundAlreadyRecorded = refundBill
+    ? refundLedger
+      .filter((entry) => (entry.billId === refundBill.id || entry.billId === refundBill.orderNumber) && entry.payment === refundDraft.payment)
+      .reduce((sum, entry) => sum + Number(entry.amount || 0), 0)
+    : 0;
+  const refundRemaining = Math.max(0, refundOriginalAmount - refundAlreadyRecorded);
   const selectedReceptionOrder = pendingTableOrders.find((order) => String(order.id) === String(selectedReceptionOrderId)) || null;
   const splitPaidTotal = Object.values(splitAmounts).reduce((sum, amount) => sum + Math.max(Number(amount || 0), 0), 0);
   const splitMethodCount = Object.values(splitAmounts).filter((amount) => Number(amount || 0) > 0).length;
@@ -4409,6 +4430,61 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
     setShowOrderHistory(true);
   }
 
+  function openRefund() {
+    setRefundDraft({ billId: "", payment: "", amount: "", reason: "" });
+    setShowRefund(true);
+  }
+
+  function selectRefundBill(billId) {
+    const bill = (orderHistory || []).find((entry) => entry.id === billId || entry.orderNumber === billId);
+    const methods = bill
+      ? (bill.payment === "Split"
+        ? (bill.splitPayments || []).filter((entry) => Number(entry.amount || 0) > 0).map((entry) => entry.method)
+        : [bill.payment].filter(Boolean))
+      : [];
+    setRefundDraft({ billId, payment: methods[0] || "", amount: "", reason: "" });
+  }
+
+  function savePosRefund(event) {
+    event.preventDefault();
+    const amount = Number(refundDraft.amount);
+    if (!refundBill) {
+      notify("Select a completed bill before recording a refund");
+      return;
+    }
+    if (!refundDraft.payment) {
+      notify("Select the payment method to refund");
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      notify("Enter a valid refund amount");
+      return;
+    }
+    if (refundDraft.reason.trim().length < 5) {
+      notify("Enter a refund reason");
+      return;
+    }
+    if (refundOriginalAmount <= 0) {
+      notify(`This bill has no ${refundDraft.payment} payment to refund`);
+      return;
+    }
+    if (amount > refundRemaining + 0.000001) {
+      notify(`Refund exceeds the remaining ${refundDraft.payment} payment amount`);
+      return;
+    }
+    onRefund?.({
+      billId: refundBill.id,
+      orderNumber: refundBill.orderNumber,
+      amount,
+      payment: refundDraft.payment,
+      taxAmount: refundBill.total ? Number((Number(refundBill.tax || 0) * (amount / Number(refundBill.total))).toFixed(2)) : 0,
+      reason: refundDraft.reason.trim(),
+      status: refundDraft.payment === "Cash" ? "Refund recorded" : "External reversal required",
+    });
+    setRefundDraft({ billId: "", payment: "", amount: "", reason: "" });
+    setShowRefund(false);
+  }
+
   function loadReceptionOrder(order) {
     const loadedItems = (Array.isArray(order.items) ? order.items : []).map((savedItem) => {
       const itemRecord = typeof savedItem === "string" ? { name: savedItem } : savedItem || {};
@@ -4587,10 +4663,47 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
             setDiscount(Math.round(subtotal * 0.1));
             notify("10% discount applied");
           }}><Percent size={17} /> {discount > 0 ? "Remove discount" : "Discount"}</button>
+          <button className={showRefund ? "refund-action active-secondary-action" : "refund-action"} onClick={openRefund}><ReceiptText size={17} /> Refund</button>
           <button className={showOrderHistory ? "history-action active-secondary-action" : "history-action"} onClick={openOrderHistory}><History size={17} /> Order history</button>
           <button className="primary" disabled={!cart.length} onClick={checkout}>Complete sale {formatMoney(total)}</button>
         </div>
       </div>
+      {showRefund && (
+        <div className="shift-modal-backdrop" role="presentation">
+          <form className="shift-modal pos-refund-modal" onSubmit={savePosRefund}>
+            <div className="shift-modal-head">
+              <div><p>POS refund</p><h2>Refund completed bill</h2></div>
+              <button type="button" onClick={() => setShowRefund(false)}>Close</button>
+            </div>
+            <p className="pos-refund-help">Select a completed bill, enter the amount, and record the reason. Card, UPI, and wallet reversals still require the external provider.</p>
+            <label>Completed bill
+              <select value={refundDraft.billId} onChange={(event) => selectRefundBill(event.target.value)}>
+                <option value="">Choose a bill</option>
+                {(orderHistory || []).map((bill) => <option key={bill.id} value={bill.id}>{bill.orderNumber || bill.id} · {formatMoney(Number(bill.total || 0))} · {formatDateTime(bill.createdAt)}</option>)}
+              </select>
+            </label>
+            <div className="pos-refund-fields">
+              <label>Payment method
+                <select value={refundDraft.payment} onChange={(event) => setRefundDraft((current) => ({ ...current, payment: event.target.value, amount: "" }))} disabled={!refundPaymentOptions.length}>
+                  {!refundPaymentOptions.length && <option value="">Choose bill first</option>}
+                  {refundPaymentOptions.map((method) => <option key={method}>{method}</option>)}
+                </select>
+              </label>
+              <label>Amount
+                <input type="number" min="0.01" step="0.01" max={refundRemaining || undefined} value={refundDraft.amount} onChange={(event) => setRefundDraft((current) => ({ ...current, amount: event.target.value }))} placeholder="0" disabled={!refundBill} />
+              </label>
+            </div>
+            {refundBill && <div className="pos-refund-balance"><span>Refundable {refundDraft.payment || "payment"}</span><strong>{formatMoney(refundRemaining)}</strong></div>}
+            <label>Reason
+              <input value={refundDraft.reason} onChange={(event) => setRefundDraft((current) => ({ ...current, reason: event.target.value }))} placeholder="Customer refund reason" disabled={!refundBill} />
+            </label>
+            <div className="shift-actions pos-refund-actions">
+              <button type="button" onClick={() => setShowRefund(false)}>Cancel</button>
+              <button className="primary-table-action" type="submit" disabled={!refundBill}>Save refund</button>
+            </div>
+          </form>
+        </div>
+      )}
       {showSplitPayment && (
         <div className="shift-modal-backdrop" role="presentation">
           <form className="shift-modal split-payment-modal" onSubmit={completeSplitPayment}>
