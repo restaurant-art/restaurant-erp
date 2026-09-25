@@ -4503,9 +4503,8 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
             {selectedOffer?.type === "Coupon" && !appliedOffer && <label className="coupon-entry"><span>Coupon code</span><input value={couponEntry} onChange={(event) => setCouponEntry(event.target.value.toUpperCase())} placeholder="Enter code" maxLength="24" /></label>}
             {appliedOffer && <span className="pos-offer-applied"><CircleCheck size={14} /> {appliedOffer.name}</span>}
           </div>
-        </div>
+          </div>
           <div className={previewBillPaperClass} style={billPaperStyle}>
-            <BillReceiptHeader billTemplate={billTemplate} />
           {billTemplate.showOrderInfo !== false && <div className="bill-type-row"><span>Billing type</span><strong>{orderType}</strong></div>}
           {sourceTableOrder && (
             <div className="bill-table-row">
