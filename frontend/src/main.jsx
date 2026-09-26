@@ -82,6 +82,7 @@ import { businessStorage as localStorage, stopCloudSync } from "./lib/supabase";
 import { useBusinessState, useCloudSyncStatus } from "./lib/use-business-state";
 import { fetchSharedSuperAdminStores, getSupabaseSession, hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseApiList, supabaseApiRequest, supabaseConfigured, supabaseFunctionJson, supabaseProfile, syncInventoryState, syncLocalStateKeyToSupabase, syncLocalStateToSupabase, updateSupabasePassword } from "./lib/supabase";
 import { canCashierUseOpenShift, findOpenStoreShift, isEligiblePosCashier } from "./lib/pos-access";
+import { pickQzPrinter } from "./lib/qz-printer";
 
 const appBaseUrl = import.meta.env.BASE_URL || "/";
 const localAuthEnabled = String(import.meta.env.VITE_LOCAL_AUTH_ENABLED || "").toLowerCase() === "true";
@@ -8096,6 +8097,11 @@ async function connectQzTray() {
   return qz.printers.find();
 }
 
+async function preferredQzPrinter(printers, configuredName) {
+  const defaultPrinter = await qz.printers.getDefault().catch(() => "");
+  return pickQzPrinter(printers, configuredName, defaultPrinter);
+}
+
 async function printKotWithQz({ printerName, paper, copies = 1, order, isTest = false }) {
   if (!printerName?.trim()) throw new Error("Choose a printer from the QZ Tray printer list");
   await configureQzSecurity();
@@ -9193,7 +9199,7 @@ function KotPrinterSetup({ kotPrinter, setKotPrinter, notify, canManage }) {
       const printers = await connectQzTray();
       setQzPrinters(printers);
       if (!printers.length) throw new Error("QZ Tray is running, but no printers were found on this computer");
-      const selectedPrinter = printers.includes(kotPrinter.name) ? kotPrinter.name : printers[0];
+      const selectedPrinter = await preferredQzPrinter(printers, kotPrinter.name);
       setKotPrinter((current) => ({ ...current, type: "QZ Tray", name: selectedPrinter, enabled: false, status: "Printer found" }));
       return printers;
     } finally {
@@ -9212,7 +9218,7 @@ function KotPrinterSetup({ kotPrinter, setKotPrinter, notify, canManage }) {
       try {
         const printers = await connectQzTray();
         setQzPrinters(printers);
-        const selectedPrinter = printers.includes(kotPrinter.name) ? kotPrinter.name : printers[0];
+        const selectedPrinter = await preferredQzPrinter(printers, kotPrinter.name);
         if (!selectedPrinter) throw new Error("No printers found. Install the printer in Windows and try again.");
         setKotPrinter((current) => ({ ...current, name: selectedPrinter, enabled: true, status: "Connected" }));
         notify(`QZ Tray connected to ${selectedPrinter}`);
