@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import QRCode from "qrcode";
 import qz from "qz-tray";
 import { loadBillingPrinter, billingPrintOptions } from "./lib/billing-printer.js";
+import { getOfflineQzSigner, saveOfflineQzSigner, signOfflineQzRequest } from "./lib/qz-offline-signing.js";
 import {
   Area,
   AreaChart,
@@ -8068,10 +8069,25 @@ function escapePrintHtml(value) {
 let qzSecurityConfigured = false;
 let qzSignedConnection = false;
 
+function resetQzSecurity() {
+  qzSecurityConfigured = false;
+  qzSignedConnection = false;
+}
+
 async function configureQzSecurity() {
   if (qzSecurityConfigured) return qzSignedConnection;
   try {
     qz.security.setSignatureAlgorithm("SHA512");
+    const localSigner = await getOfflineQzSigner().catch(() => null);
+    if (localSigner) {
+      qz.security.setCertificatePromise((resolve) => resolve(localSigner.certificate));
+      qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
+        signOfflineQzRequest(toSign).then(resolve).catch(reject);
+      });
+      qzSecurityConfigured = true;
+      qzSignedConnection = true;
+      return true;
+    }
     const certificateResult = await supabaseFunctionJson("qz-sign", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -8093,7 +8109,15 @@ async function configureQzSecurity() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "sign", request: toSign }),
-      }).then((result) => resolve(result.signature)).catch(reject);
+      }).then((result) => resolve(result.signature)).catch(async (error) => {
+        try {
+          const localSigner = await getOfflineQzSigner();
+          if (!localSigner) throw error;
+          resolve(await signOfflineQzRequest(toSign));
+        } catch (localError) {
+          reject(localError);
+        }
+      });
     });
     qzSecurityConfigured = true;
     qzSignedConnection = true;
@@ -9186,6 +9210,39 @@ function PrinterConnectionSetup({ printer, setPrinter, notify, canManage, purpos
   const printerLabel = isBilling ? "Billing" : "KOT";
   const [qzPrinters, setQzPrinters] = useState([]);
   const [qzBusy, setQzBusy] = useState(false);
+  const [offlineSignerReady, setOfflineSignerReady] = useState(false);
+  const offlineSigningFileRef = useRef(null);
+
+  useEffect(() => {
+    let active = true;
+    getOfflineQzSigner().then((signer) => { if (active) setOfflineSignerReady(Boolean(signer)); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  async function importOfflineSigningFiles(event) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (files.length !== 2) {
+      notify("Choose both digital-certificate.txt and private-key.pem from this computer");
+      return;
+    }
+    setQzBusy(true);
+    try {
+      const contents = await Promise.all(files.map((file) => file.text()));
+      const certificate = contents.find((content) => content.includes("-----BEGIN CERTIFICATE-----"));
+      const privateKey = contents.find((content) => content.includes("-----BEGIN PRIVATE KEY-----"));
+      if (!certificate || !privateKey) throw new Error("Choose the QZ digital certificate and matching private key PEM files");
+      await saveOfflineQzSigner(certificate, privateKey);
+      resetQzSecurity();
+      if (qz.websocket.isActive()) await qz.websocket.disconnect().catch(() => {});
+      setOfflineSignerReady(true);
+      notify("Offline QZ signing is ready on this computer", 9000);
+    } catch (error) {
+      notify(`Could not set up offline QZ signing: ${error?.message || "Check the selected files"}`, 10000);
+    } finally {
+      setQzBusy(false);
+    }
+  }
 
   function update(field, value) {
     setPrinter((current) => ({ ...current, [field]: value, ...(["name", "type", "ip", "port"].includes(field) ? { enabled: false, status: "Disconnected" } : {}) }));
@@ -9302,7 +9359,17 @@ function PrinterConnectionSetup({ printer, setPrinter, notify, canManage, purpos
         <label>Paper size<select value={printer.paper} onChange={(event) => update("paper", event.target.value)} disabled={!canManage}><option>80mm</option><option>58mm</option></select></label>
         <label>Copies<input type="number" min="1" max="5" value={printer.copies} onChange={(event) => update("copies", Number(event.target.value || 1))} disabled={!canManage} /></label>
       </div>
-      {printer.type === "QZ Tray" && <div className="settings-printer-status"><div><strong>QZ Tray must be installed and running on this computer.</strong><small>Find printers installed on this computer. Billing and KOT can use the same printer or different printers.</small></div><button type="button" onClick={() => discoverQzPrinters().catch((error) => notify(`QZ Tray: ${error?.message || "Could not find printers"}`))} disabled={!canManage || qzBusy}>{qzBusy ? "Searching…" : "Find printers"}</button></div>}
+      {printer.type === "QZ Tray" && <>
+        <div className="settings-printer-status">
+          <div><strong>QZ Tray must be installed and running on this computer.</strong><small>Find printers installed on this computer. Billing and KOT can use the same printer or different printers.</small></div>
+          <button type="button" onClick={() => discoverQzPrinters().catch((error) => notify(`QZ Tray: ${error?.message || "Could not find printers"}`))} disabled={!canManage || qzBusy}>{qzBusy ? "Searching…" : "Find printers"}</button>
+        </div>
+        <div className="settings-printer-status">
+          <div><strong>{offlineSignerReady ? "Offline QZ signing is ready on this computer" : "Set up QZ printing for offline use"}</strong><small>On each POS computer, use the trusted key from QZ Tray → Advanced → Site Manager, then select its digital-certificate.txt and matching private-key.pem once. The private key is stored locally in this browser and cannot be exported.</small></div>
+          <button type="button" onClick={() => offlineSigningFileRef.current?.click()} disabled={!canManage || qzBusy}>{offlineSignerReady ? "Replace offline key" : "Set up offline signing"}</button>
+          <input ref={offlineSigningFileRef} type="file" accept=".txt,.pem,.crt" multiple hidden onChange={importOfflineSigningFiles} />
+        </div>
+      </>}
       {isBilling ? <p className="settings-description">Customer bills print only when you click Print bill after payment, or Reprint bill in order history.</p> : <label className="kot-toggle"><input type="checkbox" checked={printer.autoPrint} onChange={(event) => update("autoPrint", event.target.checked)} disabled={!canManage} /> Auto send KOT to kitchen queue when order is created</label>}
       <div className="editor-row">
         <button onClick={connectPrinter} disabled={!canManage || qzBusy}>{qzBusy ? "Connecting…" : "Connect printer"}</button>
