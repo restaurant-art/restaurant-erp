@@ -1738,6 +1738,14 @@ function AuthenticatedApp() {
     notify(activeStoreShift ? `Select ${activeStoreShift.cashierName || "the active cashier"} to resume this shift` : "Select cashier");
   }
 
+  function lockPOSAfterInactivity() {
+    setCart([]);
+    setPosCashier(null);
+    localStorage.removeItem("vestora-pos-cashier");
+    setActive("pos");
+    notify("POS locked after 10 minutes of inactivity. Sign in to continue.");
+  }
+
   function showOperationalNotifications() {
     if (queuedOrders) {
       notify(`${queuedOrders} offline bill${queuedOrders === 1 ? " is" : "s are"} waiting to sync`);
@@ -2267,7 +2275,7 @@ function AuthenticatedApp() {
         return true;
       }} onExit={exitPOS} onLogout={handleLogout} onCreateCashier={() => openAdminView("create")} />
       : currentShift
-        ? <POS cart={cart} setCart={setCart} items={productItems} storeId={activeStore.id} foodStock={foodStock} onFoodStockChange={updateFoodStock} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} billingPrinter={billingPrinter} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onLogout={handleLogout} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} refundLedger={scopedRefundLedger} onRefund={recordRefund} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
+        ? <POS cart={cart} setCart={setCart} items={productItems} storeId={activeStore.id} foodStock={foodStock} onFoodStockChange={updateFoodStock} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} billingPrinter={billingPrinter} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onLogout={handleLogout} onIdleLogout={lockPOSAfterInactivity} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} refundLedger={scopedRefundLedger} onRefund={recordRefund} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
         : <ShiftOpening online={online} onOpenShift={openShift} onExit={exitPOS} onLogout={handleLogout} cashier={posCashier} />,
     kds: <KDS notify={notify} orders={scopedKdsOrders} setOrders={setKdsOrders} kotPrinter={kotPrinter} />,
     tables: <Tables key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} items={productItems} currentUser={currentUser} tableOrders={scopedTableOrders} onSaveOrder={saveTableOrder} onSendKot={sendTableKot} onSendReception={sendTableToReception} onCancelOrder={cancelTableOrder} onCancelItem={cancelTableOrderItem} kotPrinter={kotPrinter} cloudStateReady={supabaseStateReady} />,
@@ -4047,7 +4055,7 @@ function BillReceiptMeta({ billTemplate, rows }) {
   );
 }
 
-function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange, orderType, setOrderType, online, notify, billTemplate, billingPrinter, onSale, onVoidItem, onExit, onLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], refundLedger = [], onRefund, orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
+function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange, orderType, setOrderType, online, notify, billTemplate, billingPrinter, onSale, onVoidItem, onExit, onLogout, onIdleLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], refundLedger = [], onRefund, orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
   const catalogItems = (items?.length ? items : menuItems).filter((item) => item.status !== "Inactive");
   const categories = ["All", ...Array.from(new Set(catalogItems.map((item) => item.category).filter(Boolean))), "Favourites"];
   const [category, setCategory] = useState("All");
@@ -4083,8 +4091,26 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
   const [recentlyAddedKey, setRecentlyAddedKey] = useState("");
   const billPanelRef = useRef(null);
   const billItemsRef = useRef(null);
+  const idleLogoutRef = useRef(onIdleLogout);
+  idleLogoutRef.current = onIdleLogout;
   const [orderNumber, setOrderNumber] = useState(() => `ORD-${Date.now().toString().slice(-6)}`);
   const [orderCreatedAt, setOrderCreatedAt] = useState(() => new Date());
+
+  useEffect(() => {
+    const idleTimeoutMs = 10 * 60 * 1000;
+    let idleTimer;
+    const resetIdleTimer = () => {
+      window.clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(() => idleLogoutRef.current?.(), idleTimeoutMs);
+    };
+    const activityEvents = ["pointerdown", "keydown", "touchstart"];
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, resetIdleTimer, { passive: true }));
+    resetIdleTimer();
+    return () => {
+      window.clearTimeout(idleTimer);
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, resetIdleTimer));
+    };
+  }, []);
 
   function openSystemPrintDialog(bodyClass, message) {
     const cleanup = () => document.body.classList.remove(bodyClass);
