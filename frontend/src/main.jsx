@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import QRCode from "qrcode";
 import qz from "qz-tray";
+import { loadBillingPrinter, billingPrintOptions } from "./lib/billing-printer.js";
 import {
   Area,
   AreaChart,
@@ -596,7 +597,6 @@ const defaultKotPrinter = {
   paper: "80mm",
   copies: 1,
   autoPrint: true,
-  autoPrintBill: true,
   status: "Disconnected",
 };
 
@@ -1346,6 +1346,7 @@ function AuthenticatedApp() {
     const printer = { ...defaultKotPrinter, ...JSON.parse(saved) };
     return printer.type === "QZ Tray" ? { ...printer, enabled: false, status: "Disconnected" } : printer;
   });
+  const [billingPrinter, setBillingPrinter] = useState(() => loadBillingPrinter(localStorage, billTemplate.printerSize));
   const [salesLedger, setSalesLedger] = useBusinessState("vestora-sales-ledger", () => loadStoredArray("vestora-sales-ledger"));
   const [voidLedger, setVoidLedger] = useBusinessState("vestora-void-ledger", () => loadStoredArray("vestora-void-ledger"));
   const [refundLedger, setRefundLedger] = useBusinessState("vestora-refund-ledger", () => loadStoredArray("vestora-refund-ledger"));
@@ -2000,6 +2001,18 @@ function AuthenticatedApp() {
   }, [kotPrinter]);
 
   useEffect(() => {
+    localStorage.setItem("vestora-billing-printer", JSON.stringify(billingPrinter));
+  }, [billingPrinter]);
+
+  useEffect(() => {
+    qz.websocket.setClosedCallbacks(() => {
+      setKotPrinter((current) => current.type === "QZ Tray" ? { ...current, enabled: false, status: "Disconnected" } : current);
+      setBillingPrinter((current) => ({ ...current, status: "Disconnected" }));
+    });
+    return () => qz.websocket.setClosedCallbacks([]);
+  }, []);
+
+  useEffect(() => {
     const saved = loadStoredArray(`vestora-menu-items-${activeStore.id}`);
     setProductItems(preparePosProducts(saved));
   }, [activeStore.id]);
@@ -2253,7 +2266,7 @@ function AuthenticatedApp() {
         return true;
       }} onExit={exitPOS} onLogout={handleLogout} onCreateCashier={() => openAdminView("create")} />
       : currentShift
-        ? <POS cart={cart} setCart={setCart} items={productItems} storeId={activeStore.id} foodStock={foodStock} onFoodStockChange={updateFoodStock} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} kotPrinter={kotPrinter} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onLogout={handleLogout} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} refundLedger={scopedRefundLedger} onRefund={recordRefund} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
+        ? <POS cart={cart} setCart={setCart} items={productItems} storeId={activeStore.id} foodStock={foodStock} onFoodStockChange={updateFoodStock} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} billingPrinter={billingPrinter} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onLogout={handleLogout} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} refundLedger={scopedRefundLedger} onRefund={recordRefund} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
         : <ShiftOpening online={online} onOpenShift={openShift} onExit={exitPOS} onLogout={handleLogout} cashier={posCashier} />,
     kds: <KDS notify={notify} orders={scopedKdsOrders} setOrders={setKdsOrders} kotPrinter={kotPrinter} />,
     tables: <Tables key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} items={productItems} currentUser={currentUser} tableOrders={scopedTableOrders} onSaveOrder={saveTableOrder} onSendKot={sendTableKot} onSendReception={sendTableToReception} onCancelOrder={cancelTableOrder} onCancelItem={cancelTableOrderItem} kotPrinter={kotPrinter} cloudStateReady={supabaseStateReady} />,
@@ -2275,7 +2288,7 @@ function AuthenticatedApp() {
     reports: <Reports notify={notify} storeId={activeStore.id} salesLedger={scopedSalesLedger} voidLedger={scopedVoidLedger} refundLedger={scopedRefundLedger} lastShiftClose={lastShiftClose} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} activeView={reportView} onReportChange={setReportView} />,
     mis: <MISReports salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} notify={notify} />,
     admin: <Admin notify={notify} users={users} setUsers={setUsers} currentUser={currentUser} canManageAll={canManageAll} canManageStore={canManage} stores={stores} activeStore={activeStore} activeView={adminView} onViewChange={openAdminView} customRoles={customRoles} setCustomRoles={setCustomRoles} />,
-    settings: <SettingsView notify={notify} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} canManage={canManage} canManageAll={canManageAll} activeStore={activeStore} setStores={setStores} menuItems={productItems} themeConfig={{ ...themeConfig, mode: dark ? "Dark" : "Light" }} setThemeConfig={setThemeConfig} setDark={setDark} />,
+    settings: <SettingsView notify={notify} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} billingPrinter={billingPrinter} setBillingPrinter={setBillingPrinter} canManage={canManage} canManageAll={canManageAll} activeStore={activeStore} setStores={setStores} menuItems={productItems} themeConfig={{ ...themeConfig, mode: dark ? "Dark" : "Light" }} setThemeConfig={setThemeConfig} setDark={setDark} />,
   }[activeModule];
 
   if (activeModule === "pos") {
@@ -4033,7 +4046,7 @@ function BillReceiptMeta({ billTemplate, rows }) {
   );
 }
 
-function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange, orderType, setOrderType, online, notify, billTemplate, kotPrinter, onSale, onVoidItem, onExit, onLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], refundLedger = [], onRefund, orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
+function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange, orderType, setOrderType, online, notify, billTemplate, billingPrinter, onSale, onVoidItem, onExit, onLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], refundLedger = [], onRefund, orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
   const catalogItems = (items?.length ? items : menuItems).filter((item) => item.status !== "Inactive");
   const categories = ["All", ...Array.from(new Set(catalogItems.map((item) => item.category).filter(Boolean))), "Favourites"];
   const [category, setCategory] = useState("All");
@@ -4082,20 +4095,20 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
   }
 
   useEffect(() => {
-    if (kotPrinter?.type !== "QZ Tray" || !kotPrinter.name?.trim() || kotPrinter.autoPrintBill !== true || !completedBill?.id) return undefined;
+    if (!billingPrintOptions(billingPrinter) || billingPrinter.autoPrint !== true || !completedBill?.id) return undefined;
     if (autoPrintedBillRef.current === completedBill.id) return undefined;
-    autoPrintedBillRef.current = completedBill.id;
     const timer = window.setTimeout(async () => {
+      autoPrintedBillRef.current = completedBill.id;
       try {
-        await printReceiptWithQz({ printerName: kotPrinter.name, paper: billTemplate.printerSize, copies: 1, selector: ".completed-print-receipt" });
-        notify(`Bill auto-printed on ${kotPrinter.name}`);
+        await printReceiptWithQz({ ...billingPrintOptions(billingPrinter), selector: ".completed-print-receipt" });
+        notify(`Bill auto-printed on ${billingPrinter.name}`);
       } catch (error) {
         autoPrintedBillRef.current = "";
         openSystemPrintDialog("printing-completed-bill", `Direct printer unavailable; opening system print dialog (${error?.message || "check QZ Tray"})`);
       }
     }, 150);
     return () => window.clearTimeout(timer);
-  }, [billTemplate.printerSize, completedBill?.id, kotPrinter?.autoPrintBill, kotPrinter?.name, kotPrinter?.type, notify]);
+  }, [completedBill?.id, billingPrinter?.enabled, billingPrinter?.autoPrint, billingPrinter?.name, billingPrinter?.type, billingPrinter?.paper, billingPrinter?.copies, notify]);
 
   const filtered = catalogItems.filter((item) => {
     const inCategory = category === "All" || item.category === category || (category === "Favourites" && item.fav);
@@ -4378,10 +4391,10 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
 
   async function printCompletedBill() {
     if (!completedBill) return;
-    if (kotPrinter?.type === "QZ Tray" && kotPrinter.name?.trim()) {
+    if (billingPrintOptions(billingPrinter)) {
       try {
-        await printReceiptWithQz({ printerName: kotPrinter.name, paper: billTemplate.printerSize, copies: 1, selector: ".completed-print-receipt" });
-        notify(`Bill printed on ${kotPrinter.name}`);
+        await printReceiptWithQz({ ...billingPrintOptions(billingPrinter), selector: ".completed-print-receipt" });
+        notify(`Bill printed on ${billingPrinter.name}`);
       } catch (error) {
         openSystemPrintDialog("printing-completed-bill", `Direct printer unavailable; opening system print dialog (${error?.message || "check QZ Tray"})`);
       }
@@ -4392,10 +4405,10 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
 
   async function reprintHistoryBill() {
     if (!selectedHistoryBill) return;
-    if (kotPrinter?.type === "QZ Tray" && kotPrinter.name?.trim()) {
+    if (billingPrintOptions(billingPrinter)) {
       try {
-        await printReceiptWithQz({ printerName: kotPrinter.name, paper: billTemplate.printerSize, copies: 1, selector: ".history-print-receipt" });
-        notify(`Bill reprinted on ${kotPrinter.name}`);
+        await printReceiptWithQz({ ...billingPrintOptions(billingPrinter), selector: ".history-print-receipt" });
+        notify(`Bill reprinted on ${billingPrinter.name}`);
       } catch (error) {
         openSystemPrintDialog("printing-history-bill", `Direct printer unavailable; opening system print dialog (${error?.message || "check QZ Tray"})`);
       }
@@ -8138,7 +8151,7 @@ async function printKotWithQz({ printerName, paper, copies = 1, order, isTest = 
 }
 
 async function printReceiptWithQz({ printerName, paper, copies = 1, selector }) {
-  if (!printerName?.trim()) throw new Error("Choose a printer in KOT Printer settings");
+  if (!printerName?.trim()) throw new Error("Choose a printer in Billing printer connection settings");
   const receipt = document.querySelector(selector);
   if (!receipt) throw new Error("The bill is not ready to print");
   await configureQzSecurity();
@@ -8148,6 +8161,7 @@ async function printReceiptWithQz({ printerName, paper, copies = 1, selector }) 
   const clone = receipt.cloneNode(true);
   clone.removeAttribute("aria-hidden");
   Object.assign(clone.style, {
+    display: "block",
     position: "static",
     top: "auto",
     left: "auto",
@@ -9184,20 +9198,14 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
   );
 }
 
-function KotPrinterSetup({ kotPrinter, setKotPrinter, notify, canManage }) {
+function PrinterConnectionSetup({ printer, setPrinter, notify, canManage, purpose = "kot" }) {
+  const isBilling = purpose === "billing";
+  const printerLabel = isBilling ? "Billing" : "KOT";
   const [qzPrinters, setQzPrinters] = useState([]);
   const [qzBusy, setQzBusy] = useState(false);
 
-  useEffect(() => {
-    const onQzClosed = () => setKotPrinter((current) => current.type === "QZ Tray"
-      ? { ...current, enabled: false, status: "Disconnected" }
-      : current);
-    qz.websocket.setClosedCallbacks(onQzClosed);
-    return () => qz.websocket.setClosedCallbacks([]);
-  }, [setKotPrinter]);
-
   function update(field, value) {
-    setKotPrinter((current) => ({ ...current, [field]: value, enabled: false, status: "Disconnected" }));
+    setPrinter((current) => ({ ...current, [field]: value, ...(["name", "type", "ip", "port"].includes(field) ? { enabled: false, status: "Disconnected" } : {}) }));
   }
 
   function canConnectPrinter(printer) {
@@ -9218,8 +9226,8 @@ function KotPrinterSetup({ kotPrinter, setKotPrinter, notify, canManage }) {
       const printers = await connectQzTray();
       setQzPrinters(printers);
       if (!printers.length) throw new Error("QZ Tray is running, but no printers were found on this computer");
-      const selectedPrinter = await preferredQzPrinter(printers, kotPrinter.name);
-      setKotPrinter((current) => ({ ...current, type: "QZ Tray", name: selectedPrinter, enabled: false, status: "Printer found" }));
+      const selectedPrinter = await preferredQzPrinter(printers, printer.name);
+      setPrinter((current) => ({ ...current, type: "QZ Tray", name: selectedPrinter, enabled: false, status: "Printer found" }));
       return printers;
     } finally {
       setQzBusy(false);
@@ -9231,32 +9239,30 @@ function KotPrinterSetup({ kotPrinter, setKotPrinter, notify, canManage }) {
       notify("Admin permission required");
       return;
     }
-    if (kotPrinter.type === "QZ Tray") {
+    if (printer.type === "QZ Tray") {
       setQzBusy(true);
-      setKotPrinter((current) => ({ ...current, enabled: false, status: "Connecting to QZ Tray" }));
+      setPrinter((current) => ({ ...current, enabled: false, status: "Connecting to QZ Tray" }));
       try {
         const printers = await connectQzTray();
         setQzPrinters(printers);
-        const selectedPrinter = await preferredQzPrinter(printers, kotPrinter.name);
+        const selectedPrinter = await preferredQzPrinter(printers, printer.name);
         if (!selectedPrinter) throw new Error("No printers found. Install the printer in Windows and try again.");
-        setKotPrinter((current) => ({ ...current, name: selectedPrinter, enabled: true, status: "Connected" }));
-        notify(qzSignedConnection
-          ? `QZ Tray connected to ${selectedPrinter}`
-          : `QZ Tray connected to ${selectedPrinter}. Approve the QZ Tray permission prompt for direct printing.`, 10000);
+        setPrinter((current) => ({ ...current, name: selectedPrinter, enabled: true, status: "Connected" }));
+        notify(`${printerLabel} printer connected to ${selectedPrinter}`, 10000);
       } catch (error) {
-        setKotPrinter((current) => ({ ...current, enabled: false, status: "Disconnected" }));
+        setPrinter((current) => ({ ...current, enabled: false, status: "Disconnected" }));
         notify(`Could not connect to QZ Tray: ${error?.message || "Install and open QZ Tray, then retry"}`);
       } finally {
         setQzBusy(false);
       }
       return;
     }
-    if (!canConnectPrinter(kotPrinter)) {
-      setKotPrinter((current) => ({ ...current, enabled: false, status: "Disconnected" }));
-      notify("KOT printer details are incomplete");
+    if (!canConnectPrinter(printer)) {
+      setPrinter((current) => ({ ...current, enabled: false, status: "Disconnected" }));
+      notify(`${printerLabel} printer details are incomplete`);
       return;
     }
-    setKotPrinter((current) => ({ ...current, enabled: false, status: "Manual print only" }));
+    setPrinter((current) => ({ ...current, enabled: false, status: "Manual print only" }));
     notify("Direct automatic printing requires QZ Tray. This printer can use the system print dialog.", 9000);
   }
 
@@ -9265,65 +9271,66 @@ function KotPrinterSetup({ kotPrinter, setKotPrinter, notify, canManage }) {
       notify("Admin permission required");
       return;
     }
-    if (kotPrinter.type === "QZ Tray" && qz.websocket.isActive()) {
-      try {
-        await qz.websocket.disconnect();
-      } catch (error) {
-        notify(`QZ Tray disconnect failed: ${error?.message || "Try again"}`);
-      }
-    }
-    setKotPrinter((current) => ({ ...current, enabled: false, status: "Disconnected" }));
-    notify("KOT printer disconnected");
+    // Both routes share one QZ session; disconnect only this printer route.
+    setPrinter((current) => ({ ...current, enabled: false, status: "Disconnected" }));
+    notify(`${printerLabel} printer disconnected`);
   }
 
   async function testPrinter() {
-    if (kotPrinter.type !== "QZ Tray") {
-      notify(`Opening a system print test for ${kotPrinter.name}`);
+    if (!canManage) return;
+    if (printer.type !== "QZ Tray") {
+      notify(`Opening a system print test for ${printer.name}`);
       window.setTimeout(() => window.print(), 100);
       return;
     }
-    if (!kotPrinter.enabled || kotPrinter.status !== "Connected") {
-      notify("Connect KOT printer first");
+    if (!printer.enabled || printer.status !== "Connected") {
+      notify(`Connect ${printerLabel.toLowerCase()} printer first`);
       return;
     }
     try {
-      await printKotWithQz({ printerName: kotPrinter.name, paper: kotPrinter.paper, copies: kotPrinter.copies, isTest: true });
-      notify(`Test KOT printed on ${kotPrinter.name}`);
+      setQzBusy(true);
+      if (isBilling) {
+        await printReceiptWithQz({ ...billingPrintOptions(printer), selector: ".billing-test-receipt" });
+      } else {
+        await printKotWithQz({ printerName: printer.name, paper: printer.paper, copies: printer.copies, isTest: true });
+      }
+      notify(`Test ${isBilling ? "bill" : "KOT"} printed on ${printer.name}`);
     } catch (error) {
       notify(`QZ Tray test print failed: ${error?.message || "Check QZ Tray and printer connection"}`);
+    } finally {
+      setQzBusy(false);
     }
   }
 
   return (
     <div className="kot-printer-editor">
       <div className="printer-status-card">
-        <span className={kotPrinter.enabled && kotPrinter.status === "Connected" ? "pill online" : "pill offline"}>{kotPrinter.status}</span>
-        <strong>{kotPrinter.name}</strong>
-        <em>{kotPrinter.type} / {kotPrinter.paper}</em>
+        <span className={printer.enabled && printer.status === "Connected" ? "pill online" : "pill offline"}>{printer.status}</span>
+        <strong>{printer.name}</strong>
+        <em>{printer.type} / {printer.paper}</em>
       </div>
       <div className="kot-printer-fields">
-        <label>Printer name<input list="vestora-kot-printer-choices" value={kotPrinter.name} onChange={(event) => update("name", event.target.value)} disabled={!canManage} placeholder="Select or enter printer name" /><datalist id="vestora-kot-printer-choices">{printerChoices.map((printer) => <option key={printer} value={printer} />)}</datalist></label>
-        <label>Connection type<select value={kotPrinter.type} onChange={(event) => update("type", event.target.value)} disabled={!canManage}><option>Thermal LAN printer</option><option>USB thermal printer</option><option>Bluetooth printer</option><option>Windows default printer</option><option>QZ Tray</option></select></label>
-        {kotPrinter.type === "QZ Tray" ? (
-          <label>Installed printer<select value={kotPrinter.name} onChange={(event) => update("name", event.target.value)} disabled={!canManage}><option value="">Choose a printer</option>{qzPrinters.map((printer) => <option key={printer} value={printer}>{printer}</option>)}{!qzPrinters.includes(kotPrinter.name) && kotPrinter.name && <option value={kotPrinter.name}>{kotPrinter.name}</option>}</select></label>
-        ) : <label>IP address<input value={kotPrinter.ip} onChange={(event) => update("ip", event.target.value)} disabled={!canManage} /></label>}
-        {kotPrinter.type !== "QZ Tray" && <label>Port<input value={kotPrinter.port} onChange={(event) => update("port", event.target.value)} disabled={!canManage} /></label>}
-        <label>Paper size<select value={kotPrinter.paper} onChange={(event) => update("paper", event.target.value)} disabled={!canManage}><option>80mm</option><option>58mm</option></select></label>
-        <label>Copies<input type="number" min="1" max="5" value={kotPrinter.copies} onChange={(event) => update("copies", Number(event.target.value || 1))} disabled={!canManage} /></label>
+        <label>Printer name<input list={`vestora-${purpose}-printer-choices`} value={printer.name} onChange={(event) => update("name", event.target.value)} disabled={!canManage} placeholder="Select or enter printer name" /><datalist id={`vestora-${purpose}-printer-choices`}>{printerChoices.map((printer) => <option key={printer} value={printer} />)}</datalist></label>
+        <label>Connection type<select value={printer.type} onChange={(event) => update("type", event.target.value)} disabled={!canManage}><option>Thermal LAN printer</option><option>USB thermal printer</option><option>Bluetooth printer</option><option>Windows default printer</option><option>QZ Tray</option></select></label>
+        {printer.type === "QZ Tray" ? (
+          <label>Installed printer<select value={printer.name} onChange={(event) => update("name", event.target.value)} disabled={!canManage}><option value="">Choose a printer</option>{qzPrinters.map((printer) => <option key={printer} value={printer}>{printer}</option>)}{!qzPrinters.includes(printer.name) && printer.name && <option value={printer.name}>{printer.name}</option>}</select></label>
+        ) : <label>IP address<input value={printer.ip} onChange={(event) => update("ip", event.target.value)} disabled={!canManage} /></label>}
+        {printer.type !== "QZ Tray" && <label>Port<input value={printer.port} onChange={(event) => update("port", event.target.value)} disabled={!canManage} /></label>}
+        <label>Paper size<select value={printer.paper} onChange={(event) => update("paper", event.target.value)} disabled={!canManage}><option>80mm</option><option>58mm</option></select></label>
+        <label>Copies<input type="number" min="1" max="5" value={printer.copies} onChange={(event) => update("copies", Number(event.target.value || 1))} disabled={!canManage} /></label>
       </div>
-      {kotPrinter.type === "QZ Tray" && <div className="settings-printer-status"><div><strong>QZ Tray must be installed and running on this computer.</strong><small>On first use, approve UVPRO in the QZ Tray permission prompt. Printers connected to this computer will appear here.</small></div><button type="button" onClick={() => discoverQzPrinters().catch((error) => notify(`QZ Tray: ${error?.message || "Could not find printers"}`))} disabled={!canManage || qzBusy}>{qzBusy ? "Searching…" : "Find printers"}</button></div>}
-      <label className="kot-toggle"><input type="checkbox" checked={kotPrinter.autoPrint} onChange={(event) => update("autoPrint", event.target.checked)} disabled={!canManage} /> Auto send KOT to kitchen queue when order is created</label>
-      {kotPrinter.type === "QZ Tray" && <label className="kot-toggle"><input type="checkbox" checked={kotPrinter.autoPrintBill !== false} onChange={(event) => update("autoPrintBill", event.target.checked)} disabled={!canManage} /> Auto print customer bill after payment (no Windows print dialog)</label>}
+      {printer.type === "QZ Tray" && <div className="settings-printer-status"><div><strong>QZ Tray must be installed and running on this computer.</strong><small>Find printers installed on this computer. Billing and KOT can use the same printer or different printers.</small></div><button type="button" onClick={() => discoverQzPrinters().catch((error) => notify(`QZ Tray: ${error?.message || "Could not find printers"}`))} disabled={!canManage || qzBusy}>{qzBusy ? "Searching…" : "Find printers"}</button></div>}
+      <label className="kot-toggle"><input type="checkbox" checked={printer.autoPrint} onChange={(event) => update("autoPrint", event.target.checked)} disabled={!canManage} /> {isBilling ? "Auto print customer bill after payment" : "Auto send KOT to kitchen queue when order is created"}</label>
       <div className="editor-row">
         <button onClick={connectPrinter} disabled={!canManage || qzBusy}>{qzBusy ? "Connecting…" : "Connect printer"}</button>
-        <button onClick={testPrinter} disabled={qzBusy}>Test KOT</button>
-        <button onClick={disconnectPrinter} disabled={!canManage}>Disconnect</button>
+        <button onClick={testPrinter} disabled={!canManage || qzBusy}>Test {isBilling ? "bill" : "KOT"}</button>
+        <button onClick={disconnectPrinter} disabled={!canManage || qzBusy}>Disconnect</button>
       </div>
-      <div className="print-kot test-kot">
-        <div className="kot-ticket-head"><strong>KITCHEN ORDER TICKET</strong><span>TEST-KOT</span></div>
-        <div className="kot-meta"><span>Type <strong>Test</strong></span><span>Printer <strong>{kotPrinter.name}</strong></span></div>
-        <div className="kot-lines"><p>1 Paneer Tikka Bowl</p><p>2 Masala Chaas</p></div>
-        <small>UVPRO KDS TEST PRINT</small>
+      <div className={`print-kot test-kot ${isBilling ? "billing-test-receipt" : ""}`}>
+        <div className="kot-ticket-head"><strong>{isBilling ? "CUSTOMER BILL — TEST" : "KITCHEN ORDER TICKET"}</strong><span>{isBilling ? "TEST-BILL" : "TEST-KOT"}</span></div>
+        <div className="kot-meta"><span>Type <strong>Test</strong></span><span>Printer <strong>{printer.name}</strong></span></div>
+        <div className="kot-lines">{isBilling ? <><p>1 Test item — ₹100.00</p><p>Total — ₹100.00</p><p>TEST ONLY — NOT A SALE</p></> : <><p>1 Paneer Tikka Bowl</p><p>2 Masala Chaas</p></>}</div>
+        <small>UVPRO {isBilling ? "BILLING" : "KDS"} TEST PRINT</small>
       </div>
     </div>
   );
@@ -11285,7 +11292,7 @@ function OnlineOrderingIntegrationSettings({ activeStore, canManage, notify, men
   );
 }
 
-function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, canManage, canManageAll, activeStore, setStores, menuItems, themeConfig, setThemeConfig, setDark }) {
+function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, billingPrinter, setBillingPrinter, canManage, canManageAll, activeStore, setStores, menuItems, themeConfig, setThemeConfig, setDark }) {
   const sectionNames = canManageAll ? Object.keys(settingsSectionConfig) : storeSettingsSections;
   const [selectedSetting, setSelectedSetting] = useState(null);
   const settingMeta = {
@@ -11302,14 +11309,15 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
     "Theme and language": Sun,
   };
 
-  if (selectedSetting === "KOT printer connection") {
+  if (selectedSetting === "KOT printer connection" || selectedSetting === "Billing printer connection") {
+    const isBilling = selectedSetting === "Billing printer connection";
     return (
       <section className="screen settings-detail-screen">
         <button className="settings-back-button" onClick={() => setSelectedSetting(null)}><PanelLeftClose size={17} /> Back to settings</button>
         <div className="panel settings-detail-panel">
-          <PanelHead title="KOT printer connection" icon={Printer} actions={canManage ? ["Save"] : []} onAction={() => notify("KOT printer settings saved")} />
-          <p className="settings-description">Connect and test the kitchen printer used for KOT tickets.</p>
-          <KotPrinterSetup kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} notify={notify} canManage={canManage} />
+          <PanelHead title={selectedSetting} icon={Printer} actions={canManage ? ["Save"] : []} onAction={() => notify(`${isBilling ? "Billing" : "KOT"} printer settings saved on this computer`)} />
+          <p className="settings-description">{isBilling ? "Connect and test the customer bill printer. Used for paid bills, automatic printing, and bill reprints." : "Connect and test the kitchen printer used for KOT tickets."}</p>
+          <PrinterConnectionSetup key={selectedSetting} purpose={isBilling ? "billing" : "kot"} printer={isBilling ? billingPrinter : kotPrinter} setPrinter={isBilling ? setBillingPrinter : setKotPrinter} notify={notify} canManage={canManage} />
         </div>
       </section>
     );
@@ -11351,6 +11359,14 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
             </button>
           );
         })}
+        <button className="settings-card" onClick={() => setSelectedSetting("Billing printer connection")}>
+          <span className="settings-card-icon"><ReceiptText size={21} /></span>
+          <span className="settings-card-copy">
+            <strong>Billing printer connection</strong>
+            <small>Connect, test, and manage the customer bill printer.</small>
+          </span>
+          <span className="settings-card-open">Open <ChevronRight size={17} /></span>
+        </button>
         <button className="settings-card" onClick={() => setSelectedSetting("KOT printer connection")}>
           <span className="settings-card-icon"><ChefHat size={21} /></span>
           <span className="settings-card-copy">
