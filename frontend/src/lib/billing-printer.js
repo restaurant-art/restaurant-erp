@@ -6,7 +6,7 @@ export const defaultBillingPrinter = {
   port: "9100",
   paper: "80mm",
   copies: 1,
-  autoPrint: true,
+  autoPrint: false,
   status: "Disconnected",
 };
 
@@ -21,7 +21,7 @@ function parsePrinter(value) {
 
 export function loadBillingPrinter(storage, paper = "80mm") {
   const saved = parsePrinter(storage.getItem("vestora-billing-printer"));
-  if (saved) return { ...defaultBillingPrinter, ...saved, status: "Disconnected" };
+  if (saved) return { ...defaultBillingPrinter, ...saved, autoPrint: false, status: "Disconnected" };
   // Bills previously used the KOT connection. Copy it once, retaining the
   // previous billing paper size and single copy, then persist independently.
   const legacy = parsePrinter(storage.getItem("vestora-kot-printer"));
@@ -31,7 +31,6 @@ export function loadBillingPrinter(storage, paper = "80mm") {
       name: legacy.name,
       paper,
       enabled: true,
-      autoPrint: legacy.autoPrintBill !== false,
     };
   }
   return { ...defaultBillingPrinter, paper };

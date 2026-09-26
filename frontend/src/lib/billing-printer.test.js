@@ -39,9 +39,13 @@ test("new and malformed settings default to an unconfigured billing printer", ()
   assert.deepEqual(loadBillingPrinter(storage({ "vestora-billing-printer": "broken", "vestora-kot-printer": "[]" })), defaultBillingPrinter);
 });
 
-test("older QZ settings retain the previous default of automatic billing", () => {
-  const saved = loadBillingPrinter(storage({ "vestora-kot-printer": JSON.stringify({ type: "QZ Tray", name: "Counter" }) }));
-  assert.equal(saved.autoPrint, true);
+test("existing and legacy automatic billing preferences become click-to-print", () => {
+  const legacy = loadBillingPrinter(storage({ "vestora-kot-printer": JSON.stringify({ type: "QZ Tray", name: "Counter", autoPrintBill: true }) }));
+  const saved = loadBillingPrinter(storage({ "vestora-billing-printer": JSON.stringify({ ...billing, autoPrint: true }) }));
+  assert.equal(legacy.autoPrint, false);
+  assert.equal(saved.autoPrint, false);
+  assert.equal(saved.name, "Counter");
+  assert.equal(saved.enabled, true);
 });
 
 test("billing reconnects after reload with its own paper and copies", () => {
@@ -81,31 +85,12 @@ const React = { createElement: (type, props, ...children) => ({ type, props: pro
 const nodes = (tree) => !tree || typeof tree !== "object" ? [] : [tree, ...(tree.children || []).flatMap((child) => Array.isArray(child) ? child.flatMap(nodes) : nodes(child))];
 const label = (tree) => typeof tree === "string" ? tree : tree?.children?.map(label).join("") || "";
 
-test("automatic paid bill printing uses the billing route once and honors its own toggle", async () => {
-  const start = source.indexOf("  useEffect(() => {\n    if (!billingPrintOptions");
-  const end = source.indexOf("\n\n  const filtered", start);
-  assert.ok(start > 0 && end > start);
-  const calls = [], timers = [];
-  let effect;
-  const context = vm.createContext({
-    billingPrinter: billing, completedBill: { id: "paid-test" }, billingPrintOptions,
-    autoPrintedBillRef: { current: "" }, notify: () => {},
-    printReceiptWithQz: async (options) => calls.push(options),
-    openSystemPrintDialog: () => assert.fail("No system dialog expected"),
-    useEffect: (callback) => { effect = callback; },
-    window: { setTimeout: (callback) => { timers.push(callback); return timers.length; }, clearTimeout: () => {} },
-  });
-  vm.runInContext(source.slice(start, end), context);
-  effect();
-  await timers.shift()();
-  assert.equal(calls[0].printerName, "Counter");
-  assert.equal(calls[0].copies, 2);
-  effect();
-  assert.equal(timers.length, 0);
-  context.completedBill = { id: "next-paid-test" };
-  context.billingPrinter = { ...billing, autoPrint: false };
-  effect();
-  assert.equal(timers.length, 0);
+test("billing settings explain manual printing and cannot enable automatic printing", () => {
+  const context = vm.createContext({ React, useState: (value) => [value, () => {}], printerChoices: [] });
+  vm.runInContext(setupCode, context);
+  const tree = context.PrinterConnectionSetup({ purpose: "billing", printer: { ...billing, autoPrint: true }, setPrinter: () => {}, canManage: true, notify: () => {} });
+  assert.ok(label(tree).includes("Customer bills print only when you click Print bill"));
+  assert.equal(nodes(tree).filter((node) => node.type === "input" && node.props.type === "checkbox").length, 0);
 });
 
 test("billing settings connect, test and disconnect independently of the shared QZ session", async () => {

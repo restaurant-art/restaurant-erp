@@ -4084,7 +4084,6 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
   const billItemsRef = useRef(null);
   const [orderNumber, setOrderNumber] = useState(() => `ORD-${Date.now().toString().slice(-6)}`);
   const [orderCreatedAt, setOrderCreatedAt] = useState(() => new Date());
-  const autoPrintedBillRef = useRef("");
 
   function openSystemPrintDialog(bodyClass, message) {
     const cleanup = () => document.body.classList.remove(bodyClass);
@@ -4093,22 +4092,6 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
     notify(message);
     window.setTimeout(() => window.print(), 80);
   }
-
-  useEffect(() => {
-    if (!billingPrintOptions(billingPrinter) || billingPrinter.autoPrint !== true || !completedBill?.id) return undefined;
-    if (autoPrintedBillRef.current === completedBill.id) return undefined;
-    const timer = window.setTimeout(async () => {
-      autoPrintedBillRef.current = completedBill.id;
-      try {
-        await printReceiptWithQz({ ...billingPrintOptions(billingPrinter), selector: ".completed-print-receipt" });
-        notify(`Bill auto-printed on ${billingPrinter.name}`);
-      } catch (error) {
-        autoPrintedBillRef.current = "";
-        openSystemPrintDialog("printing-completed-bill", `Direct printer unavailable; opening system print dialog (${error?.message || "check QZ Tray"})`);
-      }
-    }, 150);
-    return () => window.clearTimeout(timer);
-  }, [completedBill?.id, billingPrinter?.enabled, billingPrinter?.autoPrint, billingPrinter?.name, billingPrinter?.type, billingPrinter?.paper, billingPrinter?.copies, notify]);
 
   const filtered = catalogItems.filter((item) => {
     const inCategory = category === "All" || item.category === category || (category === "Favourites" && item.fav);
@@ -9320,7 +9303,7 @@ function PrinterConnectionSetup({ printer, setPrinter, notify, canManage, purpos
         <label>Copies<input type="number" min="1" max="5" value={printer.copies} onChange={(event) => update("copies", Number(event.target.value || 1))} disabled={!canManage} /></label>
       </div>
       {printer.type === "QZ Tray" && <div className="settings-printer-status"><div><strong>QZ Tray must be installed and running on this computer.</strong><small>Find printers installed on this computer. Billing and KOT can use the same printer or different printers.</small></div><button type="button" onClick={() => discoverQzPrinters().catch((error) => notify(`QZ Tray: ${error?.message || "Could not find printers"}`))} disabled={!canManage || qzBusy}>{qzBusy ? "Searching…" : "Find printers"}</button></div>}
-      <label className="kot-toggle"><input type="checkbox" checked={printer.autoPrint} onChange={(event) => update("autoPrint", event.target.checked)} disabled={!canManage} /> {isBilling ? "Auto print customer bill after payment" : "Auto send KOT to kitchen queue when order is created"}</label>
+      {isBilling ? <p className="settings-description">Customer bills print only when you click Print bill after payment, or Reprint bill in order history.</p> : <label className="kot-toggle"><input type="checkbox" checked={printer.autoPrint} onChange={(event) => update("autoPrint", event.target.checked)} disabled={!canManage} /> Auto send KOT to kitchen queue when order is created</label>}
       <div className="editor-row">
         <button onClick={connectPrinter} disabled={!canManage || qzBusy}>{qzBusy ? "Connecting…" : "Connect printer"}</button>
         <button onClick={testPrinter} disabled={!canManage || qzBusy}>Test {isBilling ? "bill" : "KOT"}</button>
@@ -11316,7 +11299,7 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
         <button className="settings-back-button" onClick={() => setSelectedSetting(null)}><PanelLeftClose size={17} /> Back to settings</button>
         <div className="panel settings-detail-panel">
           <PanelHead title={selectedSetting} icon={Printer} actions={canManage ? ["Save"] : []} onAction={() => notify(`${isBilling ? "Billing" : "KOT"} printer settings saved on this computer`)} />
-          <p className="settings-description">{isBilling ? "Connect and test the customer bill printer. Used for paid bills, automatic printing, and bill reprints." : "Connect and test the kitchen printer used for KOT tickets."}</p>
+          <p className="settings-description">{isBilling ? "Connect and test the customer bill printer. Used when you click Print bill or Reprint bill." : "Connect and test the kitchen printer used for KOT tickets."}</p>
           <PrinterConnectionSetup key={selectedSetting} purpose={isBilling ? "billing" : "kot"} printer={isBilling ? billingPrinter : kotPrinter} setPrinter={isBilling ? setBillingPrinter : setKotPrinter} notify={notify} canManage={canManage} />
         </div>
       </section>
