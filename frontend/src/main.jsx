@@ -8072,13 +8072,6 @@ function escapePrintHtml(value) {
 let qzSecurityConfigured = false;
 let qzSignedConnection = false;
 
-function configureUnsignedQzSecurity() {
-  qz.security.setCertificatePromise((resolve) => resolve(""));
-  qz.security.setSignaturePromise(() => (resolve) => resolve(""));
-  qzSecurityConfigured = true;
-  qzSignedConnection = false;
-}
-
 async function configureQzSecurity() {
   if (qzSecurityConfigured) return qzSignedConnection;
   try {
@@ -8108,8 +8101,11 @@ async function configureQzSecurity() {
     });
     qzSecurityConfigured = true;
     qzSignedConnection = true;
-  } catch {
-    configureUnsignedQzSecurity();
+  } catch (error) {
+    qzSecurityConfigured = false;
+    qzSignedConnection = false;
+    const reason = error instanceof Error ? error.message : "QZ signing service is unavailable";
+    throw new Error(`Secure QZ signing failed: ${reason}`);
   }
   return qzSignedConnection;
 }
