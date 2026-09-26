@@ -22,6 +22,17 @@ jobs:
         with:
           version: latest
 
+      - name: Configure QZ Tray signing secrets
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          QZ_CERTIFICATE: ${{ secrets.QZ_CERTIFICATE }}
+          QZ_PRIVATE_KEY: ${{ secrets.QZ_PRIVATE_KEY }}
+        run: |
+          supabase secrets set \
+            --project-ref vqinmequtjkuzrtzkzsk \
+            QZ_CERTIFICATE="$QZ_CERTIFICATE" \
+            QZ_PRIVATE_KEY="$QZ_PRIVATE_KEY"
+
       - name: Deploy Edge Functions
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
