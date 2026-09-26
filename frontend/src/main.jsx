@@ -8070,25 +8070,48 @@ function escapePrintHtml(value) {
 }
 
 let qzSecurityConfigured = false;
+let qzSignedConnection = false;
+
+function configureUnsignedQzSecurity() {
+  qz.security.setCertificatePromise((resolve) => resolve(""));
+  qz.security.setSignaturePromise(() => (resolve) => resolve(""));
+  qzSecurityConfigured = true;
+  qzSignedConnection = false;
+}
 
 async function configureQzSecurity() {
-  if (qzSecurityConfigured) return;
-  qz.security.setSignatureAlgorithm("SHA512");
-  qz.security.setCertificatePromise((resolve, reject) => {
-    supabaseFunctionJson("qz-sign", {
+  if (qzSecurityConfigured) return qzSignedConnection;
+  try {
+    qz.security.setSignatureAlgorithm("SHA512");
+    const certificateResult = await supabaseFunctionJson("qz-sign", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "certificate" }),
-    }).then((result) => resolve(result.certificate)).catch(reject);
-  });
-  qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
-    supabaseFunctionJson("qz-sign", {
+    });
+    const certificate = String(certificateResult?.certificate || "").trim();
+    if (!certificate) throw new Error("QZ signing certificate is unavailable");
+
+    const probeResult = await supabaseFunctionJson("qz-sign", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "sign", request: toSign }),
-    }).then((result) => resolve(result.signature)).catch(reject);
-  });
-  qzSecurityConfigured = true;
+      body: JSON.stringify({ action: "sign", request: `uvpro-qz-check-${Date.now()}` }),
+    });
+    if (!probeResult?.signature) throw new Error("QZ signing service is unavailable");
+
+    qz.security.setCertificatePromise((resolve) => resolve(certificate));
+    qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
+      supabaseFunctionJson("qz-sign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "sign", request: toSign }),
+      }).then((result) => resolve(result.signature)).catch(reject);
+    });
+    qzSecurityConfigured = true;
+    qzSignedConnection = true;
+  } catch {
+    configureUnsignedQzSecurity();
+  }
+  return qzSignedConnection;
 }
 
 async function connectQzTray() {
@@ -9221,7 +9244,9 @@ function KotPrinterSetup({ kotPrinter, setKotPrinter, notify, canManage }) {
         const selectedPrinter = await preferredQzPrinter(printers, kotPrinter.name);
         if (!selectedPrinter) throw new Error("No printers found. Install the printer in Windows and try again.");
         setKotPrinter((current) => ({ ...current, name: selectedPrinter, enabled: true, status: "Connected" }));
-        notify(`QZ Tray connected to ${selectedPrinter}`);
+        notify(qzSignedConnection
+          ? `QZ Tray connected to ${selectedPrinter}`
+          : `QZ Tray connected to ${selectedPrinter}. Approve the QZ Tray permission prompt for direct printing.`, 10000);
       } catch (error) {
         setKotPrinter((current) => ({ ...current, enabled: false, status: "Disconnected" }));
         notify(`Could not connect to QZ Tray: ${error?.message || "Install and open QZ Tray, then retry"}`);
