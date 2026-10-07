@@ -15,8 +15,90 @@ const supabaseAnonKey = String(
   || "",
 );
 
-export const supabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
-export const supabase = supabaseConfigured ? createClient(supabaseUrl, supabaseAnonKey) : null;
+const apiBaseUrl = String(import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+const useAwsCloud = String(import.meta.env.VITE_CLOUD_PROVIDER || "").toLowerCase() === "aws"
+  || (!supabaseUrl || !supabaseAnonKey);
+const awsSessionKey = "uvpro-aws-session";
+const awsListeners = new Set();
+
+function readAwsSession() {
+  try { return JSON.parse(window.localStorage.getItem(awsSessionKey) || "null"); }
+  catch { return null; }
+}
+
+function writeAwsSession(session, event = "SIGNED_IN") {
+  if (session) window.localStorage.setItem(awsSessionKey, JSON.stringify(session));
+  else window.localStorage.removeItem(awsSessionKey);
+  for (const listener of awsListeners) listener(event, session);
+}
+
+async function refreshAwsSession() {
+  const previous = readAwsSession();
+  if (!previous?.refresh_token) return null;
+  const response = await fetch(`${apiBaseUrl}/api/auth/token/refresh/`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh: previous.refresh_token }),
+  });
+  if (!response.ok) { writeAwsSession(null, "SIGNED_OUT"); return null; }
+  const body = await response.json();
+  const session = { ...previous, access_token: body.access, refresh_token: body.refresh || previous.refresh_token };
+  writeAwsSession(session, "TOKEN_REFRESHED");
+  return session;
+}
+
+async function awsRequest(path, options = {}, authenticated = true, retry = true) {
+  const session = readAwsSession();
+  const headers = {
+    ...(authenticated && session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+    ...(options.headers || {}),
+  };
+  let response;
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, { ...options, headers, signal: options.signal || AbortSignal.timeout(20000) });
+  } catch (error) {
+    if (error.name === "TimeoutError" || error.name === "AbortError") throw new Error("The store server did not respond in time. Check your connection and retry. Local records are retained.");
+    throw error;
+  }
+  if (authenticated && response.status === 401 && retry && await refreshAwsSession()) {
+    return awsRequest(path, options, authenticated, false);
+  }
+  return response;
+}
+
+function createAwsClient() {
+  return { auth: {
+    async getSession() { return { data: { session: readAwsSession() }, error: null }; },
+    async signInWithPassword({ email, password }) {
+      const response = await awsRequest("/api/cloud/auth/login/", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      }, false);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) return { data: {}, error: new Error(body.error || "Sign-in failed") };
+      const session = { access_token: body.access, refresh_token: body.refresh, user: body.user };
+      writeAwsSession(session);
+      return { data: { session, user: body.user }, error: null };
+    },
+    async signOut() { writeAwsSession(null, "SIGNED_OUT"); return { error: null }; },
+    async updateUser({ password }) {
+      const response = await awsRequest("/api/cloud/auth/password/", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }),
+      });
+      const body = await response.json().catch(() => ({}));
+      return response.ok ? { data: body, error: null } : { data: null, error: new Error(body.error || "Unable to change password") };
+    },
+    async resetPasswordForEmail() {
+      return { data: null, error: new Error("Contact the administrator to reset this AWS account password") };
+    },
+    onAuthStateChange(listener) {
+      awsListeners.add(listener);
+      return { data: { subscription: { unsubscribe: () => awsListeners.delete(listener) } } };
+    },
+  } };
+}
+
+export const supabaseConfigured = useAwsCloud || Boolean(supabaseUrl && supabaseAnonKey);
+export const supabase = useAwsCloud ? createAwsClient() : (supabaseConfigured ? createClient(supabaseUrl, supabaseAnonKey) : null);
 
 // Auth locks and network requests must not leave the store-loading gate pending
 // forever. A timed-out write retains its mutation ID for safe acknowledgement.
@@ -51,11 +133,23 @@ export async function requestSupabasePasswordReset(email) {
 }
 
 export async function supabaseAuthHeaders() {
-  return supabaseAnonKey ? { apikey: supabaseAnonKey } : {};
+  return !useAwsCloud && supabaseAnonKey ? { apikey: supabaseAnonKey } : {};
 }
 
 export async function supabaseFunctionFetch(path, options = {}) {
   if (!supabaseConfigured) throw new Error("Supabase frontend environment is not configured");
+  if (useAwsCloud) {
+    const normalized = String(path).replace(/^\/+/, "");
+    const publicRequest = normalized.startsWith("vestora-public-order/");
+    const [pathname, query = ""] = normalized.split("?", 2);
+    let target;
+    if (pathname.startsWith("vestora-api/")) target = `/api/cloud/${pathname.slice("vestora-api/".length)}/`;
+    else if (pathname.startsWith("vestora-public-order/")) target = `/api/public-order/${pathname.slice("vestora-public-order/".length)}/`;
+    else if (pathname.startsWith("vestora-delivery")) target = "/api/cloud/delivery/";
+    else if (pathname.startsWith("qz-sign")) target = "/api/cloud/qz-sign/";
+    else throw new Error(`Unsupported AWS API route: ${pathname}`);
+    return awsRequest(`${target}${query ? `?${query}` : ""}`, options, !publicRequest);
+  }
   const session = await getSupabaseSession();
   if (!session?.access_token) throw new Error("Your sign-in session has expired. Sign in again; local records are retained.");
   const headers = {

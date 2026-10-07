@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import views
+from . import cloud_views
 
 router = DefaultRouter()
 router.register("restaurants", views.RestaurantViewSet)
@@ -35,4 +36,15 @@ urlpatterns = [
     path("dashboard/", views.dashboard),
     path("reports/summary/", views.report_summary),
     path("health/", views.health),
+    path("cloud/auth/login/", cloud_views.cloud_login),
+    path("cloud/auth/password/", cloud_views.cloud_password),
+    path("cloud/profile/", cloud_views.cloud_profile),
+    path("cloud/state/", cloud_views.cloud_state),
+    path("cloud/cashier-login/", cloud_views.cashier_login),
+    path("cloud/staff-account/", cloud_views.staff_account),
+    path("cloud/public-orders/", cloud_views.public_orders),
+    path("cloud/public-orders/<uuid:order_id>/", cloud_views.public_orders),
+    path("public-order/menu/", cloud_views.public_menu),
+    path("public-order/orders/", cloud_views.public_order_create),
+    path("cloud/<str:feature>/", cloud_views.unsupported_cloud_feature),
 ]
