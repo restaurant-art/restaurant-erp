@@ -85,6 +85,7 @@ import { useBusinessState, useCloudSyncStatus } from "./lib/use-business-state";
 import { fetchSharedSuperAdminStores, getSupabaseSession, hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseApiList, supabaseApiRequest, supabaseConfigured, supabaseFunctionJson, supabaseProfile, syncInventoryState, syncLocalStateKeyToSupabase, syncLocalStateToSupabase, updateSupabasePassword } from "./lib/supabase";
 import { canCashierUseOpenShift, findOpenStoreShift, isEligiblePosCashier } from "./lib/pos-access";
 import { pickQzPrinter } from "./lib/qz-printer";
+import { createNextRecipeVersion, listRecipeVersions, removeRecipeVersion } from "./lib/recipe-versions";
 
 const appBaseUrl = import.meta.env.BASE_URL || "/";
 const localAuthEnabled = String(import.meta.env.VITE_LOCAL_AUTH_ENABLED || "").toLowerCase() === "true";
@@ -6011,6 +6012,10 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
     ingredients: [{ name: "", qty: 1, unit: "g" }],
   };
   const [recipeDraft, setRecipeDraft] = useState(() => selectedRecipe ? normalizeRecipeIngredientUnits(selectedRecipe) : blankRecipe);
+  const [recipeEditorMode, setRecipeEditorMode] = useState("edit");
+  const versionedRecipe = recipes.find((recipe) => recipe.id === recipeDraft.id) || null;
+  const recipeVersions = listRecipeVersions(versionedRecipe);
+  const recipeLocked = !canManageAll || recipeEditorMode === "view";
   const [plan, setPlan] = useState({
     recipeId: selectedRecipe?.id || "",
     qty: Math.max(1, Number(selectedRecipe?.outputQty || 1)),
@@ -6166,7 +6171,15 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
   function openRecipe(recipe) {
     setSelectedRecipeId(recipe.id);
     setRecipeDraft(normalizeRecipeIngredientUnits(recipe));
+    setRecipeEditorMode("edit");
     notify(`${recipe.name} recipe opened`);
+  }
+
+  function openRecipeVersion(recipe, snapshot, mode = "view") {
+    setSelectedRecipeId(recipe.id);
+    setRecipeDraft(normalizeRecipeIngredientUnits({ ...snapshot, id: recipe.id }));
+    setRecipeEditorMode(mode);
+    notify(`${recipe.name} version ${snapshot.version} ${mode === "view" ? "opened" : "ready to edit"}`);
   }
 
   function updateRecipe(field, value) {
@@ -6260,20 +6273,47 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
       return;
     }
     const existing = recipes.find((recipe) => recipe.id === recipeDraft.id);
-    const savedRecipe = {
+    const nextRecipe = {
       ...recipeDraft,
       id: recipeDraft.id || `REC-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       outputQty,
       sellingPrice,
-      version: existing ? Number(existing.version || 1) + 1 : 1,
+      version: 1,
       changedBy: "Current user",
       changedAt: today,
       ingredients,
     };
+    const savedRecipe = existing ? createNextRecipeVersion(existing, nextRecipe) : { ...nextRecipe, versions: [] };
     setRecipes((current) => current.some((recipe) => recipe.id === savedRecipe.id) ? current.map((recipe) => recipe.id === savedRecipe.id ? savedRecipe : recipe) : [savedRecipe, ...current]);
     setSelectedRecipeId(savedRecipe.id);
     setRecipeDraft(savedRecipe);
+    setRecipeEditorMode("edit");
     notify(`${savedRecipe.name} recipe saved as version ${savedRecipe.version}`);
+  }
+
+  function deleteVersion(version) {
+    if (!canManageAll) {
+      notify("Admin permission required to delete recipe versions");
+      return;
+    }
+    const recipe = recipes.find((item) => item.id === recipeDraft.id);
+    if (!recipe) return;
+    if (!window.confirm(`Delete ${recipe.name} version ${version}?`)) return;
+    const nextRecipe = removeRecipeVersion(recipe, version);
+    setRecipes((current) => nextRecipe
+      ? current.map((item) => item.id === recipe.id ? nextRecipe : item)
+      : current.filter((item) => item.id !== recipe.id));
+    if (nextRecipe) {
+      setSelectedRecipeId(nextRecipe.id);
+      setRecipeDraft(normalizeRecipeIngredientUnits(nextRecipe));
+      setRecipeEditorMode("edit");
+      notify(`Version ${version} deleted. Version ${nextRecipe.version} is now current`);
+    } else {
+      setRecipeDraft(blankRecipe);
+      setSelectedRecipeId("");
+      setRecipeEditorMode("edit");
+      notify("The recipe and its final version were deleted");
+    }
   }
 
   function deleteRecipe() {
@@ -6282,9 +6322,11 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
       return;
     }
     if (!recipeDraft.id) return;
+    if (!window.confirm(`Delete ${recipeDraft.name} and all saved versions?`)) return;
     setRecipes((current) => current.filter((recipe) => recipe.id !== recipeDraft.id));
     setRecipeDraft(blankRecipe);
     setSelectedRecipeId("");
+    setRecipeEditorMode("edit");
     notify("Recipe deleted");
   }
 
@@ -6552,6 +6594,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
       switchProductionTab("Recipes");
       setRecipeDraft(blankRecipe);
       setSelectedRecipeId("");
+      setRecipeEditorMode("edit");
     }
     if (action === "Plan") switchProductionTab("Planning");
     if (action === "Reports") switchProductionTab("Reports");
@@ -6579,16 +6622,31 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
             {!!recipes.length && <div className="module-list production-recipe-strip">{recipes.map((recipe) => <button key={recipe.id} className={recipe.id === selectedRecipeId ? "active-module" : ""} onClick={() => openRecipe(recipe)}><span>{recipe.name}</span><strong>v{recipe.version}</strong></button>)}</div>}
             {!recipes.length && <div className="production-empty-strip"><ChefHat size={18} /><strong>No recipes yet</strong><span>Create a recipe to start building your production master.</span></div>}
             <div className="production-editor">
+              {versionedRecipe && (
+                <section className="recipe-version-panel">
+                  <div className="recipe-version-heading">
+                    <div><History size={18} /><div><strong>Recipe versions</strong><span>Open any saved version. Editing an older version creates a new latest version.</span></div></div>
+                    <span className="recipe-version-count">{recipeVersions.length} version{recipeVersions.length === 1 ? "" : "s"}</span>
+                  </div>
+                  <div className="production-table recipe-version-table">
+                    <table>
+                      <thead><tr><th>Version</th><th>Changed</th><th>Changed by</th><th>Ingredients</th><th>Output</th><th>Actions</th></tr></thead>
+                      <tbody>{recipeVersions.map((snapshot, index) => <tr key={`${versionedRecipe.id}-v${snapshot.version}`} className={Number(recipeDraft.version) === snapshot.version ? "selected-row" : ""}><td><strong>v{snapshot.version}</strong>{index === 0 && <span className="active-chip recipe-current-chip">Current</span>}</td><td>{snapshot.changedAt || "-"}</td><td>{snapshot.changedBy || "-"}</td><td>{snapshot.ingredients?.length || 0}</td><td>{snapshot.outputQty || 0} {snapshot.outputUnit || "portion"}</td><td><div className="row-actions recipe-version-actions"><button type="button" onClick={() => openRecipeVersion(versionedRecipe, snapshot, "view")}><Eye size={15} /> View</button>{canManageAll && <button type="button" onClick={() => openRecipeVersion(versionedRecipe, snapshot, "edit")}><Pencil size={15} /> Edit</button>}{canManageAll && <button type="button" className="delete" onClick={() => deleteVersion(snapshot.version)}><Trash2 size={15} /> Delete</button>}</div></td></tr>)}</tbody>
+                    </table>
+                  </div>
+                </section>
+              )}
+              {versionedRecipe && <div className={`recipe-editor-status ${recipeEditorMode}`}><History size={16} /><span>{recipeEditorMode === "view" ? `Viewing ${versionedRecipe.name} v${recipeDraft.version}. Choose Edit to change this version.` : Number(recipeDraft.version) < Number(versionedRecipe.version) ? `Editing historical v${recipeDraft.version}. Save will create v${Number(versionedRecipe.version) + 1}.` : `Editing current version v${recipeDraft.version}.`}</span></div>}
               <div className="production-form recipe-master-form">
-                <label>Recipe name<input value={recipeDraft.name} onChange={(event) => updateRecipe("name", event.target.value)} disabled={!canManageAll} placeholder="Chicken Biryani" /></label>
+                <label>Recipe name<input value={recipeDraft.name} onChange={(event) => updateRecipe("name", event.target.value)} disabled={recipeLocked} placeholder="Chicken Biryani" /></label>
                 <div className="production-category-field">
                   <div className="production-category-head">
                     <span>Category</span>
-                    <button className="production-add-category" type="button" onClick={() => setCategoryCreatorOpen((open) => !open)} disabled={!canManageAll} aria-expanded={categoryCreatorOpen}>
+                    <button className="production-add-category" type="button" onClick={() => setCategoryCreatorOpen((open) => !open)} disabled={recipeLocked} aria-expanded={categoryCreatorOpen}>
                       <Plus size={14} /> New category
                     </button>
                   </div>
-                  <select value={recipeDraft.category} onChange={(event) => updateRecipe("category", event.target.value)} disabled={!canManageAll}>{recipeCategories.map((category) => <option key={category}>{category}</option>)}</select>
+                  <select value={recipeDraft.category} onChange={(event) => updateRecipe("category", event.target.value)} disabled={recipeLocked}>{recipeCategories.map((category) => <option key={category}>{category}</option>)}</select>
                   {categoryCreatorOpen && (
                     <div className="production-inline-category">
                       <input value={categoryDraft} onChange={(event) => setCategoryDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); createRecipeCategory(); } }} placeholder="New category name" autoFocus />
@@ -6597,10 +6655,10 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
                     </div>
                   )}
                 </div>
-                <label>Portion<select value={recipeDraft.portion} onChange={(event) => updateRecipe("portion", event.target.value)} disabled={!canManageAll}>{Array.from(new Set([...productionPortionOptions, recipeDraft.portion].filter(Boolean))).map((portion) => <option key={portion}>{portion}</option>)}</select></label>
-                <label>Output<input type="number" min="1" value={recipeDraft.outputQty} onChange={(event) => updateRecipe("outputQty", event.target.value)} disabled={!canManageAll} /></label>
-                <label>Output unit<select value={recipeDraft.outputUnit} onChange={(event) => updateRecipe("outputUnit", event.target.value)} disabled={!canManageAll}>{Array.from(new Set([...productionOutputUnits, recipeDraft.outputUnit].filter(Boolean))).map((unit) => <option key={unit}>{unit}</option>)}</select></label>
-                <label>Selling price<input type="number" min="0" value={recipeDraft.sellingPrice} onChange={(event) => updateRecipe("sellingPrice", event.target.value)} disabled={!canManageAll} /></label>
+                <label>Portion<select value={recipeDraft.portion} onChange={(event) => updateRecipe("portion", event.target.value)} disabled={recipeLocked}>{Array.from(new Set([...productionPortionOptions, recipeDraft.portion].filter(Boolean))).map((portion) => <option key={portion}>{portion}</option>)}</select></label>
+                <label>Output<input type="number" min="1" value={recipeDraft.outputQty} onChange={(event) => updateRecipe("outputQty", event.target.value)} disabled={recipeLocked} /></label>
+                <label>Output unit<select value={recipeDraft.outputUnit} onChange={(event) => updateRecipe("outputUnit", event.target.value)} disabled={recipeLocked}>{Array.from(new Set([...productionOutputUnits, recipeDraft.outputUnit].filter(Boolean))).map((unit) => <option key={unit}>{unit}</option>)}</select></label>
+                <label>Selling price<input type="number" min="0" value={recipeDraft.sellingPrice} onChange={(event) => updateRecipe("sellingPrice", event.target.value)} disabled={recipeLocked} /></label>
               </div>
               <div className="production-cost-strip">
                 <span>Cost per portion <strong>{formatMoney(recipeCost)}</strong></span>
@@ -6618,20 +6676,20 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
                     const lineCost = unitsMatch ? toBaseQuantity(item.qty, item.unit) * ingredientCostPerBase(stockItem) : 0;
                     return (
                       <tr key={`${item.name}-${index}`}>
-                        <td><select value={item.name} onChange={(event) => selectRecipeIngredient(index, event.target.value)} disabled={!canManageAll}><option value="">Select item</option>{inventory.map((ingredient) => <option key={ingredient.id} value={ingredient.name}>{ingredient.name} ({ingredient.stock} {ingredient.unit})</option>)}</select></td>
-                        <td><input type="number" min="0" value={item.qty} onChange={(event) => updateIngredient(index, "qty", event.target.value)} disabled={!canManageAll} /></td>
-                        <td><select value={item.unit} onChange={(event) => updateIngredient(index, "unit", event.target.value)} disabled={!canManageAll}>{compatibleUnits.map((unit) => <option key={unit}>{unit}</option>)}</select></td>
+                        <td><select value={item.name} onChange={(event) => selectRecipeIngredient(index, event.target.value)} disabled={recipeLocked}><option value="">Select item</option>{inventory.map((ingredient) => <option key={ingredient.id} value={ingredient.name}>{ingredient.name} ({ingredient.stock} {ingredient.unit})</option>)}</select></td>
+                        <td><input type="number" min="0" value={item.qty} onChange={(event) => updateIngredient(index, "qty", event.target.value)} disabled={recipeLocked} /></td>
+                        <td><select value={item.unit} onChange={(event) => updateIngredient(index, "unit", event.target.value)} disabled={recipeLocked}>{compatibleUnits.map((unit) => <option key={unit}>{unit}</option>)}</select></td>
                         <td>{unitsMatch ? `${Number(availableQty.toFixed(3))} ${item.unit}` : stockItem ? "Choose a matching unit" : "-"}</td>
                         <td>{formatMoney(lineCost)}</td>
-                        <td><button disabled={!canManageAll} onClick={() => setRecipeDraft((current) => ({ ...current, ingredients: current.ingredients.filter((_, itemIndex) => itemIndex !== index) }))}>Remove</button></td>
+                        <td><button disabled={recipeLocked} onClick={() => setRecipeDraft((current) => ({ ...current, ingredients: current.ingredients.filter((_, itemIndex) => itemIndex !== index) }))}>Remove</button></td>
                       </tr>
                     );
                   })}</tbody>
                 </table>
               </div>
               <div className="production-actions">
-                <button disabled={!canManageAll} onClick={() => setRecipeDraft((current) => ({ ...current, ingredients: [...current.ingredients, { name: "", qty: 1, unit: "g" }] }))}>Add ingredient</button>
-                <button disabled={!canManageAll} onClick={saveRecipe}>Save recipe</button>
+                <button disabled={recipeLocked} onClick={() => setRecipeDraft((current) => ({ ...current, ingredients: [...current.ingredients, { name: "", qty: 1, unit: "g" }] }))}>Add ingredient</button>
+                <button disabled={recipeLocked} onClick={saveRecipe}>Save as new version</button>
                 <button disabled={!canManageAll || !recipeDraft.id} onClick={deleteRecipe}>Delete recipe</button>
               </div>
             </div>
