@@ -33,9 +33,9 @@ from .models import (
 
 
 @admin.register(User)
-class VestoraUserAdmin(UserAdmin):
+class UvproUserAdmin(UserAdmin):
     fieldsets = UserAdmin.fieldsets + (
-        ("VESTORA", {"fields": ("restaurant", "branches", "role", "user_type", "mobile", "two_factor_enabled", "custom_permissions")}),
+        ("UVPRO", {"fields": ("restaurant", "branches", "role", "user_type", "mobile", "two_factor_enabled", "custom_permissions")}),
     )
 
 

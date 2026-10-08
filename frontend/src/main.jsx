@@ -97,7 +97,7 @@ function publicAssetPath(path) {
   return `${cleanBase}${cleanPath}`;
 }
 
-const vestoraLogoPath = publicAssetPath("uvpro-logo-red.png");
+const uvproLogoPath = publicAssetPath("uvpro-logo-red.png");
 
 const modules = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -414,7 +414,7 @@ const settingsSectionConfig = {
     description: "UPI, card, wallet, and payment terminal settings.",
     action: "Test payment",
     fields: [["upiId", "UPI ID"], ["terminal", "Card terminal"], ["wallets", "Wallets"], ["settlement", "Settlement account"]],
-    defaults: { upiId: "vestora@upi", terminal: "PineLabs Counter 1", wallets: "Paytm, PhonePe, GPay", settlement: "HDFC Current Account" },
+    defaults: { upiId: "uvpro@upi", terminal: "PineLabs Counter 1", wallets: "Paytm, PhonePe, GPay", settlement: "HDFC Current Account" },
   },
   "Integrations": {
     description: "Configure branch-level delivery outlets, menu mappings, stock, kitchen tickets, and test order flows.",
@@ -426,7 +426,7 @@ const settingsSectionConfig = {
     description: "Cloud backup storage for bills, reports, and uploads.",
     action: "Test R2",
     fields: [["bucket", "Bucket"], ["endpoint", "Endpoint"], ["accessKey", "Access key"], ["backupPath", "Backup path"]],
-    defaults: { bucket: "vestora-backups", endpoint: "https://r2.cloudflare.com", accessKey: "Configured", backupPath: "/demo-spice/indiranagar" },
+    defaults: { bucket: "uvpro-backups", endpoint: "https://r2.cloudflare.com", accessKey: "Configured", backupPath: "/demo-spice/indiranagar" },
   },
   "WhatsApp templates": {
     description: "Customer bill, order ready, and campaign messages.",
@@ -544,7 +544,7 @@ const defaultBillTemplate = {
   restaurantName: "Demo Spice House",
   address: "Indiranagar, Bengaluru",
   phone: "+91 90000 11111",
-  email: "hello@vestora.test",
+  email: "hello@uvpro.in",
   gst: "27ABCDE1234F1Z5",
   fssai: "10019064001234",
   billTitle: "TAX INVOICE",
@@ -2317,7 +2317,7 @@ function AuthenticatedApp() {
       {subscriptionWarning}
       <aside id="primary-navigation" className={sidebarOpen ? "sidebar" : "sidebar collapsed"}>
         <div className="brand">
-          <img src={vestoraLogoPath} alt="" />
+          <img src={uvproLogoPath} alt="" />
           {sidebarOpen && <div><strong>UVPRO</strong><span>ERP & POS</span></div>}
         </div>
         <nav>
@@ -2605,7 +2605,7 @@ function SubscriptionExpiredScreen({ activeStore, expiresAt, onLogout }) {
     <div className="login-screen subscription-expired-screen">
       <div className="login-card subscription-expired-card">
         <div className="login-brand-panel">
-          <img src={vestoraLogoPath} alt="" />
+          <img src={uvproLogoPath} alt="" />
           <div><span>UVPRO ERP & POS</span><h1>Renewal required</h1><p>{activeStore?.name || "This store"}{activeStore?.branch ? ` / ${activeStore.branch}` : ""}</p></div>
         </div>
         <div className="subscription-expired-message">
@@ -2667,7 +2667,7 @@ function LoginScreen({ onLogin }) {
     <div className="login-screen">
       <form className="login-card" onSubmit={login}>
         <div className="login-brand-panel">
-          <img src={vestoraLogoPath} alt="" />
+          <img src={uvproLogoPath} alt="" />
           <div>
             <span>UVPRO ERP & POS</span>
             <h1>Staff sign in</h1>
@@ -2952,7 +2952,7 @@ function SuperAdminStoreLanding({ stores, setStores, users = [], activeStore, st
     <div className="super-admin-landing">
       <header className="super-admin-landing-head">
         <div className="super-admin-brand">
-          <img src={vestoraLogoPath} alt="" />
+          <img src={uvproLogoPath} alt="" />
           <div>
             <strong>UVPRO</strong>
             <span>Super Admin Store Access</span>
@@ -3198,7 +3198,7 @@ function SupplierPortal({ currentUser, orders, setOrders, onLogout }) {
   return (
     <div className="supplier-app">
       <header className="supplier-topbar">
-        <div className="supplier-brand"><img src={vestoraLogoPath} alt="" /><div><strong>UVPRO Supplier Portal</strong><span>{currentUser.name}</span></div></div>
+        <div className="supplier-brand"><img src={uvproLogoPath} alt="" /><div><strong>UVPRO Supplier Portal</strong><span>{currentUser.name}</span></div></div>
         <div className="supplier-actions"><span className="pill role-pill">Supplier</span><button className="icon-btn" onClick={onLogout} title="Logout"><LogOut size={18} /></button></div>
       </header>
       <main className="supplier-main">
@@ -3906,7 +3906,7 @@ function CashierLogin({ cashiers, activeStore, stores = [], currentShift, onAuth
       <div className="cashier-login-card">
         <header className="cashier-login-head">
           <div className="pos-brand-lockup">
-            <img src={vestoraLogoPath} alt="" />
+            <img src={uvproLogoPath} alt="" />
             <div><p>UVPRO POS</p><h1>Cashier login</h1></div>
           </div>
           <div className="cashier-login-actions">
@@ -3981,7 +3981,7 @@ function ShiftOpening({ online, onOpenShift, onExit, onLogout, cashier }) {
     <section className="shift-open-screen">
       <form className="shift-card" onSubmit={submit}>
         <div className="shift-card-head">
-          <img src={vestoraLogoPath} alt="" />
+          <img src={uvproLogoPath} alt="" />
           <div>
             <p>UVPRO POS</p>
             <h1>Open shift</h1>
@@ -4016,7 +4016,7 @@ function ShiftOpening({ online, onOpenShift, onExit, onLogout, cashier }) {
 }
 
 function BillReceiptHeader({ billTemplate }) {
-  const logo = billTemplate.logoData || vestoraLogoPath;
+  const logo = billTemplate.logoData || uvproLogoPath;
   const headerClass = `bill-title ${billTemplate.logoPosition === "Center" ? "centered" : ""} ${billTemplate.layout === "Compact" ? "compact" : ""}`;
   return (
     <div className={headerClass}>
@@ -4563,7 +4563,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
     <section className="pos-screen">
       <div className="pos-page-header">
         <div className="pos-brand-lockup">
-          <img src={vestoraLogoPath} alt="" />
+          <img src={uvproLogoPath} alt="" />
           <div>
             <p>UVPRO POS</p>
             <h1>POS Billing</h1>
@@ -5765,7 +5765,7 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `vestora-inventory-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `uvpro-inventory-${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
     URL.revokeObjectURL(url);
     notify("Inventory exported as CSV");
@@ -6541,7 +6541,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `vestora-${reportName.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/(^-|-$)/g, "")}-${today}.csv`;
+    link.download = `uvpro-${reportName.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/(^-|-$)/g, "")}-${today}.csv`;
     link.click();
     URL.revokeObjectURL(url);
     notify(`${reportName} exported as CSV`);
@@ -7511,7 +7511,7 @@ function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId
             <button onClick={openNewExpense}><Plus size={18} />Add expense</button>
             <button className={filtersOpen ? "active-action" : ""} onClick={() => setFiltersOpen((open) => !open)}><SlidersHorizontal size={18} />Filter</button>
             <button className={rangeOpen ? "active-action" : ""} onClick={() => setRangeOpen((open) => !open)}><CalendarClock size={18} />Date range</button>
-            <button onClick={() => downloadCsv("vestora-expenses.csv", ["Date", "Purpose", "Debited account", "Credited account", "Amount", "Status", "Reference", "Note"], filteredExpenses.map((expense) => ({ Date: expense.date, Purpose: expense.category, "Debited account": expense.debitAccount || expenseAccountForPurpose(expense.category), "Credited account": expense.creditAccount || expense.paidFrom, Amount: expense.amount, Status: expense.status, Reference: expense.reference, Note: expense.note })))}><Download size={18} />Export</button>
+            <button onClick={() => downloadCsv("uvpro-expenses.csv", ["Date", "Purpose", "Debited account", "Credited account", "Amount", "Status", "Reference", "Note"], filteredExpenses.map((expense) => ({ Date: expense.date, Purpose: expense.category, "Debited account": expense.debitAccount || expenseAccountForPurpose(expense.category), "Credited account": expense.creditAccount || expense.paidFrom, Amount: expense.amount, Status: expense.status, Reference: expense.reference, Note: expense.note })))}><Download size={18} />Export</button>
           </div>
         </div>
 
@@ -7890,7 +7890,7 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     <Metric icon={ReceiptText} label="Total debits" value={formatMoney(ledgerRows.reduce((sum, item) => sum + item.debit, 0))} trend="Selected ledger period" />
     <Metric icon={CreditCard} label="Total credits" value={formatMoney(ledgerRows.reduce((sum, item) => sum + item.credit, 0))} trend="Selected ledger period" />
     <Metric icon={ClipboardList} label="Ledger entries" value={ledgerRows.length} trend="Receipts, expenses, vendor payments, journals" />
-  </div><section className="panel finance-workspace"><div className="panel-head finance-head"><div><BookOpen /><h2>General ledger</h2></div><div className="finance-actions ledger-toolbar"><button className="ledger-toolbar-primary" onClick={() => { if (!canManageAll) return notify("Only an administrator can create ledgers"); setLedgerMasterOpen(true); setLedgerFormOpen(false); }}><Plus size={18} />Create ledger</button><button className="ledger-toolbar-primary" onClick={() => { if (!canManageAll) return notify("Only an administrator can create ledger entries"); setLedgerFormOpen(true); setLedgerMasterOpen(false); }}><ClipboardList size={18} />Post journal entry</button><button className={filtersOpen ? "active-action" : ""} onClick={() => setFiltersOpen((open) => !open)}><SlidersHorizontal size={18} />Filter</button><button className={rangeOpen ? "active-action" : ""} onClick={() => setRangeOpen((open) => !open)}><CalendarClock size={18} />Date range</button><button onClick={() => downloadCsv("vestora-general-ledger.csv", ["Date", "Account", "Source", "Reference", "Details", "Debit", "Credit", "Balance"], ledgerRows.map((item) => ({ Date: item.date, Account: item.account, Source: item.source, Reference: item.reference, Details: item.details, Debit: item.debit, Credit: item.credit, Balance: item.balance })))}><Download size={18} />Export</button></div></div>
+  </div><section className="panel finance-workspace"><div className="panel-head finance-head"><div><BookOpen /><h2>General ledger</h2></div><div className="finance-actions ledger-toolbar"><button className="ledger-toolbar-primary" onClick={() => { if (!canManageAll) return notify("Only an administrator can create ledgers"); setLedgerMasterOpen(true); setLedgerFormOpen(false); }}><Plus size={18} />Create ledger</button><button className="ledger-toolbar-primary" onClick={() => { if (!canManageAll) return notify("Only an administrator can create ledger entries"); setLedgerFormOpen(true); setLedgerMasterOpen(false); }}><ClipboardList size={18} />Post journal entry</button><button className={filtersOpen ? "active-action" : ""} onClick={() => setFiltersOpen((open) => !open)}><SlidersHorizontal size={18} />Filter</button><button className={rangeOpen ? "active-action" : ""} onClick={() => setRangeOpen((open) => !open)}><CalendarClock size={18} />Date range</button><button onClick={() => downloadCsv("uvpro-general-ledger.csv", ["Date", "Account", "Source", "Reference", "Details", "Debit", "Credit", "Balance"], ledgerRows.map((item) => ({ Date: item.date, Account: item.account, Source: item.source, Reference: item.reference, Details: item.details, Debit: item.debit, Credit: item.credit, Balance: item.balance })))}><Download size={18} />Export</button></div></div>
     {ledgerMasterOpen && <form className="finance-expense-form ledger-master-form" onSubmit={saveLedgerMaster}><div className="finance-form-title"><div><span>Ledger master</span><h3>Create ledger account</h3></div><button type="button" className="icon-action" title="Close ledger form" onClick={() => setLedgerMasterOpen(false)}><X size={18} /></button></div><label>Auto code<input value={ledgerMasterDraft.code} readOnly /></label><label>Ledger name<input autoFocus placeholder="Bank Charges" value={ledgerMasterDraft.name} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, name: event.target.value }))} required /></label><label>Account type<select value={ledgerMasterDraft.type} onChange={(event) => updateLedgerMasterType(event.target.value)}>{Object.keys(financeLedgerGroups).map((type) => <option key={type}>{type}</option>)}</select></label><label>Group<select value={ledgerMasterDraft.group} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, group: event.target.value }))}>{(financeLedgerGroups[ledgerMasterDraft.type] || []).map((group) => <option key={group}>{group}</option>)}</select></label><label>Status<select value={ledgerMasterDraft.status} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, status: event.target.value }))}><option>Active</option><option>Inactive</option></select></label><div className="finance-form-actions"><button type="button" onClick={() => setLedgerMasterOpen(false)}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />Save ledger</button></div></form>}
     {ledgerFormOpen && <form className="finance-expense-form journal-entry-form" onSubmit={saveLedgerEntry}><div className="finance-form-title"><div><span>Manual journal</span><h3>Create balanced ledger entry</h3></div><button type="button" className="icon-action" title="Close ledger entry form" onClick={() => setLedgerFormOpen(false)}><X size={18} /></button></div>{renderJournalFields(ledgerDraft, (patch) => setLedgerDraft((current) => ({ ...current, ...patch })), true)}<label className="finance-note">Notes<input placeholder="Optional note for this journal" value={ledgerDraft.note} onChange={(event) => setLedgerDraft((current) => ({ ...current, note: event.target.value }))} /></label><div className="finance-form-actions"><button type="button" onClick={() => setLedgerFormOpen(false)}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />Post entry</button></div></form>}
     {(filtersOpen || rangeOpen) && <div className="finance-filter-row ledger-filter-panel">{filtersOpen && <label className="finance-search"><Search size={18} /><input placeholder="Search account, reference, or details" value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>}{rangeOpen && <><label>Start date<input type="date" value={filters.from} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} /></label><label>End date<input type="date" value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} /></label></>}<button className="text-action" onClick={() => setFilters({ query: "", method: "All", status: "All", from: "", to: "" })}>Clear filters</button></div>}
@@ -7902,9 +7902,9 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     <Metric icon={DatabaseZap} label="Expenses" value={formatMoney(expenseTotal)} trend={`${expenses.length} expense records`} />
     <Metric icon={ClipboardList} label="Journal value" value={formatMoney(journalTotal)} trend={`${reportRecords.journals.length} journal entries`} />
     <Metric icon={BadgeIndianRupee} label="Vendor paid" value={formatMoney(vendorPaymentTotal)} trend={`${reportRecords.vendors.length} vendor payments`} />
-  </div><section className="panel finance-workspace"><div className="panel-head finance-head"><div><FileBarChart /><h2>Finance reports</h2></div><button onClick={() => downloadCsv("vestora-finance-report.csv", ["Date", "Type", "Reference", "Details", "Method", "Amount", "Status"], reportRows.map((item) => ({ Date: item.date, Type: item.type, Reference: item.reference, Details: item.details, Method: item.method, Amount: item.amount, Status: item.status })))}><Download size={18} />Export</button></div><div className="finance-summary"><span>Cash collected <strong>{formatMoney(cashCollected)}</strong></span><span>Receivables <strong>{formatMoney(receivables)}</strong></span><span>Bank accounts <strong>{reportRecords.banks.length}</strong></span><span>Net GST <strong>{formatMoney(netGst)}</strong></span></div><div className="finance-table-wrap"><table className="finance-table"><thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Details</th><th>Method</th><th>Amount</th><th>Status</th></tr></thead><tbody>{reportRows.length ? reportRows.map((item, index) => <tr key={`${item.type}-${item.reference}-${index}`}><td>{item.date || "-"}</td><td>{item.type}</td><td>{item.reference}</td><td>{item.details}</td><td>{item.method}</td><td>{formatMoney(item.amount)}</td><td><span className={`status-pill ${String(item.status).toLowerCase()}`}>{item.status}</span></td></tr>) : <tr><td colSpan="7" className="finance-empty">No finance activity recorded yet.</td></tr>}</tbody></table></div></section></section>;
+  </div><section className="panel finance-workspace"><div className="panel-head finance-head"><div><FileBarChart /><h2>Finance reports</h2></div><button onClick={() => downloadCsv("uvpro-finance-report.csv", ["Date", "Type", "Reference", "Details", "Method", "Amount", "Status"], reportRows.map((item) => ({ Date: item.date, Type: item.type, Reference: item.reference, Details: item.details, Method: item.method, Amount: item.amount, Status: item.status })))}><Download size={18} />Export</button></div><div className="finance-summary"><span>Cash collected <strong>{formatMoney(cashCollected)}</strong></span><span>Receivables <strong>{formatMoney(receivables)}</strong></span><span>Bank accounts <strong>{reportRecords.banks.length}</strong></span><span>Net GST <strong>{formatMoney(netGst)}</strong></span></div><div className="finance-table-wrap"><table className="finance-table"><thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Details</th><th>Method</th><th>Amount</th><th>Status</th></tr></thead><tbody>{reportRows.length ? reportRows.map((item, index) => <tr key={`${item.type}-${item.reference}-${index}`}><td>{item.date || "-"}</td><td>{item.type}</td><td>{item.reference}</td><td>{item.details}</td><td>{item.method}</td><td>{formatMoney(item.amount)}</td><td><span className={`status-pill ${String(item.status).toLowerCase()}`}>{item.status}</span></td></tr>) : <tr><td colSpan="7" className="finance-empty">No finance activity recorded yet.</td></tr>}</tbody></table></div></section></section>;
 
-  return <section className="screen"><div className="metric-grid compact"><Metric icon={BadgeIndianRupee} label="Net sales" value={formatMoney(netSales)} trend="POS sales after refunds" /><Metric icon={CreditCard} label="Cash collected" value={formatMoney(cashCollected)} trend="POS cash payments" /><Metric icon={DatabaseZap} label="Expenses" value={formatMoney(expenseTotal)} trend={`${expenses.length} expense records`} /><Metric icon={ReceiptText} label="Receivables" value={formatMoney(receivables)} trend="Credit due" /></div><section className="panel finance-workspace"><div className="panel-head finance-head"><div>{view === "Receipts" ? <ReceiptText /> : view === "Bank Accounts" ? <CreditCard /> : view === "Vendor Payments" ? <BadgeIndianRupee /> : <ClipboardList />}<h2>{title}</h2></div><div className="finance-actions"><button onClick={openNew}><Plus size={18} />{view === "Receipts" ? "Record receipt" : view === "Bank Accounts" ? "Add bank account" : view === "Vendor Payments" ? "Record vendor payment" : "Record journal"}</button><button className={filtersOpen ? "active-action" : ""} onClick={() => setFiltersOpen((open) => !open)}><SlidersHorizontal size={18} />Filter</button>{view !== "Bank Accounts" && <button className={rangeOpen ? "active-action" : ""} onClick={() => setRangeOpen((open) => !open)}><CalendarClock size={18} />Date range</button>}<button onClick={() => downloadCsv(`vestora-${view.toLowerCase().replaceAll(" ", "-")}.csv`, financeExportColumns, filtered)}><Download size={18} />Export</button></div></div>
+  return <section className="screen"><div className="metric-grid compact"><Metric icon={BadgeIndianRupee} label="Net sales" value={formatMoney(netSales)} trend="POS sales after refunds" /><Metric icon={CreditCard} label="Cash collected" value={formatMoney(cashCollected)} trend="POS cash payments" /><Metric icon={DatabaseZap} label="Expenses" value={formatMoney(expenseTotal)} trend={`${expenses.length} expense records`} /><Metric icon={ReceiptText} label="Receivables" value={formatMoney(receivables)} trend="Credit due" /></div><section className="panel finance-workspace"><div className="panel-head finance-head"><div>{view === "Receipts" ? <ReceiptText /> : view === "Bank Accounts" ? <CreditCard /> : view === "Vendor Payments" ? <BadgeIndianRupee /> : <ClipboardList />}<h2>{title}</h2></div><div className="finance-actions"><button onClick={openNew}><Plus size={18} />{view === "Receipts" ? "Record receipt" : view === "Bank Accounts" ? "Add bank account" : view === "Vendor Payments" ? "Record vendor payment" : "Record journal"}</button><button className={filtersOpen ? "active-action" : ""} onClick={() => setFiltersOpen((open) => !open)}><SlidersHorizontal size={18} />Filter</button>{view !== "Bank Accounts" && <button className={rangeOpen ? "active-action" : ""} onClick={() => setRangeOpen((open) => !open)}><CalendarClock size={18} />Date range</button>}<button onClick={() => downloadCsv(`uvpro-${view.toLowerCase().replaceAll(" ", "-")}.csv`, financeExportColumns, filtered)}><Download size={18} />Export</button></div></div>
     {(filtersOpen || rangeOpen) && <div className="finance-filter-row">{filtersOpen && <><label className="finance-search"><Search size={18} /><input placeholder={`Search ${title.toLowerCase()}`} value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>{["Receipts", "Vendor Payments"].includes(view) && <label>Debit / credit account<select value={filters.method} onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value }))}><option>All</option>{accountNames.map((account) => <option key={account}>{account}</option>)}</select></label>}<label>Status<select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option>All</option>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label></>}{rangeOpen && <><label>Start date<input type="date" value={filters.from} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} /></label><label>End date<input type="date" value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} /></label></>}<button className="text-action" onClick={() => setFilters({ query: "", method: "All", status: "All", from: "", to: "" })}>Clear filters</button></div>}
     {ledgerMasterOpen && <form className="finance-expense-form ledger-master-form" onSubmit={saveLedgerMaster}><div className="finance-form-title"><div><span>Ledger master</span><h3>Create ledger account</h3></div><button type="button" className="icon-action" title="Close ledger form" onClick={() => setLedgerMasterOpen(false)}><X size={18} /></button></div><label>Auto code<input value={ledgerMasterDraft.code} readOnly /></label><label>Ledger name<input autoFocus placeholder="Bank Charges" value={ledgerMasterDraft.name} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, name: event.target.value }))} required /></label><label>Account type<select value={ledgerMasterDraft.type} onChange={(event) => updateLedgerMasterType(event.target.value)}>{Object.keys(financeLedgerGroups).map((type) => <option key={type}>{type}</option>)}</select></label><label>Group<select value={ledgerMasterDraft.group} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, group: event.target.value }))}>{(financeLedgerGroups[ledgerMasterDraft.type] || []).map((group) => <option key={group}>{group}</option>)}</select></label><label>Status<select value={ledgerMasterDraft.status} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, status: event.target.value }))}><option>Active</option><option>Inactive</option></select></label><div className="finance-form-actions"><button type="button" onClick={() => setLedgerMasterOpen(false)}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />Save ledger</button></div></form>}
     {formOpen && <form className={`finance-expense-form ${view === "Journal Entries" ? "journal-entry-form" : ""}`} onSubmit={saveRecord}><div className="finance-form-title"><div><span>{editingId ? `Update ${singular.toLowerCase()}` : `New ${singular.toLowerCase()}`}</span><strong>{title}</strong></div><button type="button" className="icon-button" title="Close form" onClick={resetForm}><X size={18} /></button></div>{view === "Receipts" && <><label>Customer<input autoFocus placeholder="Customer name" value={draft.customer} onChange={(event) => setValue("customer", event.target.value)} /></label><label>Purpose / received for<select value={draft.purpose || "Food sales"} onChange={(event) => setValue("purpose", event.target.value)}>{financeReceiptPurposes.map((purpose) => <option key={purpose}>{purpose}</option>)}</select></label><label>Debited account / received into<select value={draft.debitAccount || draft.method || "Cash"} onChange={(event) => { setValue("debitAccount", event.target.value); setValue("method", event.target.value); }}>{financeOptions(accountNames, draft.debitAccount || draft.method).map((account) => <option key={account}>{account}</option>)}</select></label><label>Credited account<select value={draft.creditAccount || "Sales"} onChange={(event) => setValue("creditAccount", event.target.value)}>{financeOptions(accountNames, draft.creditAccount || "Sales").map((account) => <option key={account}>{account}</option>)}</select></label><label>Amount<input type="number" min="0" step="0.01" value={draft.amount} onChange={(event) => setValue("amount", event.target.value)} /></label><label>Date<input type="date" value={draft.date} onChange={(event) => setValue("date", event.target.value)} /></label></>}{view === "Bank Accounts" && <><label>Account name<input autoFocus placeholder="Current account" value={draft.accountName} onChange={(event) => setValue("accountName", event.target.value)} /></label><label>Bank name<input placeholder="Bank name" value={draft.bankName} onChange={(event) => setValue("bankName", event.target.value)} /></label><label>Account number<input placeholder="Last four digits or account number" value={draft.accountNumber} onChange={(event) => setValue("accountNumber", event.target.value)} /></label><label>Opening balance<input type="number" step="0.01" value={draft.openingBalance} onChange={(event) => setValue("openingBalance", event.target.value)} /></label></>}{view === "Vendor Payments" && <><label>Vendor<input autoFocus placeholder="Supplier or vendor name" value={draft.vendor} onChange={(event) => setValue("vendor", event.target.value)} /></label><label>Purpose / paid for<select value={draft.purpose || "Supplier settlement"} onChange={(event) => setValue("purpose", event.target.value)}>{financeJournalPurposes.map((purpose) => <option key={purpose}>{purpose}</option>)}</select></label><label>Invoice no.<input placeholder="Supplier invoice number" value={draft.invoice} onChange={(event) => setValue("invoice", event.target.value)} /></label><label>Due amount<input type="number" min="0" step="0.01" value={draft.dueAmount} onChange={(event) => setValue("dueAmount", event.target.value)} /></label><label>Paid amount<input type="number" min="0" step="0.01" value={draft.amount} onChange={(event) => setValue("amount", event.target.value)} /></label><label>Debited account<select value={draft.debitAccount || "Accounts payable"} onChange={(event) => setValue("debitAccount", event.target.value)}>{financeOptions(accountNames, draft.debitAccount || "Accounts payable").map((account) => <option key={account}>{account}</option>)}</select></label><label>Credited account / paid from<select value={draft.creditAccount || draft.method || "Bank"} onChange={(event) => { setValue("creditAccount", event.target.value); setValue("method", event.target.value); }}>{financeOptions(accountNames, draft.creditAccount || draft.method).map((account) => <option key={account}>{account}</option>)}</select></label><label>Date<input type="date" value={draft.date} onChange={(event) => setValue("date", event.target.value)} /></label></>}{view === "Journal Entries" && renderJournalFields(draft, (patch) => setDraft((current) => ({ ...current, ...patch })), true)}<label>Status<select value={draft.status} onChange={(event) => setValue("status", event.target.value)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label><label>Reference<input placeholder="Invoice, voucher, or receipt number" value={draft.reference || ""} onChange={(event) => setValue("reference", event.target.value)} /></label><label className="finance-note">Notes<input placeholder="Optional note" value={draft.note} onChange={(event) => setValue("note", event.target.value)} /></label><div className="finance-form-actions"><button type="button" onClick={resetForm}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />{editingId ? "Save changes" : `Save ${singular.toLowerCase()}`}</button></div></form>}
@@ -7978,7 +7978,7 @@ function BillTemplateEditor({ billTemplate, setBillTemplate, notify }) {
           <section className="bill-editor-card">
             <div className="bill-editor-card-head"><strong>Branding</strong><span>Logo and restaurant identity</span></div>
             <div className="logo-upload-row">
-              <div className="logo-preview">{billTemplate.showLogo && <img src={billTemplate.logoData || vestoraLogoPath} alt="" />}</div>
+              <div className="logo-preview">{billTemplate.showLogo && <img src={billTemplate.logoData || uvproLogoPath} alt="" />}</div>
               <div>
                 <strong>Bill logo</strong>
                 <span>Upload restaurant logo for printed bills.</span>
@@ -9183,12 +9183,12 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
             <PanelHead title={editingId ? "Edit user" : "Create user"} icon={UserPlus} actions={["Close"]} onAction={closeUserEditor} />
             <div className="user-form">
               <p className="permission-note">Create staff accounts for {activeStore.id === "GLOBAL" ? "a selected branch" : storeLabel(activeStore)}. Select <strong>Cashier</strong> for POS billing staff.</p>
-              <label>Name<input name="vestora-new-staff-name" autoComplete="off" value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Employee name" /></label>
-              <label>Email<input name="vestora-new-staff-email" type="email" autoComplete="off" data-lpignore="true" data-1p-ignore="true" value={draft.email} onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} placeholder="user@restaurant.com" /></label>
+              <label>Name<input name="uvpro-new-staff-name" autoComplete="off" value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Employee name" /></label>
+              <label>Email<input name="uvpro-new-staff-email" type="email" autoComplete="off" data-lpignore="true" data-1p-ignore="true" value={draft.email} onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))} placeholder="user@restaurant.com" /></label>
               {activeStore.id === "GLOBAL" && <label>Branch<select value={draft.storeId} onChange={(event) => setDraft((current) => ({ ...current, storeId: event.target.value }))}><option value="">Select branch</option>{stores.filter((store) => store.status !== "Inactive").map((store) => <option key={store.id} value={store.id}>{store.name} — {store.branch}</option>)}</select></label>}
               <label>Password
                 <span className="password-field">
-                  <input name="vestora-new-staff-password" value={draft.password} type={showUserPassword ? "text" : "password"} autoComplete="new-password" data-lpignore="true" data-1p-ignore="true" onChange={(event) => setDraft((current) => ({ ...current, password: event.target.value }))} placeholder="Set login password" />
+                  <input name="uvpro-new-staff-password" value={draft.password} type={showUserPassword ? "text" : "password"} autoComplete="new-password" data-lpignore="true" data-1p-ignore="true" onChange={(event) => setDraft((current) => ({ ...current, password: event.target.value }))} placeholder="Set login password" />
                   <button type="button" onClick={() => setShowUserPassword((value) => !value)} title={showUserPassword ? "Hide password" : "Show password"}>
                     {showUserPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
@@ -9376,7 +9376,7 @@ function PrinterConnectionSetup({ printer, setPrinter, notify, canManage, purpos
         <em>{printer.type} / {printer.paper}</em>
       </div>
       <div className="kot-printer-fields">
-        <label>Printer name<input list={`vestora-${purpose}-printer-choices`} value={printer.name} onChange={(event) => update("name", event.target.value)} disabled={!canManage} placeholder="Select or enter printer name" /><datalist id={`vestora-${purpose}-printer-choices`}>{printerChoices.map((printer) => <option key={printer} value={printer} />)}</datalist></label>
+        <label>Printer name<input list={`uvpro-${purpose}-printer-choices`} value={printer.name} onChange={(event) => update("name", event.target.value)} disabled={!canManage} placeholder="Select or enter printer name" /><datalist id={`uvpro-${purpose}-printer-choices`}>{printerChoices.map((printer) => <option key={printer} value={printer} />)}</datalist></label>
         <label>Connection type<select value={printer.type} onChange={(event) => update("type", event.target.value)} disabled={!canManage}><option>Thermal LAN printer</option><option>USB thermal printer</option><option>Bluetooth printer</option><option>Windows default printer</option><option>QZ Tray</option></select></label>
         {printer.type === "QZ Tray" ? (
           <label>Installed printer<select value={printer.name} onChange={(event) => update("name", event.target.value)} disabled={!canManage}><option value="">Choose a printer</option>{qzPrinters.map((printer) => <option key={printer} value={printer}>{printer}</option>)}{!qzPrinters.includes(printer.name) && printer.name && <option value={printer.name}>{printer.name}</option>}</select></label>
@@ -10827,7 +10827,7 @@ function AttendanceModule({ notify, activeStore, stores = [], users, canManage, 
             <div className="attendance-report-actions">
               <label>Report month<input type="month" value={reportMonth} onChange={(event) => { setReportMonth(event.target.value); setLogFilters((current) => ({ ...current, date: "" })); }} /></label>
               <button onClick={() => {
-                downloadCsv(`vestora-attendance-report-${reportMonth}.csv`, ["employee", "code", "designation", "presentDays", "lateDays", "halfDays", "workedHours", "openShift"], reportRows);
+                downloadCsv(`uvpro-attendance-report-${reportMonth}.csv`, ["employee", "code", "designation", "presentDays", "lateDays", "halfDays", "workedHours", "openShift"], reportRows);
                 notify("Attendance report exported");
               }}><Download size={17} /> Export report</button>
             </div>
@@ -10868,7 +10868,7 @@ function AttendanceModule({ notify, activeStore, stores = [], users, canManage, 
               <p>Each row combines one employee's attendance for one date, including their Face ID punch details.</p>
             </div>
             <button onClick={() => {
-              downloadCsv(`vestora-attendance-records-${attendanceRecordRange.start || "all"}-to-${attendanceRecordRange.end || "all"}.csv`, ["date", "employeeName", "employeeCode", "checkIn", "checkOut", "workedTime", "status", "punchCount", "faceIdPunches", "recordedBy"], attendanceRecordRows.map((row) => ({
+              downloadCsv(`uvpro-attendance-records-${attendanceRecordRange.start || "all"}-to-${attendanceRecordRange.end || "all"}.csv`, ["date", "employeeName", "employeeCode", "checkIn", "checkOut", "workedTime", "status", "punchCount", "faceIdPunches", "recordedBy"], attendanceRecordRows.map((row) => ({
                 date: formatAttendanceDate(row.checkIn),
                 employeeName: row.employeeName,
                 employeeCode: row.employeeCode,
@@ -10933,7 +10933,7 @@ function AttendanceModule({ notify, activeStore, stores = [], users, canManage, 
             <div className="leave-request-actions"><button type="button" onClick={() => setLeaveForm({ employeeId: "", type: "Casual leave", from: "", to: "", reason: "" })}>Clear</button><button type="submit" className="primary-action">Submit request</button></div>
           </form>
           <div className="panel table-panel leave-request-list">
-            <PanelHead title="Leave requests" icon={CalendarClock} actions={["Export CSV"]} onAction={() => { downloadCsv(`vestora-leave-requests-${reportMonth}.csv`, ["employee", "type", "from", "to", "reason", "status"], leaveRequests); notify("Leave requests exported"); }} />
+            <PanelHead title="Leave requests" icon={CalendarClock} actions={["Export CSV"]} onAction={() => { downloadCsv(`uvpro-leave-requests-${reportMonth}.csv`, ["employee", "type", "from", "to", "reason", "status"], leaveRequests); notify("Leave requests exported"); }} />
             <table>
               <thead><tr><th>Employee</th><th>Leave</th><th>Dates</th><th>Reason</th><th>Status</th>{canManageAttendance && <th>Action</th>}</tr></thead>
               <tbody>{leaveRequests.map((request) => <tr key={request.id}><td>{request.employeeName}<br /><small>{request.employeeCode}</small></td><td>{request.type}</td><td>{request.from}<br /><small>to {request.to}</small></td><td>{request.reason}</td><td><span className={request.status === "Approved" ? "active-chip" : request.status === "Rejected" ? "danger-chip" : "attendance-open-chip"}>{request.status}</span></td>{canManageAttendance && <td>{request.status === "Pending" && <div className="leave-review-actions"><button onClick={() => updateLeaveStatus(request.id, "Approved")}>Approve</button><button className="danger-action" onClick={() => updateLeaveStatus(request.id, "Rejected")}>Reject</button></div>}</td>}</tr>)}</tbody>
@@ -10947,7 +10947,7 @@ function AttendanceModule({ notify, activeStore, stores = [], users, canManage, 
         <div className="payroll-summary-stack">
         <div className="panel table-panel">
           <PanelHead title="Payroll attendance summary" icon={FileDown} actions={["Export CSV"]} onAction={() => {
-            downloadCsv(`vestora-payroll-attendance-${reportMonth}.csv`, ["employee", "code", "presentDays", "absentDays", "halfDays", "lateCount", "overtimeHours", "payableDays", "monthlySalary", "overtimeRate", "overtimePay", "payableSalary"], payrollRows);
+            downloadCsv(`uvpro-payroll-attendance-${reportMonth}.csv`, ["employee", "code", "presentDays", "absentDays", "halfDays", "lateCount", "overtimeHours", "payableDays", "monthlySalary", "overtimeRate", "overtimePay", "payableSalary"], payrollRows);
             notify("Payroll summary exported");
           }} />
           <div className="attendance-filter-row payroll-summary-filter">

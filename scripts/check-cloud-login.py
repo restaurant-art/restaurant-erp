@@ -8,7 +8,7 @@ import psycopg
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument("--email", help="Inspect one account's safe login and shared-staff assignment fields.")
-parser.add_argument("--inactive", action="store_true", help="List only logins marked inactive in their VESTORA assignment.")
+parser.add_argument("--inactive", action="store_true", help="List only logins marked inactive in their UVPRO assignment.")
 args = parser.parse_args()
 url = dotenv_values(root / "backend/.env.supabase")["DATABASE_URL"]
 if "vqinmequtjkuzrtzkzsk" not in (urlparse(url).username or ""):

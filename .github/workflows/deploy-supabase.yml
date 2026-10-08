@@ -1,4 +1,4 @@
-name: Deploy VESTORA Supabase functions
+name: Deploy UVPRO Supabase functions
 
 on:
   push:

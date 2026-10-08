@@ -112,7 +112,7 @@ SIMPLE_JWT = {
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "VESTORA API",
+    "TITLE": "UVPRO API",
     "DESCRIPTION": "Multi-tenant restaurant ERP and POS API.",
     "VERSION": "1.0.0",
 }

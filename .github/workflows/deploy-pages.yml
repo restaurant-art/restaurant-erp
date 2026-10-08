@@ -1,4 +1,4 @@
-name: Deploy VESTORA to GitHub Pages
+name: Deploy UVPRO to GitHub Pages
 
 on:
   push:

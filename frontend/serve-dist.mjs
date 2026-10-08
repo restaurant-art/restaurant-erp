@@ -39,5 +39,5 @@ const server = createServer((request, response) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`VESTORA available at http://${host}:${port}/`);
+  console.log(`UVPRO available at http://${host}:${port}/`);
 });

@@ -28,7 +28,7 @@ from apps.core.models import (
 
 
 class Command(BaseCommand):
-    help = "Create demo data for VESTORA."
+    help = "Create demo data for UVPRO."
 
     def handle(self, *args, **options):
         User = get_user_model()
