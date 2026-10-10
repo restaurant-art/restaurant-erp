@@ -11,7 +11,7 @@ import {
   signSimulatorRequest,
   stockDeltasFor,
   verifySimulatorRequest,
-} from "../../../supabase/functions/_shared/delivery-domain.js";
+} from "./delivery-domain.js";
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 if (!globalThis.btoa) globalThis.btoa = (value) => Buffer.from(value, "binary").toString("base64");

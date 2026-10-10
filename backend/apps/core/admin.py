@@ -7,6 +7,7 @@ from .models import (
     AuditLog,
     Branch,
     Customer,
+    CloudState,
     DeviceLogin,
     EmployeeProfile,
     Expense,
@@ -18,6 +19,7 @@ from .models import (
     OrderItem,
     Payment,
     Printer,
+    PublicOrder,
     PurchaseOrder,
     ReportExport,
     Restaurant,
@@ -66,5 +68,7 @@ for model in [
     AuditLog,
     DeviceLogin,
     ReportExport,
+    CloudState,
+    PublicOrder,
 ]:
     admin.site.register(model)

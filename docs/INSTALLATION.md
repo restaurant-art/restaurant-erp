@@ -1,4 +1,4 @@
-# Installation Guide
+# Installation guide
 
 ## Local Docker
 
@@ -8,57 +8,56 @@ docker compose up --build
 docker compose exec backend python manage.py seed_demo
 ```
 
-Demo login:
+Open `http://localhost`. The demo login is `admin@demo.test` / `Demo@12345`.
 
-- Username: `admin@demo.test`
-- Password: `Demo@12345`
+## AWS production services
 
-## Backend Environment
+Use these managed services in one VPC:
 
-Set these values for production:
+- ECS/Fargate for the backend, frontend, and Celery worker containers.
+- RDS PostgreSQL 16 with automated backups and TLS required.
+- ElastiCache for Redis with in-transit encryption enabled.
+- S3 for private uploads, reports, and media.
+- Secrets Manager for `SECRET_KEY`, database credentials, QZ keys, and delivery-provider credentials.
+- An Application Load Balancer that routes `/api/*`, `/admin/*`, and `/ws/*` to the backend service and all other paths to the frontend service.
+- ACM for TLS and Route 53 for DNS.
+
+The ECS task role should grant only the required S3 object operations and access to the delivery secret prefix. Do not put long-lived AWS keys in the task environment.
+
+## Backend environment
+
+Required production values:
 
 - `SECRET_KEY`
 - `DEBUG=False`
 - `ALLOWED_HOSTS`
 - `CORS_ALLOWED_ORIGINS`
-- `DATABASE_URL`
-- `REDIS_URL`
-- `R2_ACCESS_KEY_ID`
-- `R2_SECRET_ACCESS_KEY`
-- `R2_BUCKET_NAME`
-- `R2_ENDPOINT_URL`
-- `R2_PUBLIC_URL`
+- `DATABASE_URL` using the RDS endpoint
+- `DATABASE_SSL_REQUIRE=True`
+- `REDIS_URL` using the ElastiCache endpoint
+- `AWS_REGION`
+- `AWS_STORAGE_BUCKET_NAME`
+- `AWS_DELIVERY_SECRETS_PREFIX`
+- `QZ_CERTIFICATE` and `QZ_KMS_KEY_ID` when QZ Tray signing is enabled
 
-Cloudflare R2 is configured through `django-storages` using the S3-compatible API. Uploaded menu images, restaurant logos, employee photos, customer images, bill PDFs, reports, purchase bills, backups, and QR images use the configured storage backend when R2 credentials are present.
+Set `VITE_API_URL=/api` when building the frontend.
 
-## Supabase Postgres
+## First deployment
 
-The backend can use Supabase as its Postgres database through `DATABASE_URL`.
+1. Create ECR repositories and push the backend and frontend images.
+2. Create the RDS database and ElastiCache replication group in private subnets.
+3. Create ECS task definitions named with `backend` and `frontend` containers.
+4. Run `python manage.py migrate` as a one-off backend task.
+5. Create a superuser with `python manage.py createsuperuser`.
+6. Configure the ALB path rules and health checks (`/api/health/` and `/health`).
+7. Add the repository variables documented in `.github/workflows/deploy-aws.yml` and configure GitHub OIDC trust on the deployment role.
 
-1. Copy `backend/.env.supabase.example` to `backend/.env.supabase`.
-2. In Supabase Dashboard, open your project and click **Connect**.
-3. Copy the session pooler connection string, replace `[YOUR-PASSWORD]`, and paste it into `DATABASE_URL`.
-4. Run the stack with:
+The deployment workflow assumes the ECS services and task families already exist; it builds immutable images, pushes them to ECR, registers new task revisions, and waits for stable services.
 
-```bash
-docker compose --env-file backend/.env.supabase up --build
-```
+## Operational hardening
 
-The example is prefilled for project `vqinmequtjkuzrtzkzsk` in Tokyo (`ap-northeast-1`) and sets `DATABASE_SSL_REQUIRE=True`.
-
-## Production Deployment
-
-1. Point Cloudflare DNS to the server.
-2. Terminate SSL with Cloudflare Full Strict or a local certificate.
-3. Build and run the Docker stack on Oracle Cloud, AWS, or DigitalOcean.
-4. Use managed PostgreSQL and Redis for high availability where possible.
-5. Run `python manage.py collectstatic` if serving Django static files directly.
-6. Run Celery workers and scheduled jobs for backups, reports, subscription expiry, and notifications.
-
-## Operational Hardening
-
-- Rotate JWT signing secret if compromised.
-- Enable database backups and object storage lifecycle rules.
-- Add Sentry or OpenTelemetry for error reporting.
-- Store provider credentials in a secrets manager.
-- Use Cloudflare WAF, rate limiting, bot protection, and access logs.
+- Keep RDS, Redis, and ECS tasks private; expose only the ALB.
+- Enable RDS point-in-time recovery, S3 versioning, and lifecycle rules.
+- Restrict Secrets Manager resources to the ECS task and deployment roles.
+- Enable CloudWatch logs, alarms, AWS WAF, GuardDuty, and CloudTrail.
+- Rotate JWT and provider secrets after any suspected compromise.

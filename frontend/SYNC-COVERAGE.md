@@ -1,7 +1,7 @@
 # Shared store data
 
 All saved business state passes through `businessStorage` and the authenticated
-`vestora-api/state` endpoint. The registry in `business-state.js` explicitly
+`/api/cloud/state` endpoint. The registry in `business-state.js` explicitly
 defines shared data. New modules must register their keys and use
 `useBusinessState`; do not add independent browser-only business caches.
 
@@ -22,7 +22,7 @@ defines shared data. New modules must register their keys and use
 | Settings | Store settings, bill layout and theme preferences |
 
 Hardware printer choices, camera frames, auth sessions and unsaved form/cart
-drafts remain device-local. Staff credentials use Supabase Auth, not shared JSON.
+drafts remain device-local. Staff credentials use Django password hashing, not shared JSON.
 Users made by the old browser-only account form need to be saved once in Admin
 with a password to establish a secure cloud login.
 
@@ -53,11 +53,9 @@ an overselling lock across offline cashiers.
   deletion, secrets, store denial and lost responses.
 - `node scripts/sync-browser-check.cjs`: isolated Chrome sessions against a
   local preview and mocked cloud; no production test records.
-- Parent repo `scripts/apply-cloud-state-security.py --prepare` adds retry support
-  without changing existing app permissions. `--verify` exercises the real
-  database function in a rolled-back transaction.
-- Deploy the API and frontend before `--apply` revokes direct browser access
-  to shared snapshots. Existing business records are retained.
+- `python manage.py migrate` creates the RDS-backed state and public-order tables.
+- Deploy the API before the frontend so the new cloud gateway is available when
+  the browser bundle starts using it. Existing imported business records are retained.
 
 Actual production account/device acceptance must be checked with the user's
 store logins; automated browser checks use isolated test sessions.

@@ -86,7 +86,7 @@ const nodes = (tree) => !tree || typeof tree !== "object" ? [] : [tree, ...(tree
 const label = (tree) => typeof tree === "string" ? tree : tree?.children?.map(label).join("") || "";
 
 test("billing settings explain manual printing and cannot enable automatic printing", () => {
-  const context = vm.createContext({ React, useState: (value) => [value, () => {}], printerChoices: [] });
+  const context = vm.createContext({ React, useState: (value) => [value, () => {}], useRef: (value) => ({ current: value }), useEffect: () => {}, printerChoices: [] });
   vm.runInContext(setupCode, context);
   const tree = context.PrinterConnectionSetup({ purpose: "billing", printer: { ...billing, autoPrint: true }, setPrinter: () => {}, canManage: true, notify: () => {} });
   assert.ok(label(tree).includes("Customer bills print only when you click Print bill"));
@@ -97,7 +97,7 @@ test("billing settings connect, test and disconnect independently of the shared 
   let printer = { ...defaultBillingPrinter };
   const printed = [], notices = [];
   const context = vm.createContext({
-    React, useState: (value) => [value, () => {}], printerChoices: [],
+    React, useState: (value) => [value, () => {}], useRef: (value) => ({ current: value }), useEffect: () => {}, printerChoices: [],
     connectQzTray: async () => ["Counter", "Kitchen"],
     preferredQzPrinter: async () => "Counter", billingPrintOptions,
     printReceiptWithQz: async (options) => printed.push(options),
@@ -123,7 +123,7 @@ test("billing settings connect, test and disconnect independently of the shared 
 
 test("kitchen settings still test KOT tickets and have no customer bill toggle", async () => {
   const printed = [];
-  const context = vm.createContext({ React, useState: (value) => [value, () => {}], printerChoices: [], printKotWithQz: async (options) => printed.push(options) });
+  const context = vm.createContext({ React, useState: (value) => [value, () => {}], useRef: (value) => ({ current: value }), useEffect: () => {}, printerChoices: [], printKotWithQz: async (options) => printed.push(options) });
   vm.runInContext(setupCode, context);
   const tree = context.PrinterConnectionSetup({ purpose: "kot", printer: { ...billing, name: "Kitchen" }, setPrinter: () => {}, canManage: true, notify: () => {} });
   await nodes(tree).find((node) => node.type === "button" && label(node) === "Test KOT").props.onClick();

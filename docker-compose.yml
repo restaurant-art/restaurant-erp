@@ -54,10 +54,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - "5173:80"
 
   nginx:
     image: nginx:1.27-alpine

@@ -1,0 +1,70 @@
+name: Deploy VESTORA to AWS ECS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_BACKEND_REPOSITORY: ${{ vars.ECR_BACKEND_REPOSITORY }}
+  ECR_FRONTEND_REPOSITORY: ${{ vars.ECR_FRONTEND_REPOSITORY }}
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t "$REGISTRY/$ECR_BACKEND_REPOSITORY:$IMAGE_TAG" backend
+          docker build --build-arg VITE_API_URL=/api -t "$REGISTRY/$ECR_FRONTEND_REPOSITORY:$IMAGE_TAG" frontend
+          docker push "$REGISTRY/$ECR_BACKEND_REPOSITORY:$IMAGE_TAG"
+          docker push "$REGISTRY/$ECR_FRONTEND_REPOSITORY:$IMAGE_TAG"
+
+      - name: Deploy backend service
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+          TASK_FAMILY: ${{ vars.ECS_BACKEND_TASK_FAMILY }}
+          SERVICE: ${{ vars.ECS_BACKEND_SERVICE }}
+        run: |
+          aws ecs describe-task-definition --task-definition "$TASK_FAMILY" --query taskDefinition > task.json
+          jq --arg image "$REGISTRY/$ECR_BACKEND_REPOSITORY:$IMAGE_TAG" 'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy) | .containerDefinitions |= map(if .name == "backend" then .image = $image else . end)' task.json > next-task.json
+          REVISION=$(aws ecs register-task-definition --cli-input-json file://next-task.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$SERVICE" --task-definition "$REVISION" --force-new-deployment
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$SERVICE"
+
+      - name: Deploy frontend service
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+          TASK_FAMILY: ${{ vars.ECS_FRONTEND_TASK_FAMILY }}
+          SERVICE: ${{ vars.ECS_FRONTEND_SERVICE }}
+        run: |
+          aws ecs describe-task-definition --task-definition "$TASK_FAMILY" --query taskDefinition > task.json
+          jq --arg image "$REGISTRY/$ECR_FRONTEND_REPOSITORY:$IMAGE_TAG" 'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy) | .containerDefinitions |= map(if .name == "frontend" then .image = $image else . end)' task.json > next-task.json
+          REVISION=$(aws ecs register-task-definition --cli-input-json file://next-task.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$SERVICE" --task-definition "$REVISION" --force-new-deployment
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$SERVICE"

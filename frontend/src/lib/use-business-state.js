@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
-import { businessStorage, subscribeBusinessState, getCloudSyncStatus } from "./supabase.js";
+import { businessStorage, subscribeBusinessState, getCloudSyncStatus } from "./cloud.js";
 
 // The snapshot is the stored JSON string so React sees a stable identity.
 // A remote save updates mounted screens without reloading or losing drafts.

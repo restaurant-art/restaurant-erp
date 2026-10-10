@@ -118,17 +118,20 @@ MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-AWS_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY")
-AWS_STORAGE_BUCKET_NAME = os.getenv("R2_BUCKET_NAME")
-AWS_S3_ENDPOINT_URL = os.getenv("R2_ENDPOINT_URL")
-AWS_S3_CUSTOM_DOMAIN = os.getenv("R2_PUBLIC_URL") or None
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID") or None
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY") or None
+AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME")
+AWS_S3_REGION_NAME = os.getenv("AWS_REGION", "ap-south-1")
+AWS_S3_CUSTOM_DOMAIN = os.getenv("AWS_S3_CUSTOM_DOMAIN") or None
 AWS_S3_SIGNATURE_VERSION = "s3v4"
 AWS_DEFAULT_ACL = "private"
 AWS_QUERYSTRING_AUTH = True
 
-if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY and AWS_STORAGE_BUCKET_NAME:
-    DEFAULT_FILE_STORAGE = "apps.core.storage.CloudflareR2Storage"
+if AWS_STORAGE_BUCKET_NAME:
+    STORAGES = {
+        "default": {"BACKEND": "apps.core.storage.AmazonS3Storage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    }
 
 CORS_ALLOWED_ORIGINS = [
     origin.strip()

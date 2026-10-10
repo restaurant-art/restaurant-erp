@@ -1,18 +1,7 @@
 # QZ Tray signing
 
-UVPRO uses an authenticated Supabase Edge Function for QZ Tray signing. The
-private key is never sent to the browser.
+UVPRO signs QZ Tray requests through the authenticated Django endpoint `/api/cloud/qz-sign`. The RSA private key remains non-exportable in AWS KMS. Configure its asymmetric key ARN or ID as `QZ_KMS_KEY_ID` and inject the matching public certificate as `QZ_CERTIFICATE`.
 
-Configure these Supabase Edge Function secrets before deploying the frontend:
+The certificate must be trusted by each QZ Tray installation. Development machines can use QZ Tray's Advanced → Site Manager demo certificate. Production stores should use a QZ-issued certificate and managed certificate rollout.
 
-- `QZ_CERTIFICATE`: the QZ digital certificate text (`digital-certificate.txt`)
-- `QZ_PRIVATE_KEY`: the matching PKCS#8 private key (`private-key.pem`)
-
-The certificate must also be trusted by each QZ Tray installation. For a local
-development machine, QZ Tray's Advanced → Site Manager can create and install a
-demo certificate. Production stores should use a QZ-issued certificate or a
-managed certificate deployment across every POS computer.
-
-After the secrets are configured, deploy `qz-sign`, then deploy the frontend.
-Without the secrets, the function deliberately returns a configuration error
-instead of exposing or embedding a private key in the frontend bundle.
+The ECS task role needs `kms:Sign` for only that key. The endpoint returns a configuration error when the certificate or KMS key ID is absent. Never place a private key in the frontend image, S3 website content, source control, or a `VITE_` variable.

@@ -4,6 +4,7 @@ from django.contrib.auth.models import AbstractUser
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
+import uuid
 
 
 class TimeStampedModel(models.Model):
@@ -432,3 +433,39 @@ class ReportExport(TenantModel):
     file = models.FileField(upload_to="reports/exports/", blank=True, null=True)
     status = models.CharField(max_length=30, default="queued")
     requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+
+
+class CloudState(TimeStampedModel):
+    """Versioned browser application state stored in AWS RDS/PostgreSQL."""
+
+    state_key = models.CharField(max_length=180, unique=True, db_index=True)
+    state_value = models.JSONField(null=True, blank=True)
+    last_mutation_id = models.UUIDField(null=True, blank=True, unique=True)
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+
+    def __str__(self):
+        return self.state_key
+
+
+class PublicOrder(TimeStampedModel):
+    """Guest QR order awaiting acceptance by a store operator."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order_number = models.CharField(max_length=40, unique=True, db_index=True)
+    store_id = models.CharField(max_length=80, db_index=True)
+    table_id = models.CharField(max_length=80)
+    table_name = models.CharField(max_length=120)
+    floor = models.CharField(max_length=120, blank=True)
+    customer_name = models.CharField(max_length=120, default="Guest")
+    customer_note = models.CharField(max_length=240, blank=True)
+    guest_count = models.PositiveSmallIntegerField(default=1)
+    items = models.JSONField(default=list)
+    item_count = models.PositiveIntegerField(default=0)
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    status = models.CharField(max_length=40, default="New", db_index=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return self.order_number

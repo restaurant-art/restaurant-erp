@@ -7,8 +7,8 @@ Production-oriented multi-tenant restaurant ERP and POS platform inspired by Pet
 - Frontend: React, Vite, Tailwind CSS, PWA service worker
 - Backend: Django, Django REST Framework, Simple JWT, Channels, Celery
 - Database/cache: PostgreSQL and Redis
-- Storage: Cloudflare R2 via S3-compatible `django-storages`
-- Deployment: Docker, Gunicorn, Nginx, GitHub Actions
+- Cloud: AWS RDS for PostgreSQL, ElastiCache for Redis, and S3 for media
+- Deployment: AWS ECS/Fargate, Gunicorn, Nginx, GitHub Actions
 
 ## Apps
 

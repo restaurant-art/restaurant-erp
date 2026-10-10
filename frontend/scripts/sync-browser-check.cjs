@@ -16,10 +16,10 @@ const base = process.env.SYNC_TEST_URL || 'http://127.0.0.1:4188';
   const token = Buffer.from('{}').toString('base64url') + '.' + Buffer.from(JSON.stringify({ sub: 'qa-user', exp })).toString('base64url') + '.test';
   async function open({ failProfile = false, failState = false, profileOverride = profile, selectedStoreId = 'QA-A', stayOnGlobal = false } = {}) {
     const context = await browser.newContext();
-    await context.route('**/*.supabase.co/**', async (route) => {
+    await context.route('**/api/**', async (route) => {
       const req = route.request(), url = new URL(req.url());
       let data = [], code = 200;
-      if (url.pathname.includes('/auth/v1/user')) data = authUser;
+      if (url.pathname.endsWith('/auth/token/refresh/')) data = { access: token };
       else if (url.pathname.endsWith('/profile')) {
         data = failProfile ? { message: 'Invalid JWT' } : profileOverride;
         if (failProfile) code = 401;
@@ -40,7 +40,7 @@ const base = process.env.SYNC_TEST_URL || 'http://127.0.0.1:4188';
       await route.fulfill({ status: code, contentType: 'application/json', body: JSON.stringify(data), headers: { 'access-control-allow-origin': '*' } });
     });
     await context.addInitScript(({ token, exp, authUser, profile, selectedStoreId }) => {
-      localStorage.setItem('sb-vqinmequtjkuzrtzkzsk-auth-token', JSON.stringify({ access_token: token, refresh_token: 'test-only', expires_at: exp, expires_in: 3600, token_type: 'bearer', user: authUser }));
+      localStorage.setItem('vestora-cloud-session', JSON.stringify({ access_token: token, refresh_token: 'test-only', expires_at: exp * 1000, user: authUser }));
       localStorage.setItem('vestora-current-user', JSON.stringify(profile));
       localStorage.setItem('vestora-selected-store', selectedStoreId);
       localStorage.setItem('vestora-super-admin-in-store', 'true');

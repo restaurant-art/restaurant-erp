@@ -1,31 +1,27 @@
 # Architecture
 
-VESTORA uses a shared-database multi-tenant architecture. Every tenant-owned model carries `restaurant` and, where relevant, `branch`. Querysets are scoped at the API layer so super admins can operate platform-wide while restaurant and branch users remain isolated.
+VESTORA is an AWS-hosted, shared-database multi-tenant application. Every tenant-owned Django model carries a restaurant and, where relevant, a branch. API querysets and the shared-state gateway enforce that scope.
 
-## Backend
+## Request path
 
-- Django handles domain models, admin, security middleware, and ORM.
-- Django REST Framework exposes CRUD APIs and operational endpoints.
-- Simple JWT secures API access.
-- Django Channels provides WebSocket plumbing for KDS, table, and POS events.
-- Celery and Redis run background jobs for report exports, subscription expiry, notifications, forecasts, and backups.
-- Cloudflare R2 stores uploaded files through S3-compatible `django-storages`.
+The Application Load Balancer terminates TLS. It routes application pages to the React/Nginx frontend and API, admin, and WebSocket requests to Django on ECS/Fargate. Django reads relational and synchronized browser state from RDS PostgreSQL, uses ElastiCache Redis for Channels and Celery, and stores files in S3.
 
-## Frontend
+## Authentication and synchronization
 
-- React and Tailwind provide a responsive SaaS dashboard and touch POS.
-- The PWA service worker caches the app shell.
-- Offline POS orders are queued in `localStorage` and sync when connectivity returns.
-- Screens are organized by operational workflows: dashboard, POS, KDS, tables, menu, inventory, CRM, HR, finance, reports, super admin, and settings.
+- Django owns staff identities and password hashes.
+- Simple JWT issues access and rotating refresh tokens through `/api/auth/`.
+- The React cloud adapter calls `/api/cloud/` and keeps the session device-local.
+- `CloudState` stores versioned business snapshots in RDS. Conditional writes use a revision and mutation UUID so retries are idempotent and conflicting edits are not silently overwritten.
+- QR orders are guest-write-only through a narrow public endpoint; restaurant reads and status changes require an authorized JWT.
 
-## Security
+## AWS responsibilities
 
-- Passwords are hashed by Django.
-- JWT access and refresh tokens protect APIs.
-- Role permissions are editable per tenant.
-- Audit logs capture actor, action, entity, and before/after payloads.
-- HTTPS, Cloudflare WAF, CSRF, CORS, and rate limiting should be enforced in production.
+- RDS PostgreSQL: tenants, users, business models, synchronized state, QR orders.
+- ElastiCache Redis: WebSockets, Celery broker, and result backend.
+- S3: private media and generated files through `django-storages`.
+- Secrets Manager: delivery integration credentials and application secrets.
+- ECS/Fargate and ECR: runtime and immutable images.
+- ALB, ACM, Route 53, and WAF: routing, certificates, DNS, and edge protection.
+- CloudWatch and CloudTrail: application logs and control-plane auditing.
 
-## Data Isolation
-
-Tenant isolation is implemented in `TenantScopedViewSet`. Additional hardening for very large deployments can move tenants to separate schemas or databases while preserving the same API contract.
+No browser receives database credentials, S3 credentials, signing keys, or delivery-provider secrets.

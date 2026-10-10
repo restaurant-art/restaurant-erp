@@ -15891,6 +15891,8 @@ button.chart-account-row:hover {
 @media (max-width: 760px) {
   .customer-order-layout { grid-template-columns: 1fr; }
   .customer-cart-card { position: static; }
+  .customer-order-layout.has-order-items .customer-cart-card { grid-row: 1; }
+  .customer-order-layout.has-order-items .customer-menu-grid { grid-row: 2; }
 }
 .pos-food-stock-alert {
   display: flex;
