@@ -514,4 +514,4 @@ def report_summary(request):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def health(request):
-    return Response({"status": "ok", "service": "VESTORA"})
+    return Response({"status": "ok", "service": "UVPRO"})

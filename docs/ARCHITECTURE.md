@@ -1,6 +1,6 @@
 # Architecture
 
-VESTORA uses a shared-database multi-tenant architecture. Every tenant-owned model carries `restaurant` and, where relevant, `branch`. Querysets are scoped at the API layer so super admins can operate platform-wide while restaurant and branch users remain isolated.
+UVPRO uses a shared-database multi-tenant architecture. Every tenant-owned model carries `restaurant` and, where relevant, `branch`. Querysets are scoped at the API layer so super admins can operate platform-wide while restaurant and branch users remain isolated.
 
 ## Backend
 

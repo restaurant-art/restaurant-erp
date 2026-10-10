@@ -4,6 +4,7 @@ from django.contrib.auth.models import AbstractUser
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
+import uuid
 
 
 class TimeStampedModel(models.Model):
@@ -432,3 +433,53 @@ class ReportExport(TenantModel):
     file = models.FileField(upload_to="reports/exports/", blank=True, null=True)
     status = models.CharField(max_length=30, default="queued")
     requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+
+
+class SharedAppState(models.Model):
+    """AWS replacement for the Supabase shared JSON state table."""
+
+    state_key = models.TextField(primary_key=True)
+    state_value = models.JSONField(default=None, null=True, blank=True)
+    updated_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "vestora_shared_app_state"
+
+
+class SyncOperation(models.Model):
+    """Idempotency journal for browser state mutations."""
+
+    id = models.BigAutoField(primary_key=True)
+    actor_id = models.CharField(max_length=64)
+    operation_id = models.UUIDField(default=uuid.uuid4)
+    request_hash = models.CharField(max_length=64)
+    result = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "vestora_sync_operations_aws"
+        constraints = [
+            models.UniqueConstraint(fields=("actor_id", "operation_id"), name="vestora_sync_actor_operation"),
+        ]
+
+
+class PublicOrder(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order_number = models.TextField(unique=True)
+    store_id = models.TextField(db_index=True)
+    table_id = models.TextField()
+    table_name = models.TextField()
+    floor = models.TextField(default="Main")
+    customer_name = models.TextField(default="Guest")
+    customer_note = models.TextField(blank=True, default="")
+    guest_count = models.PositiveIntegerField(default=1)
+    items = models.JSONField(default=list)
+    item_count = models.PositiveIntegerField(default=0)
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    status = models.TextField(default="New")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "vestora_public_orders"
+        ordering = ("-created_at",)

@@ -117,7 +117,7 @@ Deno.serve(async (request) => {
   const recordId = apiIndex >= 0 ? pathParts[apiIndex + 2] : undefined;
   if (subscriptionExpired && resource !== "profile") return json({ error: "Software renewal expired for this store" }, 403);
   if (resource === "profile") {
-    if (!profile) return json({ error: "This login is not linked to a VESTORA restaurant profile" }, 403);
+    if (!profile) return json({ error: "This login is not linked to a UVPRO restaurant profile" }, 403);
     const appRoleByType: Record<string, string> = {
       super_admin: "Super Admin",
       owner: "Restaurant Owner",
@@ -265,7 +265,7 @@ Deno.serve(async (request) => {
     return json({ authUserId: result.data.user.id, staff: staffRecord });
   }
   if (resource === "state") {
-    if (!profile) return json({ error: "This login is not linked to a VESTORA restaurant profile" }, 403);
+    if (!profile) return json({ error: "This login is not linked to a UVPRO restaurant profile" }, 403);
     if (request.method === "GET") {
       const key = url.searchParams.get("key");
       const requestedStore = url.searchParams.get("storeId");
@@ -315,7 +315,7 @@ Deno.serve(async (request) => {
     return json({ error: "Method not supported" }, 405);
   }
 
-  if (!profile) return json({ error: "This Supabase user is not linked to a VESTORA restaurant profile" }, 403);
+  if (!profile) return json({ error: "This Supabase user is not linked to a UVPRO restaurant profile" }, 403);
   const tableByResource: Record<string, string> = {
     restaurants: "core_restaurant",
     branches: "core_branch",

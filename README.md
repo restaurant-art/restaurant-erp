@@ -1,4 +1,4 @@
-# VESTORA
+# UVPRO
 
 Production-oriented multi-tenant restaurant ERP and POS platform inspired by Petpooja and Posist workflows.
 
