@@ -3,9 +3,10 @@ import bcrypt
 from django.contrib.auth.hashers import BasePasswordHasher, mask_hash
 
 
-class SupabaseBCryptPasswordHasher(BasePasswordHasher):
-    """Verify GoTrue/Supabase bcrypt hashes once, then upgrade to Django's default."""
+class LegacyBcryptPasswordHasher(BasePasswordHasher):
+    """Verify imported legacy bcrypt hashes once, then upgrade to Django's default."""
 
+    # Retain this stored-hash marker so existing AWS accounts keep working.
     algorithm = "supabase_bcrypt"
 
     def encode(self, password, salt=None):

@@ -47,7 +47,7 @@ AUTH_USER_MODEL = "core.User"
 
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.PBKDF2PasswordHasher",
-    "apps.core.hashers.SupabaseBCryptPasswordHasher",
+    "apps.core.hashers.LegacyBcryptPasswordHasher",
     "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
     "django.contrib.auth.hashers.Argon2PasswordHasher",
     "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",

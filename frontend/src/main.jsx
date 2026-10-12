@@ -80,9 +80,9 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
-import { businessStorage as localStorage, stopCloudSync } from "./lib/supabase";
+import { businessStorage as localStorage, stopCloudSync } from "./lib/cloud";
 import { useBusinessState, useCloudSyncStatus } from "./lib/use-business-state";
-import { fetchSharedSuperAdminStores, getSupabaseSession, hydrateLocalStateFromSupabase, signInWithSupabase, supabase, supabaseApiList, supabaseApiRequest, supabaseConfigured, supabaseFunctionJson, supabaseProfile, syncInventoryState, syncLocalStateKeyToSupabase, syncLocalStateToSupabase, updateSupabasePassword } from "./lib/supabase";
+import { fetchSharedSuperAdminStores, getCloudSession, hydrateLocalStateFromCloud, signInWithCloud, cloudClient, cloudApiList, cloudApiRequest, cloudConfigured, cloudJson, cloudProfile, syncInventoryState, syncLocalStateKeyToCloud, syncLocalStateToCloud, updateCloudPassword } from "./lib/cloud";
 import { canCashierUseOpenShift, findOpenStoreShift, isEligiblePosCashier } from "./lib/pos-access";
 import { pickQzPrinter } from "./lib/qz-printer";
 import { createNextRecipeVersion, listRecipeVersions, removeRecipeVersion } from "./lib/recipe-versions";
@@ -1165,8 +1165,8 @@ function useOnlineStatus() {
 
 async function syncOfflineOrders() {
   const queued = JSON.parse(localStorage.getItem("vestora-offline-orders") || "[]");
-  if (!queued.length || !navigator.onLine || !window.vestoraSupabaseStateReady) return 0;
-  const saved = await syncLocalStateKeyToSupabase("vestora-sales-ledger");
+  if (!queued.length || !navigator.onLine || !window.vestoraCloudStateReady) return 0;
+  const saved = await syncLocalStateKeyToCloud("vestora-sales-ledger");
   const confirmed = new Set((saved || []).map((bill) => bill.id));
   const remaining = queued.filter((bill) => !confirmed.has(bill.id));
   localStorage.setItem("vestora-offline-orders", JSON.stringify(remaining));
@@ -1187,7 +1187,7 @@ function ChangePasswordDialog({ onClose, notify }) {
     if (password !== confirmation) return setError("Passwords do not match");
     setSaving(true);
     setError("");
-    const { error: updateError } = await updateSupabasePassword(password);
+    const { error: updateError } = await updateCloudPassword(password);
     setSaving(false);
     if (updateError) return setError(updateError.message || "Unable to change password");
     notify("Password changed successfully");
@@ -1243,7 +1243,7 @@ function CloudSyncBanner() {
   // their internal record key and person name from the operator-facing banner.
   const isCrossDeviceConflict = /changed on another computer|changes are arriving from another computer/i.test(status.message || "");
   if (status.state !== "error" || isCrossDeviceConflict) return null;
-  return <div className="cloud-sync-banner cloud-sync-error" role="alert"><span>{status.message}</span><button type="button" onClick={() => syncLocalStateToSupabase().catch(() => {})}>Retry</button></div>;
+  return <div className="cloud-sync-banner cloud-sync-error" role="alert"><span>{status.message}</span><button type="button" onClick={() => syncLocalStateToCloud().catch(() => {})}>Retry</button></div>;
 }
 
 function AuthenticatedApp() {
@@ -1251,13 +1251,13 @@ function AuthenticatedApp() {
     // A device can retain the last staff member's cached profile. Never use
     // it for a cloud-backed session, because it could briefly expose that
     // person's navigation while the actual signed-in role is verified.
-    if (supabaseConfigured) return null;
+    if (cloudConfigured) return null;
     const saved = localStorage.getItem("vestora-current-user");
     if (!saved) return null;
     const user = JSON.parse(saved);
     return { ...user, role: roleToAuthRole(user.role), appRole: user.appRole || roleLabelForUser(user) };
   });
-  const [supabaseStateReady, setSupabaseStateReady] = useState(() => !supabaseConfigured);
+  const [cloudStateReady, setCloudStateReady] = useState(() => !cloudConfigured);
   const [active, setActive] = useState("dashboard");
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [returnModule, setReturnModule] = useState("dashboard");
@@ -1333,7 +1333,7 @@ function AuthenticatedApp() {
     });
   }, []);
   useEffect(() => {
-    if (currentUser?.role !== "super_admin" || stores.length || !supabaseStateReady) return;
+    if (currentUser?.role !== "super_admin" || stores.length || !cloudStateReady) return;
     setSelectedStoreId("GLOBAL");
     setSuperAdminLanding(true);
     localStorage.removeItem("vestora-super-admin-in-store");
@@ -1366,7 +1366,7 @@ function AuthenticatedApp() {
   const assignedStoreId = normalizeStoreId(currentUser?.storeId);
   const activeStoreId = canManageAll ? selectedStoreId : assignedStoreId === "GLOBAL" ? selectedStoreId : assignedStoreId;
   const activeStore = stores.find((store) => store.id === activeStoreId) || emptyStoreContext;
-  const softwareSubscriptionExpired = Boolean(currentUser && currentUser.role !== "super_admin" && (currentUser.subscriptionExpired || (supabaseStateReady && isStoreSubscriptionExpired(activeStore))));
+  const softwareSubscriptionExpired = Boolean(currentUser && currentUser.role !== "super_admin" && (currentUser.subscriptionExpired || (cloudStateReady && isStoreSubscriptionExpired(activeStore))));
   const softwareSubscriptionExpiry = currentUser?.subscriptionExpiresAt || activeStore?.subscriptionExpiresAt || "";
   const [showSubscriptionWarning, setShowSubscriptionWarning] = useState(false);
   useEffect(() => {
@@ -1394,8 +1394,8 @@ function AuthenticatedApp() {
     ? <SubscriptionWarningBanner activeStore={activeStore} expiresAt={softwareSubscriptionExpiry} visible={showSubscriptionWarning} />
     : null;
   useEffect(() => {
-    if (supabaseStateReady && sharedShifts.length) localStorage.setItem(`vestora-shifts-${settingsStoreId}`, JSON.stringify(sharedShifts));
-  }, [supabaseStateReady, settingsStoreId, sharedShifts]);
+    if (cloudStateReady && sharedShifts.length) localStorage.setItem(`vestora-shifts-${settingsStoreId}`, JSON.stringify(sharedShifts));
+  }, [cloudStateReady, settingsStoreId, sharedShifts]);
   useEffect(() => {
     setLastShiftClose(loadStoredObject(`vestora-last-shift-close-${activeStore.id}`));
   }, [activeStore.id]);
@@ -1408,16 +1408,16 @@ function AuthenticatedApp() {
     setFoodStock((current) => {
       const next = typeof updater === "function" ? updater(current) : updater;
       localStorage.setItem(foodStockStorageKey, JSON.stringify(next));
-      syncLocalStateKeyToSupabase(foodStockStorageKey).catch(() => {});
+      syncLocalStateKeyToCloud(foodStockStorageKey).catch(() => {});
       return next;
     });
   }
   useEffect(() => {
-    if (!supabaseStateReady || !supabaseConfigured || !activeStoreId || activeStoreId === "GLOBAL") return undefined;
+    if (!cloudStateReady || !cloudConfigured || !activeStoreId || activeStoreId === "GLOBAL") return undefined;
     let cancelled = false;
     const refreshFoodStock = async () => {
       try {
-        if (!cancelled) await syncLocalStateKeyToSupabase(foodStockStorageKey);
+        if (!cancelled) await syncLocalStateKeyToCloud(foodStockStorageKey);
       } catch {
         // POS remains usable with its local copy while cloud state is unavailable.
       }
@@ -1428,7 +1428,7 @@ function AuthenticatedApp() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [supabaseStateReady, activeStoreId, foodStockStorageKey]);
+  }, [cloudStateReady, activeStoreId, foodStockStorageKey]);
   const [productItems, setProductItems] = useBusinessState(`vestora-menu-items-${activeStore.id}`, () => {
     const saved = loadStoredArray(`vestora-menu-items-${activeStore.id}`);
     return preparePosProducts(saved);
@@ -1453,18 +1453,18 @@ function AuthenticatedApp() {
   const themeVariables = themeStyleVariables(themeConfig);
 
   useEffect(() => {
-    window.vestoraSupabaseStateReady = supabaseStateReady;
-  }, [supabaseStateReady]);
+    window.vestoraCloudStateReady = cloudStateReady;
+  }, [cloudStateReady]);
 
   useEffect(() => {
     localStorage.setItem(`vestora-theme-config-${settingsStoreId}`, JSON.stringify(themeConfig));
     setDark(themeConfig.mode === "Dark");
-  }, [themeConfig, settingsStoreId, supabaseStateReady]);
+  }, [themeConfig, settingsStoreId, cloudStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-custom-roles", JSON.stringify(customRoles));
-    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-custom-roles").catch(() => {});
-  }, [customRoles, currentUser, supabaseStateReady]);
+    if (cloudConfigured && currentUser && cloudStateReady) syncLocalStateKeyToCloud("vestora-custom-roles").catch(() => {});
+  }, [customRoles, currentUser, cloudStateReady]);
 
   function notify(message, duration = 2600) {
     setToast(message);
@@ -1581,20 +1581,20 @@ function AuthenticatedApp() {
   }
 
   function handleLogout() {
-    window.vestoraSupabaseStateReady = false;
+    window.vestoraCloudStateReady = false;
     stopCloudSync();
-    if (supabaseConfigured) supabase.auth.signOut().catch(() => {});
+    if (cloudConfigured) cloudClient.auth.signOut().catch(() => {});
     localStorage.removeItem("vestora-current-user");
     localStorage.removeItem("vestora-super-admin-in-store");
     localStorage.removeItem("vestora-pos-cashier");
-    sessionStorage.removeItem("vestora-supabase-hydrated-user");
+    sessionStorage.removeItem("uvpro-cloud-hydrated-user");
     setPosCashier(null);
-    setSupabaseStateReady(!supabaseConfigured);
+    setCloudStateReady(!cloudConfigured);
     setCurrentUser(null);
   }
 
   useEffect(() => {
-    if (!supabaseConfigured || !supabase) return undefined;
+    if (!cloudConfigured || !cloudClient) return undefined;
     let mounted = true;
     let applying = false;
     let loadedUserId = "";
@@ -1605,8 +1605,8 @@ function AuthenticatedApp() {
       applying = true;
       const attempt = ++generation;
       const isCurrent = () => mounted && attempt === generation;
-      window.vestoraSupabaseStateReady = false;
-      setSupabaseStateReady(false);
+      window.vestoraCloudStateReady = false;
+      setCloudStateReady(false);
       const metadata = session.user.user_metadata || {};
       const assigned = session.user.app_metadata?.vestora || {};
       // Do not guess a cashier role while a legacy account's server profile
@@ -1617,7 +1617,7 @@ function AuthenticatedApp() {
       let loginUser = {
         id: session.user.id,
         email: session.user.email || "",
-        name: metadata.name || session.user.email || "Supabase user",
+        name: metadata.name || session.user.email || "AWS user",
         role: roleToAuthRole(fallbackRole),
         appRole: assigned.appRole || metadata.appRole || roleLabelForAuthRole(fallbackRole),
         storeId: assigned.storeId || metadata.storeId || "STORE-001",
@@ -1630,19 +1630,19 @@ function AuthenticatedApp() {
         setCurrentUser(loginUser);
       }
       try {
-        const profile = await supabaseProfile();
+        const profile = await cloudProfile();
         if (!isCurrent()) return;
         loginUser = { ...loginUser, ...profile, role: roleToAuthRole(profile.role), storeId: profile.storeId || "GLOBAL" };
         if (loginUser.role !== "super_admin" && loginUser.subscriptionExpired) {
           setCurrentUser(loginUser);
-          window.vestoraSupabaseStateReady = true;
-          setSupabaseStateReady(true);
+          window.vestoraCloudStateReady = true;
+          setCloudStateReady(true);
           loadedUserId = session.user.id;
           return;
         }
         // This includes the authorized directory; a separate directory read
         // delayed startup and its failure was previously hidden.
-        await hydrateLocalStateFromSupabase();
+        await hydrateLocalStateFromCloud();
         if (!isCurrent()) return;
         const openSuperAdminLanding = loginUser.role === "super_admin";
         if (openSuperAdminLanding) {
@@ -1658,8 +1658,8 @@ function AuthenticatedApp() {
         const landingModule = loginRole === "Waiter" ? "tables" : loginRole === "Chef" ? "kds" : "dashboard";
         setActive(landingModule);
         setReturnModule(landingModule);
-        window.vestoraSupabaseStateReady = true;
-        setSupabaseStateReady(true);
+        window.vestoraCloudStateReady = true;
+        setCloudStateReady(true);
         loadedUserId = session.user.id;
       } catch {
         // The workspace remains usable from its saved local copy while the
@@ -1669,22 +1669,22 @@ function AuthenticatedApp() {
         if (isCurrent()) applying = false;
       }
     };
-    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: listener } = cloudClient.auth.onAuthStateChange((event, session) => {
       if (event === "PASSWORD_RECOVERY" && mounted) setPasswordDialogOpen(true);
       if (session) window.setTimeout(() => applySession(session), 0);
       else if (mounted) {
         generation++;
         applying = false;
         loadedUserId = "";
-        window.vestoraSupabaseStateReady = false;
+        window.vestoraCloudStateReady = false;
         stopCloudSync();
         setCurrentUser(null);
-        setSupabaseStateReady(!supabaseConfigured);
+        setCloudStateReady(!cloudConfigured);
       }
     });
     // Register the listener before loading the session so recovery links do
-    // not lose the PASSWORD_RECOVERY event during Supabase initialization.
-    getSupabaseSession().then((session) => applySession(session)).catch(() => {});
+    // not lose the PASSWORD_RECOVERY event during cloud initialization.
+    getCloudSession().then((session) => applySession(session)).catch(() => {});
     return () => {
       mounted = false;
       generation++;
@@ -1694,10 +1694,10 @@ function AuthenticatedApp() {
   }, []);
 
   useEffect(() => {
-    if (!supabaseConfigured || !currentUser || !supabaseStateReady) return undefined;
+    if (!cloudConfigured || !currentUser || !cloudStateReady) return undefined;
     let cancelled = false;
     const persist = () => {
-      if (!cancelled) syncLocalStateToSupabase().catch(() => {});
+      if (!cancelled) syncLocalStateToCloud().catch(() => {});
     };
     persist();
     const timer = window.setInterval(persist, 5000);
@@ -1709,7 +1709,7 @@ function AuthenticatedApp() {
       window.removeEventListener("online", persist);
       window.removeEventListener("focus", persist);
     };
-  }, [currentUser, supabaseStateReady]);
+  }, [currentUser, cloudStateReady]);
 
   function enterStore(store) {
     setSelectedStoreId(store.id);
@@ -1802,7 +1802,7 @@ function AuthenticatedApp() {
     localStorage.setItem(shiftCloseKey, JSON.stringify(shiftClose));
     const historyKey = `vestora-shift-history-${activeStore.id}`;
     localStorage.setItem(historyKey, JSON.stringify([...loadStoredArray(historyKey).filter((entry) => entry.id !== shiftClose.id), shiftClose]));
-    syncLocalStateKeyToSupabase(shiftCloseKey).catch(() => {});
+    syncLocalStateKeyToCloud(shiftCloseKey).catch(() => {});
     localStorage.removeItem("vestora-current-shift");
     localStorage.removeItem("vestora-pos-cashier");
     setPosCashier(null);
@@ -1850,34 +1850,34 @@ function AuthenticatedApp() {
   }, [posCashier]);
 
   useEffect(() => {
-    if (!online || !supabaseStateReady) return;
+    if (!online || !cloudStateReady) return;
     syncOfflineOrders().then((count) => { if (count) notify(`${count} offline bills saved to cloud`); }).catch(() => {});
-  }, [online, supabaseStateReady, salesLedger]);
+  }, [online, cloudStateReady, salesLedger]);
 
   useEffect(() => {
     localStorage.setItem("vestora-sales-ledger", JSON.stringify(salesLedger));
-    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-sales-ledger").catch(() => {});
-  }, [salesLedger, currentUser, supabaseStateReady]);
+    if (cloudConfigured && currentUser && cloudStateReady) syncLocalStateKeyToCloud("vestora-sales-ledger").catch(() => {});
+  }, [salesLedger, currentUser, cloudStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-void-ledger", JSON.stringify(voidLedger));
-    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-void-ledger").catch(() => {});
-  }, [voidLedger, currentUser, supabaseStateReady]);
+    if (cloudConfigured && currentUser && cloudStateReady) syncLocalStateKeyToCloud("vestora-void-ledger").catch(() => {});
+  }, [voidLedger, currentUser, cloudStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-refund-ledger", JSON.stringify(refundLedger));
-    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-refund-ledger").catch(() => {});
-  }, [refundLedger, currentUser, supabaseStateReady]);
+    if (cloudConfigured && currentUser && cloudStateReady) syncLocalStateKeyToCloud("vestora-refund-ledger").catch(() => {});
+  }, [refundLedger, currentUser, cloudStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-kds-orders", JSON.stringify(kdsOrders));
-    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-kds-orders").catch(() => {});
-  }, [kdsOrders, currentUser, supabaseStateReady]);
+    if (cloudConfigured && currentUser && cloudStateReady) syncLocalStateKeyToCloud("vestora-kds-orders").catch(() => {});
+  }, [kdsOrders, currentUser, cloudStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-table-orders", JSON.stringify(tableOrders));
-    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-table-orders").catch(() => {});
-  }, [tableOrders, currentUser, supabaseStateReady]);
+    if (cloudConfigured && currentUser && cloudStateReady) syncLocalStateKeyToCloud("vestora-table-orders").catch(() => {});
+  }, [tableOrders, currentUser, cloudStateReady]);
 
   useEffect(() => {
     const receiveTableOrders = (orders) => {
@@ -1908,20 +1908,20 @@ function AuthenticatedApp() {
 
   useEffect(() => {
     localStorage.setItem("vestora-users", JSON.stringify(users));
-    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-users").catch(() => {});
-  }, [users, currentUser, supabaseStateReady]);
+    if (cloudConfigured && currentUser && cloudStateReady) syncLocalStateKeyToCloud("vestora-users").catch(() => {});
+  }, [users, currentUser, cloudStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-stores", JSON.stringify(stores));
-    if (supabaseConfigured && currentUser && supabaseStateReady) {
+    if (cloudConfigured && currentUser && cloudStateReady) {
       lastLocalStoresWriteAtRef.current = Date.now();
-      syncLocalStateKeyToSupabase("vestora-stores").catch(() => {});
+      syncLocalStateKeyToCloud("vestora-stores").catch(() => {});
     }
-  }, [stores, currentUser, supabaseStateReady]);
+  }, [stores, currentUser, cloudStateReady]);
 
   useEffect(() => {
     const isSuperAdmin = currentUser?.role === "super_admin" || currentUser?.isSuperuser === true || currentUser?.appRole === "Super Admin";
-    if (!supabaseConfigured || !supabase || !isSuperAdmin || !supabaseStateReady) return undefined;
+    if (!cloudConfigured || !cloudClient || !isSuperAdmin || !cloudStateReady) return undefined;
     let cancelled = false;
 
     const refreshSharedStores = async () => {
@@ -1930,7 +1930,7 @@ function AuthenticatedApp() {
       // created in this browser with the previous remote snapshot.
       if (Date.now() - lastLocalStoresWriteAtRef.current < 4000) return;
       try {
-        if (!cancelled) await syncLocalStateKeyToSupabase("vestora-stores");
+        if (!cancelled) await syncLocalStateKeyToCloud("vestora-stores");
       } catch {
         // A later focus or interval refresh will retry without disrupting POS.
       }
@@ -1946,14 +1946,14 @@ function AuthenticatedApp() {
       window.removeEventListener("focus", refreshSharedStores);
       document.removeEventListener("visibilitychange", refreshSharedStores);
     };
-  }, [currentUser?.role, currentUser?.isSuperuser, currentUser?.appRole, supabaseStateReady]);
+  }, [currentUser?.role, currentUser?.isSuperuser, currentUser?.appRole, cloudStateReady]);
 
   useEffect(() => {
-    if (!supabaseConfigured || !currentUser || !supabaseStateReady || !activeStore.id || activeStore.id === "GLOBAL") return undefined;
+    if (!cloudConfigured || !currentUser || !cloudStateReady || !activeStore.id || activeStore.id === "GLOBAL") return undefined;
     let cancelled = false;
     const refreshPublicOrders = async () => {
       try {
-        const rows = await supabaseApiList("public-orders", `storeId=${encodeURIComponent(activeStore.id)}&open=1`);
+        const rows = await cloudApiList("public-orders", `storeId=${encodeURIComponent(activeStore.id)}&open=1`);
         if (cancelled || !Array.isArray(rows)) return;
         const incoming = rows.map((row) => ({
           id: row.id,
@@ -1996,7 +1996,7 @@ function AuthenticatedApp() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [activeStore.id, activeStore.name, activeStore.branch, currentUser?.id, supabaseStateReady]);
+  }, [activeStore.id, activeStore.name, activeStore.branch, currentUser?.id, cloudStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-selected-store", activeStore.id);
@@ -2004,7 +2004,7 @@ function AuthenticatedApp() {
 
   useEffect(() => {
     localStorage.setItem(`vestora-bill-template-${settingsStoreId}`, JSON.stringify(billTemplate));
-  }, [billTemplate, settingsStoreId, supabaseStateReady]);
+  }, [billTemplate, settingsStoreId, cloudStateReady]);
 
   useEffect(() => {
     localStorage.setItem("vestora-kot-printer", JSON.stringify(kotPrinter));
@@ -2037,8 +2037,8 @@ function AuthenticatedApp() {
 
   useEffect(() => {
     localStorage.setItem("vestora-supplier-orders", JSON.stringify(supplierOrders));
-    if (supabaseConfigured && currentUser && supabaseStateReady) syncLocalStateKeyToSupabase("vestora-supplier-orders").catch(() => {});
-  }, [supplierOrders, currentUser, supabaseStateReady]);
+    if (cloudConfigured && currentUser && cloudStateReady) syncLocalStateKeyToCloud("vestora-supplier-orders").catch(() => {});
+  }, [supplierOrders, currentUser, cloudStateReady]);
 
   useEffect(() => {
     if (currentUser && currentUser.role !== "supplier" && active !== activeModule) setActive(activeModule);
@@ -2074,8 +2074,8 @@ function AuthenticatedApp() {
   }
 
   function persistPublicOrderStatus(order, status) {
-    if (order?.source !== "QR" || !order.id || !supabaseConfigured || !currentUser) return;
-    supabaseApiRequest(`public-orders/${encodeURIComponent(order.id)}`, {
+    if (order?.source !== "QR" || !order.id || !cloudConfigured || !currentUser) return;
+    cloudApiRequest(`public-orders/${encodeURIComponent(order.id)}`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }).catch(() => {});
@@ -2246,7 +2246,7 @@ function AuthenticatedApp() {
           // Super Admins can switch into a branch using the already-loaded
           // directory while the larger cloud-state hydration continues in the
           // background. The sync gate still protects all cloud writes.
-          storeAccessReady={currentUser.role === "super_admin" || supabaseStateReady}
+          storeAccessReady={currentUser.role === "super_admin" || cloudStateReady}
           onEnterStore={enterStore}
           onUpdatePassword={() => setPasswordDialogOpen(true)}
           onLogout={handleLogout}
@@ -2279,10 +2279,10 @@ function AuthenticatedApp() {
         ? <POS cart={cart} setCart={setCart} items={productItems} storeId={activeStore.id} foodStock={foodStock} onFoodStockChange={updateFoodStock} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} billingPrinter={billingPrinter} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onLogout={handleLogout} onIdleLogout={lockPOSAfterInactivity} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} refundLedger={scopedRefundLedger} onRefund={recordRefund} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
         : <ShiftOpening online={online} onOpenShift={openShift} onExit={exitPOS} onLogout={handleLogout} cashier={posCashier} />,
     kds: <KDS notify={notify} orders={scopedKdsOrders} setOrders={setKdsOrders} kotPrinter={kotPrinter} />,
-    tables: <Tables key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} items={productItems} currentUser={currentUser} tableOrders={scopedTableOrders} onSaveOrder={saveTableOrder} onSendKot={sendTableKot} onSendReception={sendTableToReception} onCancelOrder={cancelTableOrder} onCancelItem={cancelTableOrderItem} kotPrinter={kotPrinter} cloudStateReady={supabaseStateReady} />,
+    tables: <Tables key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} items={productItems} currentUser={currentUser} tableOrders={scopedTableOrders} onSaveOrder={saveTableOrder} onSendKot={sendTableKot} onSendReception={sendTableToReception} onCancelOrder={cancelTableOrder} onCancelItem={cancelTableOrderItem} kotPrinter={kotPrinter} cloudStateReady={cloudStateReady} />,
     menu: <MenuManagement key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} productItems={productItems} setProductItems={setProductItems} activeView={menuView} editingItemId={menuItemEditId} onNavigate={openMenuView} />,
-    inventory: <Inventory key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} cloudStateReady={supabaseStateReady} />,
-    production: <Production key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} activeView={productionView} activeReport={productionReportView} onViewChange={setProductionView} foodStock={foodStock} onFoodStockChange={updateFoodStock} cloudStateReady={supabaseStateReady} />,
+    inventory: <Inventory key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} cloudStateReady={cloudStateReady} />,
+    production: <Production key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} activeView={productionView} activeReport={productionReportView} onViewChange={setProductionView} foodStock={foodStock} onFoodStockChange={updateFoodStock} cloudStateReady={cloudStateReady} />,
     "item-stock": <ItemStock
       key={activeStore.id}
       foodStock={foodStock}
@@ -2536,7 +2536,7 @@ function CustomerTableOrdering() {
       return undefined;
     }
     let cancelled = false;
-    supabaseFunctionJson(`vestora-public-order/menu?storeId=${encodeURIComponent(storeId)}${qrTableId ? `&tableId=${encodeURIComponent(qrTableId)}` : ""}`)
+    cloudJson(`/api/public-order/menu/?storeId=${encodeURIComponent(storeId)}${qrTableId ? `&tableId=${encodeURIComponent(qrTableId)}` : ""}`)
       .then((payload) => {
         if (cancelled) return;
         setCatalog(Array.isArray(payload?.items) ? payload.items.filter((item) => (item.status || "Active") === "Active") : []);
@@ -2569,7 +2569,7 @@ function CustomerTableOrdering() {
     setSubmitting(true);
     setError("");
     try {
-      const result = await supabaseFunctionJson("vestora-public-order/orders", {
+      const result = await cloudJson("/api/public-order/orders/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ storeId, tableId: selectedTableId, guestCount: 1, customerName: customerName.trim() || "Guest", customerNote: customerNote.trim(), items: cart.map(({ id, name, price, qty, notes }) => ({ id, name, price, qty, notes: notes || "" })) }),
@@ -2650,15 +2650,15 @@ function LoginScreen({ onLogin }) {
       });
       return;
     }
-    if (supabaseConfigured) {
+    if (cloudConfigured) {
       setError("");
-      const { data, error: authError } = await signInWithSupabase(loginId, password);
+      const { data, error: authError } = await signInWithCloud(loginId, password);
       if (!authError && data.user) {
         // The auth listener owns profile verification and hydration. A second
         // competing profile request here could replace the verified user.
         return;
       }
-      setError(authError?.message || "Supabase sign-in failed");
+      setError(authError?.message || "AWS sign-in failed");
       return;
     }
     setError("Secure sign-in is not configured for this deployment.");
@@ -3895,7 +3895,7 @@ function CashierLogin({ cashiers, activeStore, stores = [], currentShift, onAuth
     event.preventDefault();
     if (!selectedCashier) return;
     try {
-      await supabaseApiRequest("cashier-login", { method: "POST", body: JSON.stringify({ email: selectedCashier.email, password }) });
+      await cloudApiRequest("cashier-login", { method: "POST", body: JSON.stringify({ email: selectedCashier.email, password }) });
     } catch (error) { setError(error.message); return; }
     if (onAuthenticated(selectedCashier) === false) {
       setError(`${currentShift?.cashierName || "Another cashier"} has an open shift.`);
@@ -5113,8 +5113,8 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
     // Publish the latest menu and table layout before printing a QR code so a
     // customer's phone always receives the same catalog as the staff screen.
     await Promise.all([
-      syncLocalStateKeyToSupabase(`vestora-menu-items-${storeId}`).catch(() => {}),
-      syncLocalStateKeyToSupabase(`vestora-tables-${storeId}`).catch(() => {}),
+      syncLocalStateKeyToCloud(`vestora-menu-items-${storeId}`).catch(() => {}),
+      syncLocalStateKeyToCloud(`vestora-tables-${storeId}`).catch(() => {}),
     ]);
     const url = new URL(window.location.href);
     url.search = "";
@@ -5598,7 +5598,7 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
 
   const refreshInventory = () => {
     if (inventorySyncJob.current) return inventorySyncJob.current;
-    if (supabaseConfigured && !cloudStateReady) return Promise.resolve();
+    if (cloudConfigured && !cloudStateReady) return Promise.resolve();
     const job = Promise.all([syncInventoryState(storageKey), syncInventoryState(categoryStorageKey)])
       .catch(() => {})
       .finally(() => { inventorySyncJob.current = null; });
@@ -6121,15 +6121,15 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
 
   useEffect(() => {
     localStorage.setItem(recipeKey, JSON.stringify(recipes));
-    if (cloudStateReady) syncLocalStateKeyToSupabase(recipeKey).catch(() => {});
+    if (cloudStateReady) syncLocalStateKeyToCloud(recipeKey).catch(() => {});
   }, [recipes, recipeKey]);
   useEffect(() => {
     localStorage.setItem(categoryKey, JSON.stringify(recipeCategories));
-    if (cloudStateReady) syncLocalStateKeyToSupabase(categoryKey).catch(() => {});
+    if (cloudStateReady) syncLocalStateKeyToCloud(categoryKey).catch(() => {});
   }, [recipeCategories, categoryKey]);
   useEffect(() => {
     localStorage.setItem(inventoryKey, JSON.stringify(inventory));
-    if (cloudStateReady) syncLocalStateKeyToSupabase(inventoryKey).catch(() => {});
+    if (cloudStateReady) syncLocalStateKeyToCloud(inventoryKey).catch(() => {});
   }, [inventory, inventoryKey]);
   useEffect(() => {
     const receive = (event) => {
@@ -6140,19 +6140,19 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
   }, [inventoryKey]);
   useEffect(() => {
     localStorage.setItem(batchKey, JSON.stringify(batches));
-    if (cloudStateReady) syncLocalStateKeyToSupabase(batchKey).catch(() => {});
+    if (cloudStateReady) syncLocalStateKeyToCloud(batchKey).catch(() => {});
   }, [batches, batchKey]);
   useEffect(() => {
     localStorage.setItem(wastageKey, JSON.stringify(wastageEntries));
-    if (cloudStateReady) syncLocalStateKeyToSupabase(wastageKey).catch(() => {});
+    if (cloudStateReady) syncLocalStateKeyToCloud(wastageKey).catch(() => {});
   }, [wastageEntries, wastageKey]);
   useEffect(() => {
     localStorage.setItem(transactionKey, JSON.stringify(transactions));
-    if (cloudStateReady) syncLocalStateKeyToSupabase(transactionKey).catch(() => {});
+    if (cloudStateReady) syncLocalStateKeyToCloud(transactionKey).catch(() => {});
   }, [transactions, transactionKey]);
   useEffect(() => {
     localStorage.setItem(finishedGoodsKey, JSON.stringify(finishedGoods));
-    if (cloudStateReady) syncLocalStateKeyToSupabase(finishedGoodsKey).catch(() => {});
+    if (cloudStateReady) syncLocalStateKeyToCloud(finishedGoodsKey).catch(() => {});
   }, [finishedGoods, finishedGoodsKey]);
 
   useEffect(() => {
@@ -7109,7 +7109,7 @@ function MenuManagement({ notify, canManageAll, storeId, productItems, setProduc
 
   useEffect(() => {
     localStorage.setItem(`vestora-menu-setup-${storeId}`, JSON.stringify(records));
-    syncLocalStateKeyToSupabase(`vestora-menu-setup-${storeId}`).catch(() => {});
+    syncLocalStateKeyToCloud(`vestora-menu-setup-${storeId}`).catch(() => {});
   }, [records, storeId]);
 
   function openSection(name) {
@@ -7449,7 +7449,7 @@ function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId
     setExpenses((current) => {
       const next = typeof nextValue === "function" ? nextValue(current) : nextValue;
       localStorage.setItem(expenseStorageKey, JSON.stringify(next));
-      syncLocalStateKeyToSupabase(expenseStorageKey).catch(() => {});
+      syncLocalStateKeyToCloud(expenseStorageKey).catch(() => {});
       return next;
     });
   }
@@ -7775,7 +7775,7 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     const next = typeof nextValue === "function" ? nextValue(current) : nextValue;
     if (storageKey) {
       localStorage.setItem(storageKey, JSON.stringify(next));
-      syncLocalStateKeyToSupabase(storageKey).catch(() => {});
+      syncLocalStateKeyToCloud(storageKey).catch(() => {});
     }
     return next;
   });
@@ -7804,7 +7804,7 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     const savedLedgers = loadStoredArray(ledgerStorageKey);
     const nextSaved = [record, ...savedLedgers];
     localStorage.setItem(ledgerStorageKey, JSON.stringify(nextSaved));
-    syncLocalStateKeyToSupabase(ledgerStorageKey).catch(() => {});
+    syncLocalStateKeyToCloud(ledgerStorageKey).catch(() => {});
     const nextMasters = loadFinanceLedgers(storeId);
     setLedgerMasters(nextMasters);
     setLedgerMasterDraft({ code: nextFinanceLedgerCode(record.type, nextMasters), name: "", type: record.type, group: record.group, status: "Active" });
@@ -7864,7 +7864,7 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     const journalKey = `vestora-finance-journals-${storeId}`;
     const nextJournals = [record, ...loadStoredArray(journalKey)];
     localStorage.setItem(journalKey, JSON.stringify(nextJournals));
-    syncLocalStateKeyToSupabase(journalKey).catch(() => {});
+    syncLocalStateKeyToCloud(journalKey).catch(() => {});
     setLedgerDraft(blankFinanceJournalDraft());
     setLedgerFormOpen(false);
     notify("Ledger entry posted");
@@ -8172,7 +8172,7 @@ async function configureQzSecurity() {
       qzSignedConnection = true;
       return true;
     }
-    const certificateResult = await supabaseFunctionJson("qz-sign", {
+    const certificateResult = await cloudJson("/api/cloud/qz-sign/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "certificate" }),
@@ -8180,7 +8180,7 @@ async function configureQzSecurity() {
     const certificate = String(certificateResult?.certificate || "").trim();
     if (!certificate) throw new Error("QZ signing certificate is unavailable");
 
-    const probeResult = await supabaseFunctionJson("qz-sign", {
+    const probeResult = await cloudJson("/api/cloud/qz-sign/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "sign", request: `uvpro-qz-check-${Date.now()}` }),
@@ -8189,7 +8189,7 @@ async function configureQzSecurity() {
 
     qz.security.setCertificatePromise((resolve) => resolve(certificate));
     qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
-      supabaseFunctionJson("qz-sign", {
+      cloudJson("/api/cloud/qz-sign/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "sign", request: toSign }),
@@ -8431,7 +8431,7 @@ function OffersPromotions({ notify, canManage, storeId, productItems = [], activ
 
   useEffect(() => {
     localStorage.setItem(offersStorageKey, JSON.stringify(offers));
-    syncLocalStateKeyToSupabase(offersStorageKey).catch(() => {});
+    syncLocalStateKeyToCloud(offersStorageKey).catch(() => {});
   }, [offers, offersStorageKey]);
 
   const visibleOffers = offers.filter((offer) => {
@@ -9123,7 +9123,7 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       // The server reads the verified store directory itself. Saving that
       // directory first made an otherwise authorized owner unable to add a
       // staff user when directory saving was restricted or temporarily busy.
-      const result = await supabaseApiRequest("staff-account", { method: "POST", body: JSON.stringify({ ...scopedDraft, id: editingId || undefined, action: editingId ? "update" : "create", password: draft.password }) });
+      const result = await cloudApiRequest("staff-account", { method: "POST", body: JSON.stringify({ ...scopedDraft, id: editingId || undefined, action: editingId ? "update" : "create", password: draft.password }) });
       scopedDraft.authUserId = result.authUserId;
       savedStaff = result.staff || null;
     } catch (error) { notify(`User was not saved: ${error.message}`, 10000); return; }
@@ -9165,7 +9165,7 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       return;
     }
     try {
-      await supabaseApiRequest("staff-account", { method: "POST", body: JSON.stringify({ ...user, action: "delete" }) });
+      await cloudApiRequest("staff-account", { method: "POST", body: JSON.stringify({ ...user, action: "delete" }) });
     } catch (error) { notify(`User was not removed: ${error.message}`, 10000); return; }
     setUsers((current) => current.filter((user) => user.id !== id));
     notify("User ID and login deleted. Its email can now be used for a new account.");
@@ -9527,7 +9527,7 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
 
   useEffect(() => {
     localStorage.setItem(settingsStorageKey, JSON.stringify(settings));
-    syncLocalStateKeyToSupabase(settingsStorageKey).catch(() => {});
+    syncLocalStateKeyToCloud(settingsStorageKey).catch(() => {});
   }, [settings, settingsStorageKey]);
 
   useEffect(() => {
@@ -10159,23 +10159,23 @@ function AttendanceModule({ notify, activeStore, stores = [], users, canManage, 
   useEffect(() => {
     localStorage.setItem(employeesKey, JSON.stringify(employees));
     employeesRef.current = employees;
-    syncLocalStateKeyToSupabase(employeesKey).catch(() => {});
+    syncLocalStateKeyToCloud(employeesKey).catch(() => {});
   }, [employees, employeesKey]);
 
   useEffect(() => {
     localStorage.setItem(logsKey, JSON.stringify(logs));
-    syncLocalStateKeyToSupabase(logsKey).catch(() => {});
+    syncLocalStateKeyToCloud(logsKey).catch(() => {});
   }, [logs, logsKey]);
 
   useEffect(() => {
     localStorage.setItem(leaveRequestsKey, JSON.stringify(leaveRequests));
-    syncLocalStateKeyToSupabase(leaveRequestsKey).catch(() => {});
+    syncLocalStateKeyToCloud(leaveRequestsKey).catch(() => {});
   }, [leaveRequests, leaveRequestsKey]);
 
   useEffect(() => {
     localStorage.setItem(settingsKey, JSON.stringify(settings));
     settingsRef.current = settings;
-    syncLocalStateKeyToSupabase(settingsKey).catch(() => {});
+    syncLocalStateKeyToCloud(settingsKey).catch(() => {});
   }, [settings, settingsKey]);
 
   useEffect(() => {
@@ -11073,8 +11073,8 @@ function StoreQrOrderingSettings({ activeStore, notify, canManage, onBack }) {
     setOrderingUrl(url.toString());
     try {
       await Promise.all([
-        syncLocalStateKeyToSupabase(`vestora-menu-items-${activeStore.id}`).catch(() => {}),
-        syncLocalStateKeyToSupabase(`vestora-tables-${activeStore.id}`).catch(() => {}),
+        syncLocalStateKeyToCloud(`vestora-menu-items-${activeStore.id}`).catch(() => {}),
+        syncLocalStateKeyToCloud(`vestora-tables-${activeStore.id}`).catch(() => {}),
       ]);
       setQrImage(await QRCode.toDataURL(url.toString(), { width: 360, margin: 2, errorCorrectionLevel: "H", color: { dark: "#092c25", light: "#ffffff" } }));
       notify(`${activeStore.name}${activeStore.branch ? ` / ${activeStore.branch}` : ""} QR code generated`);
@@ -11138,7 +11138,7 @@ function OnlineOrderingIntegrationSettings({ activeStore, canManage, notify, men
   const [simExternalId, setSimExternalId] = useState(() => `SIM-${Date.now()}`);
   const [prepMinutes, setPrepMinutes] = useState("20");
 
-  const callDelivery = useCallback((action, payload = {}) => supabaseFunctionJson("vestora-delivery", {
+  const callDelivery = useCallback((action, payload = {}) => cloudJson("/api/cloud/delivery/", {
     method: "POST",
     body: JSON.stringify({ action, storeId, provider, ...payload }),
   }), [storeId, provider]);

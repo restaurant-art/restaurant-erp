@@ -6,7 +6,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 
 class Command(BaseCommand):
-    help = "Import Supabase Auth users from a CSV exported from auth.users."
+    help = "Import legacy auth users from a CSV export into the AWS-backed user database."
 
     def add_arguments(self, parser):
         parser.add_argument("source", help="CSV with email, encrypted_password, raw_user_meta_data and raw_app_meta_data")
@@ -41,6 +41,7 @@ class Command(BaseCommand):
                     setattr(user, field, value)
                 digest = str(row.get("encrypted_password") or "")
                 if digest.startswith(("$2a$", "$2b$", "$2y$")):
+                    # Keep the existing hash marker; the compatibility hasher upgrades it at next login.
                     user.password = f"supabase_bcrypt${digest}"
                 elif was_created:
                     user.set_unusable_password()

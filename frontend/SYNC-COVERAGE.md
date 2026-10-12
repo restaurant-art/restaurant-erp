@@ -1,7 +1,7 @@
 # Shared store data
 
 All saved business state passes through `businessStorage` and the authenticated
-`vestora-api/state` endpoint. The registry in `business-state.js` explicitly
+AWS endpoint at `/api/cloud/state/`. The registry in `business-state.js` explicitly
 defines shared data. New modules must register their keys and use
 `useBusinessState`; do not add independent browser-only business caches.
 
@@ -21,8 +21,8 @@ defines shared data. New modules must register their keys and use
 | Suppliers | Existing purchase-order records and document metadata |
 | Settings | Store settings, bill layout and theme preferences |
 
-Hardware printer choices, camera frames, auth sessions and unsaved form/cart
-drafts remain device-local. Staff credentials use Supabase Auth, not shared JSON.
+Hardware printer choices, camera frames, AWS auth sessions and unsaved form/cart
+drafts remain device-local. Staff credentials are managed by the AWS-backed Django auth service, not shared JSON.
 Users made by the old browser-only account form need to be saved once in Admin
 with a password to establish a secure cloud login.
 
@@ -35,8 +35,8 @@ banner reports pending or failed changes.
 
 The API validates store access for explicit keys, list reads and writes, filters
 multi-store ledgers, strips credentials, and preserves other stores' records.
-All writes require a version and operation ID. A database function checks the
-version and records the result in one transaction, so a lost acknowledgement can
+All writes require a version and operation ID. Django checks the version and
+records the result in one database transaction, so a lost acknowledgement can
 be replayed without applying a stock deduction twice.
 
 Disjoint record/field changes merge; conflicting edits to the same business
@@ -52,12 +52,9 @@ an overselling lock across offline cashiers.
   object settings, nested menu setup, offline/reload recovery, stale writes,
   deletion, secrets, store denial and lost responses.
 - `node scripts/sync-browser-check.cjs`: isolated Chrome sessions against a
-  local preview and mocked cloud; no production test records.
-- Parent repo `scripts/apply-cloud-state-security.py --prepare` adds retry support
-  without changing existing app permissions. `--verify` exercises the real
-  database function in a rolled-back transaction.
-- Deploy the API and frontend before `--apply` revokes direct browser access
-  to shared snapshots. Existing business records are retained.
+  local preview and mocked AWS API; no production test records.
+- Apply backend schema changes through Django migrations. Do not run ad hoc SQL
+  against production without a backup and a reviewed migration.
 
 Actual production account/device acceptance must be checked with the user's
 store logins; automated browser checks use isolated test sessions.

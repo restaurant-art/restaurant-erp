@@ -1,23 +1,9 @@
-import { createClient } from "@supabase/supabase-js";
 import { isInventoryStateKey } from "./inventory-sync.js";
 import { createSharedSync } from "./shared-sync.js";
 import { isBusinessKey, stateStore, sanitize } from "./business-state.js";
 
-// UVPRO's shared store records live in this project. A stale static-site
-// environment must never send sign-ins or business data to a different one.
-const uvproSupabaseUrl = "https://vqinmequtjkuzrtzkzsk.supabase.co";
-const configuredSupabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
-const localDevelopmentSupabaseUrl = import.meta.env.DEV && /^http:\/\/(localhost|127\.0\.0\.1):54321$/.test(configuredSupabaseUrl);
-const supabaseUrl = configuredSupabaseUrl === uvproSupabaseUrl || localDevelopmentSupabaseUrl ? configuredSupabaseUrl : uvproSupabaseUrl;
-const supabaseAnonKey = String(
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-  || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
-  || "",
-);
-
 const apiBaseUrl = String(import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
-const useAwsCloud = String(import.meta.env.VITE_CLOUD_PROVIDER || "").toLowerCase() === "aws"
-  || (!supabaseUrl || !supabaseAnonKey);
+export const cloudConfigured = true;
 const awsSessionKey = "uvpro-aws-session";
 const awsListeners = new Set();
 
@@ -97,8 +83,7 @@ function createAwsClient() {
   } };
 }
 
-export const supabaseConfigured = useAwsCloud || Boolean(supabaseUrl && supabaseAnonKey);
-export const supabase = useAwsCloud ? createAwsClient() : (supabaseConfigured ? createClient(supabaseUrl, supabaseAnonKey) : null);
+export const cloudClient = createAwsClient();
 
 // Auth locks and network requests must not leave the store-loading gate pending
 // forever. A timed-out write retains its mutation ID for safe acknowledgement.
@@ -111,66 +96,54 @@ async function bounded(operation, message, milliseconds = 20000) {
   } finally { clearTimeout(timer); }
 }
 
-export async function getSupabaseSession() {
-  const result = await bounded(supabase.auth.getSession(), "Sign-in verification timed out. Close other UVPRO tabs and retry; your local records are retained.");
+export async function getCloudSession() {
+  const result = await bounded(cloudClient.auth.getSession(), "Sign-in verification timed out. Close other UVPRO tabs and retry; your local records are retained.");
   if (result.error) throw result.error;
   return result.data.session;
 }
 
-export async function signInWithSupabase(email, password) {
-  if (!supabase) return { data: null, error: new Error("Supabase frontend environment is not configured") };
-  return supabase.auth.signInWithPassword({ email, password });
+export async function signInWithCloud(email, password) {
+  return cloudClient.auth.signInWithPassword({ email, password });
 }
 
-export async function updateSupabasePassword(password) {
-  if (!supabase) return { data: null, error: new Error("Supabase frontend environment is not configured") };
-  return supabase.auth.updateUser({ password });
+export async function updateCloudPassword(password) {
+  return cloudClient.auth.updateUser({ password });
 }
 
-export async function requestSupabasePasswordReset(email) {
-  if (!supabase) return { data: null, error: new Error("Supabase frontend environment is not configured") };
-  return supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+export async function requestCloudPasswordReset(email) {
+  return cloudClient.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
 }
 
-export async function supabaseAuthHeaders() {
-  return !useAwsCloud && supabaseAnonKey ? { apikey: supabaseAnonKey } : {};
+export async function cloudFetch(path, options = {}) {
+  const target = String(path).startsWith("/") ? String(path) : `/${String(path)}`;
+  if (!target.startsWith("/api/")) throw new Error(`Unsupported AWS API route: ${target}`);
+  const publicRequest = target.startsWith("/api/public-order/");
+  return awsRequest(target, options, !publicRequest);
 }
 
-export async function supabaseFunctionFetch(path, options = {}) {
-  if (!supabaseConfigured) throw new Error("Supabase frontend environment is not configured");
-  if (useAwsCloud) {
-    const normalized = String(path).replace(/^\/+/, "");
-    const publicRequest = normalized.startsWith("vestora-public-order/");
-    const [pathname, query = ""] = normalized.split("?", 2);
-    let target;
-    if (pathname.startsWith("vestora-api/")) target = `/api/cloud/${pathname.slice("vestora-api/".length)}/`;
-    else if (pathname.startsWith("vestora-public-order/")) target = `/api/public-order/${pathname.slice("vestora-public-order/".length)}/`;
-    else if (pathname.startsWith("vestora-delivery")) target = "/api/cloud/delivery/";
-    else if (pathname.startsWith("qz-sign")) target = "/api/cloud/qz-sign/";
-    else throw new Error(`Unsupported AWS API route: ${pathname}`);
-    return awsRequest(`${target}${query ? `?${query}` : ""}`, options, !publicRequest);
-  }
-  const session = await getSupabaseSession();
-  if (!session?.access_token) throw new Error("Your sign-in session has expired. Sign in again; local records are retained.");
+export async function cloudRequestJson(path, options = {}) {
+  const publicRequest = String(path).startsWith("/api/public-order/");
+  const session = publicRequest ? null : await getCloudSession();
+  if (!publicRequest && !session?.access_token) throw new Error("Your sign-in session has expired. Sign in again; local records are retained.");
   const headers = {
-    ...(await supabaseAuthHeaders()),
     ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
     ...(options.headers || {}),
   };
   try {
-    return await fetch(`${supabaseUrl}/functions/v1/${String(path).replace(/^\/+/, "")}`, { ...options, headers, signal: options.signal || AbortSignal.timeout(20000) });
+    return await cloudFetch(path, { ...options, headers, signal: options.signal || AbortSignal.timeout(20000) });
   } catch (error) {
     if (error.name === "TimeoutError" || error.name === "AbortError") throw new Error("The store server did not respond in time. Check your connection and retry. Local records are retained.");
     throw error;
   }
 }
 
-export async function supabaseFunctionJson(path, options = {}) {
-  const response = await supabaseFunctionFetch(path, options);
+export async function cloudJson(path, options = {}) {
+  const response = await cloudRequestJson(path, options);
   const body = await bounded(response.json().catch(() => null), "The store server response timed out. Retry; local records are retained.");
   if (!response.ok) {
     const detail = body?.error || body?.message || `Store API request failed (${response.status})`;
-    const message = `${detail} [${String(path).split("?")[0].split("/").pop()}: ${response.status}]`;
+    const endpoint = String(path).split("?")[0].replace(/\/+$/, "").split("/").pop();
+    const message = `${detail} [${endpoint}: ${response.status}]`;
     const error = new Error(message);
     error.status = response.status;
     throw error;
@@ -178,23 +151,23 @@ export async function supabaseFunctionJson(path, options = {}) {
   return body;
 }
 
-export async function supabaseApiList(resource, query = "") {
-  const response = await supabaseFunctionFetch(`vestora-api/${resource}${query ? `?${query}` : ""}`);
-  if (!response.ok) throw new Error(`Supabase API request failed (${response.status})`);
+export async function cloudApiList(resource, query = "") {
+  const response = await cloudFetch(`/api/cloud/${resource}/${query ? `?${query}` : ""}`);
+  if (!response.ok) throw new Error(`AWS API request failed (${response.status})`);
   return response.json();
 }
 
-export async function supabaseApiRequest(resource, options = {}) {
-  return supabaseFunctionJson(`vestora-api/${resource}`, {
+export async function cloudApiRequest(resource, options = {}) {
+  return cloudJson(`/api/cloud/${resource}/`, {
     ...options,
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
   });
 }
 
-export async function supabaseProfile() {
-  const before = await getSupabaseSession();
-  const profile = await supabaseFunctionJson("vestora-api/profile");
-  const session = await getSupabaseSession();
+export async function cloudProfile() {
+  const before = await getCloudSession();
+  const profile = await cloudJson("/api/cloud/profile/");
+  const session = await getCloudSession();
   if (!before || session?.user.id !== before.user.id) throw new Error("Sign-in changed. Please retry.");
   if (session) configureCloudSync(profile, session.user.id);
   return profile;
@@ -235,7 +208,7 @@ export function stopCloudSync() {
   status = { state: "connecting", message: "Connecting to store data…" }; emit();
 }
 function configureCloudSync(profile, userId) {
-  const namespace = `${supabaseUrl}:${userId}`;
+  const namespace = `${window.location?.origin || "local"}:${userId}`;
   if (syncContext?.namespace === namespace) return;
   stopCloudSync();
   const context = { namespace, superAdmin: profile.isSuperuser || profile.role === "super_admin", stores: profile.allowedStoreIds || (profile.storeId ? [profile.storeId] : []) };
@@ -260,11 +233,11 @@ function configureCloudSync(profile, userId) {
     storage: rawStorage, namespace,
     valid: () => syncContext === context,
     read: async (key) => {
-      const rows = await supabaseFunctionJson(`vestora-api/state?key=${encodeURIComponent(key)}`);
+      const rows = await cloudJson(`/api/cloud/state/?key=${encodeURIComponent(key)}`);
       if (!Array.isArray(rows)) throw new Error("Cloud data could not be read. Local changes are retained.");
       return rows.find((row) => row.state_key === key) || null;
     },
-    write: (key, value, expectedUpdatedAt, mutationId) => supabaseFunctionJson("vestora-api/state", {
+    write: (key, value, expectedUpdatedAt, mutationId) => cloudJson("/api/cloud/state/", {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key, value: sanitize(value), expectedUpdatedAt, mutationId }),
     }),
@@ -276,14 +249,14 @@ export const businessStorage = {
   setItem(key, raw) {
     if (!isBusinessKey(key)) { rawStorage.setItem(key, raw); return; }
     // Effects run before session loading. Their defaults are not user edits.
-    if (supabaseConfigured && window.vestoraSupabaseStateReady !== true) return;
+    if (cloudConfigured && window.vestoraCloudStateReady !== true) return;
     if (rawStorage.getItem(key) === raw) return;
     rawStorage.setItem(key, raw);
     emit(key, JSON.parse(raw));
-    if (supabaseConfigured) {
+    if (cloudConfigured) {
       pending.add(key); report();
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => syncLocalStateToSupabase().catch(() => {}), 200);
+      timer = window.setTimeout(() => syncLocalStateToCloud().catch(() => {}), 200);
     }
   },
   removeItem(key) {
@@ -291,10 +264,9 @@ export const businessStorage = {
     rawStorage.removeItem(key);
   },
 };
-export async function syncLocalStateKeyToSupabase(key, snapshot) {
+export async function syncLocalStateKeyToCloud(key, snapshot) {
   if (!isBusinessKey(key)) return;
-  if (!supabaseConfigured) throw new Error("Saved on this computer only. Cloud connection is not configured.");
-  if (!synchronizer || window.vestoraSupabaseStateReady !== true) throw new Error("Waiting for verified store sign-in. Changes have not reached the cloud.");
+  if (!synchronizer || window.vestoraCloudStateReady !== true) throw new Error("Waiting for verified store sign-in. Changes have not reached the cloud.");
   if (!allowedKey(key)) throw new Error("This login cannot access that store.");
   const sync = synchronizer;
   pending.add(key); report();
@@ -308,18 +280,18 @@ export async function syncLocalStateKeyToSupabase(key, snapshot) {
     throw error;
   }
 }
-export const syncInventoryState = syncLocalStateKeyToSupabase;
-export const syncVersionedSharedListState = syncLocalStateKeyToSupabase;
-export async function syncLocalStateToSupabase() {
-  if (!synchronizer || window.vestoraSupabaseStateReady !== true) return;
+export const syncInventoryState = syncLocalStateKeyToCloud;
+export const syncVersionedSharedListState = syncLocalStateKeyToCloud;
+export async function syncLocalStateToCloud() {
+  if (!synchronizer || window.vestoraCloudStateReady !== true) return;
   if (refreshJob) return refreshJob;
   const context = syncContext;
   refreshJob = (async () => {
-    const rows = await supabaseFunctionJson("vestora-api/state");
+    const rows = await cloudJson("/api/cloud/state/");
     if (syncContext !== context) return;
     const keys = new Set([...Object.keys(rawStorage).filter(allowedKey), ...rows.map((row) => row.state_key).filter(allowedKey)]);
     const byKey = new Map(rows.map((row) => [row.state_key, row]));
-    const results = await Promise.allSettled([...keys].map((key) => syncLocalStateKeyToSupabase(key, { row: byKey.get(key) })));
+    const results = await Promise.allSettled([...keys].map((key) => syncLocalStateKeyToCloud(key, { row: byKey.get(key) })));
     const failure = results.find((result) => result.status === "rejected");
     if (failure) throw failure.reason;
     failures.delete("connection"); report();
@@ -327,13 +299,13 @@ export async function syncLocalStateToSupabase() {
   return refreshJob;
 }
 export async function fetchSharedSuperAdminStores() {
-  const rows = await supabaseFunctionJson("vestora-api/state?key=vestora-stores");
+  const rows = await cloudJson("/api/cloud/state/?key=vestora-stores");
   return rows.find((row) => row.state_key === "vestora-stores")?.state_value ?? [];
 }
-export async function hydrateLocalStateFromSupabase() {
-  if (!supabaseConfigured || !synchronizer) throw new Error("Store sign-in has not been verified. Please retry.");
+export async function hydrateLocalStateFromCloud() {
+  if (!synchronizer) throw new Error("Store sign-in has not been verified. Please retry.");
   const sync = synchronizer;
-  const rows = await supabaseFunctionJson("vestora-api/state");
+  const rows = await cloudJson("/api/cloud/state/");
   if (sync !== synchronizer) throw new Error("Sign-in changed. Please retry.");
   if (!Array.isArray(rows)) throw new Error("The store server returned an invalid response. Please retry.");
   const keys = new Set([...Object.keys(rawStorage).filter(allowedKey), ...rows.map((row) => row.state_key).filter(allowedKey)]);

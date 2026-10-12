@@ -436,7 +436,7 @@ class ReportExport(TenantModel):
 
 
 class SharedAppState(models.Model):
-    """AWS replacement for the Supabase shared JSON state table."""
+    """Shared business state stored in the AWS PostgreSQL database."""
 
     state_key = models.TextField(primary_key=True)
     state_value = models.JSONField(default=None, null=True, blank=True)

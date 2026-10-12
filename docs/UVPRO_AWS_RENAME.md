@@ -41,4 +41,4 @@ Parallel resources temporarily add AWS charges. Do not create the replacement st
 
 ## Legacy application identifiers
 
-Existing database tables, Supabase migration history, authentication metadata, and browser storage keys still use `vestora` internally. They are data-format identifiers rather than visible branding. Renaming them without a compatibility migration would make existing users, orders, inventory, and settings appear missing. A future data migration must dual-read the legacy keys, write UVPRO keys, validate counts, and only then remove the old identifiers.
+Existing database tables, authentication metadata, and browser storage keys still use `vestora` internally. They are data-format identifiers rather than visible branding. Renaming them without a compatibility migration would make existing users, orders, inventory, and settings appear missing. A future data migration must dual-read the legacy keys, write UVPRO keys, validate counts, and only then remove the old identifiers.
