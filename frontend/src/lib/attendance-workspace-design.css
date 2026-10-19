@@ -1,0 +1,96 @@
+.attendance-design-screen { gap: 22px; }
+.attendance-design-screen .attendance-page-intro { margin: 0; }
+.attendance-design-screen .panel { min-width: 0; padding: 22px; border: 1px solid var(--fin-border); border-radius: 14px; background: var(--fin-surface); box-shadow: 0 4px 18px #183e3004; }
+.attendance-design-screen .panel-head { flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 18px; padding: 0 0 18px; border-bottom: 1px solid var(--fin-border); }
+.attendance-design-screen .panel-head h2 { font-size: 19px; font-weight: 650; color: var(--fin-ink); letter-spacing: -.35px; }
+.attendance-design-screen .head-actions, .attendance-design-screen .row-actions { flex-wrap: wrap; gap: 8px; }
+.attendance-design-screen button { border-radius: 8px; font-weight: 600; }
+.attendance-design-screen .head-actions button, .attendance-design-screen .row-actions button, .attendance-design-screen .attendance-report-actions button, .attendance-design-screen .attendance-records-intro > button, .attendance-design-screen .payroll-rate-toggle, .attendance-design-screen .leave-request-actions button, .attendance-design-screen .payroll-rate-setup-head > button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 10px 14px; border: 1px solid var(--fin-border); background: var(--fin-surface); color: var(--fin-accent); font-size: 12px; font-weight: 600; box-shadow: none; }
+.attendance-design-screen .head-actions button:last-child, .attendance-design-screen .attendance-report-actions button, .attendance-design-screen .attendance-records-intro > button, .attendance-design-screen .leave-request-actions .primary-action, .attendance-design-screen .payroll-rate-setup-head > button { background: #145e4b; border-color: #145e4b; color: #fff; }
+.attendance-design-screen button:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
+.attendance-design-screen label { color: var(--fin-muted); font-size: 12px; font-weight: 600; }
+.attendance-design-screen input:not([type="checkbox"]), .attendance-design-screen select, .attendance-design-screen textarea { width: 100%; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid var(--fin-border); border-radius: 8px; background: var(--fin-surface); color: var(--fin-ink); font-size: 13px; font-weight: 400; }
+.attendance-design-screen input[type="checkbox"] { width: 17px; height: 17px; min-height: 0; accent-color: #145e4b; }
+.attendance-design-screen .attendance-search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--fin-border); border-radius: 9px; padding: 0 12px; background: var(--fin-surface); }
+.attendance-design-screen .attendance-search input { border: 0; background: transparent; padding: 10px 0; }
+.attendance-design-screen .attendance-filter-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; padding: 18px; margin: 0 0 18px; border: 1px solid var(--fin-border); border-radius: 11px; background: var(--fin-soft); }
+.attendance-design-screen .attendance-filter-row label { flex: 1 1 160px; min-width: 0; display: grid; gap: 7px; }
+.attendance-design-screen .attendance-clear-filter { min-height: 44px; border: 1px solid var(--fin-border); background: var(--fin-surface); color: var(--fin-accent); }
+.attendance-design-screen .attendance-report-header, .attendance-design-screen .attendance-records-intro { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 20px; padding: 20px 22px; background: var(--fin-surface); border: 1px solid var(--fin-border); border-radius: 12px; box-shadow: none; }
+.attendance-design-screen .attendance-report-header h2, .attendance-design-screen .attendance-records-intro h2, .attendance-design-screen .leave-request-heading h2 { margin: 6px 0; font-size: 21px; font-weight: 650; letter-spacing: -.4px; color: var(--fin-ink); }
+.attendance-design-screen .attendance-report-header p, .attendance-design-screen .attendance-records-intro p, .attendance-design-screen .leave-request-heading p { margin: 0; color: var(--fin-muted); font-size: 13px; line-height: 1.6; }
+.attendance-design-screen .attendance-kiosk-eyebrow { font-size: 10px; font-weight: 700; letter-spacing: 1.4px; color: var(--fin-accent); }
+.attendance-design-screen .attendance-report-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.attendance-design-screen .attendance-report-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.attendance-design-screen .attendance-record-stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.attendance-design-screen .attendance-record-stat-grid > div { padding: 20px; background: var(--fin-surface); border: 1px solid var(--fin-border); border-radius: 12px; box-shadow: none; }
+.attendance-design-screen .attendance-record-stat-grid span { font-size: 12px; font-weight: 500; color: var(--fin-muted); }
+.attendance-design-screen .attendance-record-stat-grid strong { display: block; margin-top: 12px; font-size: 29px; font-weight: 650; color: var(--fin-ink); font-variant-numeric: tabular-nums; }
+.attendance-design-screen .attendance-record-stat-grid > div:last-child { background: #145e4b; border-color: #145e4b; }
+.attendance-design-screen .attendance-record-stat-grid > div:last-child span, .attendance-design-screen .attendance-record-stat-grid > div:last-child strong { color: #fff; }
+.attendance-design-screen .table-panel { overflow-x: auto; }
+.attendance-design-screen table { width: 100%; border-collapse: separate; border-spacing: 0; border: 1px solid var(--fin-border); border-radius: 10px; overflow: hidden; }
+.attendance-design-screen th { padding: 14px 16px; background: var(--fin-soft); color: var(--fin-muted); font-size: 10px; font-weight: 650; letter-spacing: .55px; white-space: nowrap; border-bottom: 1px solid var(--fin-border); }
+.attendance-design-screen td { padding: 16px; font-size: 13px; color: var(--fin-ink); line-height: 1.5; font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--fin-border); }
+.attendance-design-screen td small { font-size: 11px; color: var(--fin-muted); }
+.attendance-design-screen tbody tr:last-child td { border-bottom: 0; }
+.attendance-design-screen tbody tr:hover { background: var(--fin-soft); }
+.attendance-design-screen .active-chip, .attendance-design-screen .attendance-open-chip, .attendance-design-screen .attendance-late-chip, .attendance-design-screen .danger-chip { display: inline-flex; align-items: center; padding: 5px 10px; border-radius: 7px; font-size: 11px; font-weight: 600; white-space: nowrap; line-height: 1.4; }
+.attendance-design-screen .active-chip { color: #216b4f; background: #edf7f0; border: 1px solid #cfe4d8; }
+.attendance-design-screen .attendance-open-chip, .attendance-design-screen .attendance-late-chip { color: #94631e; background: #fff7e9; border: 1px solid #f0dfbc; }
+.attendance-design-screen .danger-chip { color: #a15345; background: #fff0ed; border: 1px solid #efd3cc; }
+.attendance-design-screen .empty-table-state { padding: 36px 20px; color: var(--fin-muted); font-size: 13px; line-height: 1.6; text-align: center; }
+.attendance-design-screen .attendance-record-note, .attendance-design-screen .permission-note { font-size: 12px; color: var(--fin-muted); line-height: 1.6; }
+.attendance-design-screen .leave-request-grid { grid-template-columns: minmax(300px, .8fr) minmax(0, 1.4fr); gap: 20px; align-items: start; }
+.attendance-design-screen .leave-form-fields { gap: 16px; }
+.attendance-design-screen .leave-request-actions { padding-top: 18px; border-top: 1px solid var(--fin-border); gap: 10px; }
+.attendance-design-screen .leave-review-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.attendance-design-screen .leave-review-actions button { padding: 7px 11px; font-size: 12px; }
+.attendance-design-screen .payroll-rate-setup { padding: 20px; border: 1px solid var(--fin-border); border-radius: 12px; background: var(--fin-soft); }
+.attendance-design-screen .payroll-rate-setup-head { gap: 14px; flex-wrap: wrap; }
+.attendance-design-screen .payroll-rate-setup-head h3 { color: var(--fin-ink); font-size: 20px; }
+.attendance-design-screen .payroll-rate-setup-head p { color: var(--fin-muted); font-size: 12px; }
+.attendance-design-screen .payroll-rate-row { border-color: var(--fin-border); border-radius: 10px; padding: 16px; background: var(--fin-surface); gap: 16px; }
+.attendance-design-screen .attendance-settings-panel .menu-form-grid { gap: 18px; padding: 20px; border: 1px solid var(--fin-border); border-radius: 12px; background: var(--fin-soft); }
+.attendance-design-screen .attendance-consent { display: flex; align-items: center; gap: 10px; padding: 18px; border: 1px solid var(--fin-border); border-radius: 10px; background: var(--fin-surface); }
+.attendance-design-screen .attendance-setup-note { padding: 18px; border: 1px solid var(--fin-border); border-radius: 10px; background: var(--fin-soft); font-size: 12px; line-height: 1.6; }
+.attendance-design-screen .attendance-setup-note strong { color: var(--fin-ink); }
+.attendance-design-screen .attendance-setup-note span { color: var(--fin-muted); }
+.attendance-design-screen .camera-frame { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; border-radius: 12px; border: 1px solid #2c4940; }
+.attendance-design-screen .camera-frame video { max-width: 100%; }
+.attendance-design-screen .camera-placeholder strong { font-size: 19px; font-weight: 650; }
+.attendance-design-screen .camera-placeholder span { font-size: 12px; line-height: 1.6; }
+.attendance-design-screen .camera-placeholder button { background: #145e4b; color: #fff; padding: 12px 18px; border-radius: 9px; }
+.attendance-design-screen .attendance-status-strip { padding: 12px 0; gap: 8px; }
+.attendance-design-screen .attendance-status-strip span { padding: 6px 9px; background: var(--fin-soft); border: 1px solid var(--fin-border); border-radius: 7px; font-size: 11px; color: var(--fin-muted); }
+.attendance-design-screen .face-sample-progress, .attendance-design-screen .selected-face-id-panel { padding: 16px; border-radius: 10px; border-color: var(--fin-border); background: var(--fin-soft); }
+.attendance-design-screen .attendance-employee-row { border-color: var(--fin-border); border-radius: 10px; box-shadow: none; }
+.attendance-design-screen .attendance-employee-row small { color: var(--fin-muted); }
+.attendance-design-screen .attendance-live-grid { background: linear-gradient(180deg, #e5f2e9, #f5f8f6 350px); gap: 20px; }
+.attendance-design-screen .attendance-kiosk-header { border: 1px solid var(--fin-border); border-radius: 14px; box-shadow: none; background: var(--fin-surface); padding: 22px 26px; }
+.attendance-design-screen .attendance-kiosk-header h2 { color: var(--fin-ink); font-size: 25px; font-weight: 650; letter-spacing: -.5px; }
+.attendance-design-screen .attendance-kiosk-header p { color: var(--fin-muted); font-size: 13px; line-height: 1.6; }
+.attendance-design-screen .attendance-kiosk-clock { border-radius: 10px; border-color: var(--fin-border); background: var(--fin-soft); }
+.attendance-design-screen .attendance-kiosk-clock strong { color: var(--fin-accent); font-variant-numeric: tabular-nums; }
+.attendance-design-screen .attendance-kiosk-actions button { border-radius: 9px; font-size: 13px; }
+.attendance-design-screen .attendance-empty { padding: 30px 20px; border: 1px dashed var(--fin-border); border-radius: 12px; background: var(--fin-soft); color: var(--fin-muted); }
+.attendance-design-screen .attendance-empty strong { color: var(--fin-ink); font-size: 17px; }
+.attendance-design-screen .manual-fallback, .attendance-design-screen .employee-punch-panel, .attendance-design-screen .attendance-mini-log { border-color: var(--fin-border); border-radius: 10px; }
+.dark .attendance-design-screen .attendance-live-grid { background: #14231b; }
+.leave-table-scroll { overflow-x: auto; }
+.leave-reason-cell { min-width: 160px; max-width: 340px; white-space: normal; overflow-wrap: anywhere; }
+.leave-approval-filters { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
+.leave-approval-filters button { display: inline-flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--fin-border); border-radius: 9px; background: var(--fin-surface); color: var(--fin-ink); }
+.leave-approval-filters button[aria-pressed="true"] { background: var(--fin-soft); border-color: var(--fin-accent); color: var(--fin-accent); }
+.leave-approval-filters span { padding: 2px 7px; border-radius: 5px; background: var(--fin-soft); font-variant-numeric: tabular-nums; }
+.manual-role-permission { grid-column: 1 / -1; display: flex !important; align-items: flex-start; gap: 12px; padding: 16px; border: 1px solid #cfe4d8; border-radius: 10px; }
+.manual-role-permission input { width: 18px !important; height: 18px; min-height: 0; flex-shrink: 0; margin-top: 3px; accent-color: #145e4b; }
+.manual-role-permission small { display: block; margin-top: 6px; font-weight: 400; line-height: 1.5; }
+.manual-attendance-panel .manual-fallback { display: flex; flex-wrap: wrap; align-items: end; gap: 20px; padding: 20px; background: var(--fin-soft); }
+.manual-attendance-panel .manual-fallback label { flex: 1 1 240px; }
+.manual-attendance-panel .manual-fallback button { padding: 12px 22px; }
+.manual-attendance-panel button:disabled { opacity: .45; cursor: not-allowed; }
+.manual-attendance-panel .employee-punch-list { max-height: none; }
+.manual-attendance-result { display: flex; align-items: center; gap: 10px; margin: 18px 0; padding: 16px; border-radius: 10px; background: var(--fin-soft); color: var(--fin-accent); }
+@media (max-width: 1150px) { .attendance-design-screen .leave-request-grid { grid-template-columns: minmax(0, 1fr); } .attendance-design-screen .attendance-employee-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) { .attendance-design-screen .panel { padding: 16px; } .attendance-design-screen .attendance-report-metrics, .attendance-design-screen .attendance-record-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .attendance-design-screen .attendance-settings-panel .menu-form-grid { grid-template-columns: minmax(0, 1fr); } .attendance-design-screen .attendance-kiosk-header { padding: 18px; gap: 16px; } .attendance-design-screen .attendance-live-grid { padding: 12px; } .attendance-design-screen .payroll-rate-row { grid-template-columns: minmax(0, 1fr); } }

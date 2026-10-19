@@ -82,6 +82,8 @@ test("newly typed edits are not lost when an older request completes", async () 
 });
 test("stock state, settings and secrets are correctly classified", () => {
   assert.equal(stateStore("vestora-inventory-transactions-STORE-A"), "STORE-A");
+  assert.equal(stateStore("vestora-inventory-brands-STORE-A"), "STORE-A");
+  assert.equal(stateStore("vestora-inventory-manufacturers-STORE-A"), "STORE-A");
   for (const key of ["vestora-current-user", "vestora-pos-cashier", "vestora-current-shift", "vestora-offline-orders", "vestora-kot-printer", "vestora-printer-choices", "vestora-api-token"]) assert.equal(isBusinessKey(key), false, key);
 });
 

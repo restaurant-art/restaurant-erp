@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { canCashierUseOpenShift, findOpenStoreShift, isEligiblePosCashier } from "./pos-access.js";
+import { canCashierUseOpenShift, findOpenStoreShift, isEligiblePosCashier, restorePosCashierSession } from "./pos-access.js";
 
 const branch = "STORE-001";
 const cashier = { id: "cashier-1", role: "Cashier", status: "Active", storeId: branch };
@@ -40,4 +40,11 @@ test("only the cashier who owns an open shift can resume or open in that drawer"
   assert.equal(canCashierUseOpenShift({ ...cashier, id: "cashier-2" }, openShift), false);
   assert.equal(canCashierUseOpenShift(cashier, null), true);
   assert.equal(canCashierUseOpenShift(null, openShift), false);
+});
+
+test("a saved cashier session resumes until logout, but invalid cashiers are rejected", () => {
+  const refreshedCashier = { ...cashier, name: "Updated cashier" };
+  assert.deepEqual(restorePosCashierSession(cashier, [refreshedCashier]), refreshedCashier);
+  assert.equal(restorePosCashierSession(cashier, []), null);
+  assert.equal(restorePosCashierSession(null, [refreshedCashier]), null);
 });

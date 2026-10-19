@@ -21,28 +21,44 @@ Set these values for production:
 - `DEBUG=False`
 - `ALLOWED_HOSTS`
 - `CORS_ALLOWED_ORIGINS`
-- `DATABASE_URL`
+- `CSRF_TRUSTED_ORIGINS`
+- `DB_HOST`
+- `DB_PORT`
+- `DB_NAME`
+- `DB_USER`
+- `DB_PASSWORD`
 - `REDIS_URL`
-- `R2_ACCESS_KEY_ID`
-- `R2_SECRET_ACCESS_KEY`
-- `R2_BUCKET_NAME`
-- `R2_ENDPOINT_URL`
-- `R2_PUBLIC_URL`
+- `AWS_STORAGE_BUCKET_NAME`
+- `AWS_S3_REGION_NAME`
 
-Cloudflare R2 is configured through `django-storages` using the S3-compatible API. Uploaded menu images, restaurant logos, employee photos, customer images, bill PDFs, reports, purchase bills, backups, and QR images use the configured storage backend when R2 credentials are present.
+In ECS, `SECRET_KEY` and `DB_PASSWORD` are injected from Secrets Manager. The
+remaining values come from the task definition. The application uses the ECS
+task role for S3; do not set `AWS_ACCESS_KEY_ID` or
+`AWS_SECRET_ACCESS_KEY` in production.
+
+Local Docker continues to use `DATABASE_URL`, local Redis, and filesystem
+media. AWS split database variables take precedence in the production task.
 
 ## Production Deployment
 
-1. Point the domain to the AWS load balancer.
-2. Use the managed PostgreSQL and Redis services configured for the production stack.
-3. Deploy the Docker image through the AWS build pipeline.
-4. Run `python manage.py collectstatic` if serving Django static files directly.
-5. Run Celery workers and scheduled jobs for backups, reports, subscription expiry, and notifications.
+1. Provision the foundation with `deploy/aws/cloudformation.yml` while ECS
+   desired counts remain zero.
+2. Build and push an immutable image to the stack's ECR repository.
+3. Run the dedicated migration task and require exit code zero.
+4. Activate at least two web tasks and one Celery worker.
+5. Point DNS to the ALB (the template can create the Route 53 alias).
+6. Verify the health endpoint, authentication, a database write, an S3 upload,
+   and background-task execution.
+
+Follow [AWS_DEPLOYMENT.md](AWS_DEPLOYMENT.md) for exact commands, upgrades,
+rollback, backups, and cost controls.
 
 ## Operational Hardening
 
 - Rotate JWT signing secret if compromised.
 - Enable database backups and object storage lifecycle rules.
 - Add Sentry or OpenTelemetry for error reporting.
-- Store provider credentials in a secrets manager.
-- Use Cloudflare WAF, rate limiting, bot protection, and access logs.
+- Keep credentials in AWS Secrets Manager and use IAM roles for AWS services.
+- Review AWS WAF sampled requests before tuning managed rules.
+- Configure AWS Budgets, CloudWatch alarms, RDS restore drills, and S3 version
+  recovery.

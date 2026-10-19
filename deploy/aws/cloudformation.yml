@@ -1,0 +1,1210 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  UVPRO AWS-only production stack: VPC, private S3 media, RDS PostgreSQL,
+  ElastiCache Redis, ECS/Fargate web and Celery services, ALB/WAF, ECR,
+  CloudWatch logs, Secrets Manager, and least-privilege IAM roles.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Application
+        Parameters:
+          - ProjectName
+          - EnvironmentName
+          - ApplicationDomain
+          - AcmCertificateArn
+          - HostedZoneId
+      - Label:
+          default: Initial deployment
+        Parameters:
+          - ImageTag
+          - MigrationImageTag
+          - DesiredWebCount
+          - DesiredWorkerCount
+          - MaxWebCount
+      - Label:
+          default: Database and cache
+        Parameters:
+          - DatabaseName
+          - DatabaseUsername
+          - DatabaseInstanceClass
+          - DatabaseAllocatedStorage
+          - DatabaseBackupRetentionDays
+          - DatabaseMultiAZ
+          - DatabaseDeletionProtection
+          - RedisNodeType
+          - RedisNodeCount
+      - Label:
+          default: Compute and operations
+        Parameters:
+          - WebCpu
+          - WebMemory
+          - WorkerCpu
+          - WorkerMemory
+          - LogRetentionDays
+          - AlbDeletionProtection
+      - Label:
+          default: Network
+        Parameters:
+          - VpcCidr
+          - PublicSubnet1Cidr
+          - PublicSubnet2Cidr
+          - PrivateSubnet1Cidr
+          - PrivateSubnet2Cidr
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: uvpro
+    AllowedPattern: "^[a-z][a-z0-9-]{1,18}[a-z0-9]$"
+    ConstraintDescription: Use 3-20 lowercase letters, digits, or hyphens.
+  EnvironmentName:
+    Type: String
+    Default: prod
+    AllowedPattern: "^[a-z][a-z0-9-]{1,10}[a-z0-9]$"
+    ConstraintDescription: Use 3-12 lowercase letters, digits, or hyphens.
+  ApplicationDomain:
+    Type: String
+    Description: DNS name covered by the ACM certificate, for example pos.example.com.
+    AllowedPattern: "^(?=.{4,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,63}$"
+  AcmCertificateArn:
+    Type: String
+    Description: ACM certificate ARN in this stack's region for ApplicationDomain.
+    AllowedPattern: "^arn:(aws|aws-us-gov|aws-cn):acm:[a-z0-9-]+:[0-9]{12}:certificate/[0-9a-fA-F-]+$"
+  HostedZoneId:
+    Type: String
+    Default: ""
+    Description: Optional Route 53 public hosted-zone ID. Leave blank to manage DNS elsewhere.
+  PublishDns:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Enable only after verifying healthy services and migrated data.
+  BootstrapAdminEmail:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
+    Description: Optional first administrator email for a fresh installation. Existing administrators are never reset.
+
+  ImageTag:
+    Type: String
+    Default: latest
+    AllowedPattern: "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
+    Description: Immutable ECR tag deployed by the ECS task definitions.
+  MigrationImageTag:
+    Type: String
+    Default: latest
+    AllowedPattern: "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
+    Description: Candidate ECR tag used only by the one-off migration task.
+  DesiredWebCount:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 6
+    Description: Keep at 0 on the foundation deployment; set to 2 after image push and migration.
+  DesiredWorkerCount:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 20
+    Description: Keep at 0 on the foundation deployment; set to at least 1 after migration.
+  MaxWebCount:
+    Type: Number
+    Default: 6
+    MinValue: 6
+    MaxValue: 50
+
+  DatabaseName:
+    Type: String
+    Default: uvpro
+    AllowedPattern: "^[a-zA-Z][a-zA-Z0-9_]{0,62}$"
+  DatabaseUsername:
+    Type: String
+    Default: uvpro_admin
+    AllowedPattern: "^[a-zA-Z][a-zA-Z0-9_]{0,62}$"
+  DatabaseInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    AllowedPattern: "^db\\.[a-z0-9]+\\.[a-z0-9]+$"
+  DatabaseAllocatedStorage:
+    Type: Number
+    Default: 30
+    MinValue: 20
+    MaxValue: 1000
+  DatabaseBackupRetentionDays:
+    Type: Number
+    Default: 14
+    MinValue: 7
+    MaxValue: 35
+  DatabaseMultiAZ:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+  DatabaseDeletionProtection:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+  RedisNodeType:
+    Type: String
+    Default: cache.t4g.micro
+    AllowedPattern: "^cache\\.[a-z0-9]+\\.[a-z0-9]+$"
+  RedisNodeCount:
+    Type: Number
+    Default: 2
+    AllowedValues: [1, 2]
+
+  WebCpu:
+    Type: String
+    Default: "512"
+    AllowedValues: ["512"]
+  WebMemory:
+    Type: String
+    Default: "1024"
+    AllowedValues: ["1024", "2048", "3072", "4096"]
+  WorkerCpu:
+    Type: String
+    Default: "512"
+    AllowedValues: ["512"]
+  WorkerMemory:
+    Type: String
+    Default: "1024"
+    AllowedValues: ["1024", "2048", "3072", "4096"]
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [7, 14, 30, 60, 90, 120, 180, 365]
+  AlbDeletionProtection:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+
+  VpcCidr:
+    Type: String
+    Default: 10.42.0.0/16
+    AllowedPattern: "^(10|172|192)\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}/(16|17|18|19|20|21|22|23|24)$"
+  PublicSubnet1Cidr:
+    Type: String
+    Default: 10.42.0.0/24
+  PublicSubnet2Cidr:
+    Type: String
+    Default: 10.42.1.0/24
+  PrivateSubnet1Cidr:
+    Type: String
+    Default: 10.42.10.0/24
+  PrivateSubnet2Cidr:
+    Type: String
+    Default: 10.42.11.0/24
+
+Conditions:
+  CreateDnsRecord: !And [!Not [!Equals [!Ref HostedZoneId, ""]], !Equals [!Ref PublishDns, "true"]]
+  BootstrapAdmin: !Not [!Equals [!Ref BootstrapAdminEmail, ""]]
+  UseDatabaseMultiAZ: !Equals [!Ref DatabaseMultiAZ, "true"]
+  ProtectDatabase: !Equals [!Ref DatabaseDeletionProtection, "true"]
+  ProtectAlb: !Equals [!Ref AlbDeletionProtection, "true"]
+  RedisHighAvailability: !Equals [!Ref RedisNodeCount, 2]
+  EnableWebAutoscaling: !Not [!Equals [!Ref DesiredWebCount, 0]]
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-vpc
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-igw
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PublicSubnet1Cidr
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-public-a
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PublicSubnet2Cidr
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-public-b
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet1Cidr
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-private-a
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet2Cidr
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-private-b
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-public
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  NatEip1:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-nat-eip-a
+  NatEip2:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-nat-eip-b
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEip1.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-nat-a
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEip2.AllocationId
+      SubnetId: !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-nat-b
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-private-a
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-private-b
+  PrivateDefaultRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+  PrivateDefaultRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      SubnetId: !Ref PrivateSubnet2
+
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+      VpcId: !Ref Vpc
+      RouteTableIds: [!Ref PrivateRouteTable1, !Ref PrivateRouteTable2]
+
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public HTTPS access to UVPRO ALB
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          DestinationSecurityGroupId: !Ref AppSecurityGroup
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: UVPRO ECS tasks
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+  AppIngressFromAlb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AppSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8000
+      ToPort: 8000
+      SourceSecurityGroupId: !Ref AlbSecurityGroup
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: PostgreSQL access from UVPRO ECS only
+      VpcId: !Ref Vpc
+      SecurityGroupEgress: []
+  DatabaseIngressFromApp:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DatabaseSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref AppSecurityGroup
+
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Redis access from UVPRO ECS only
+      VpcId: !Ref Vpc
+      SecurityGroupEgress: []
+  RedisIngressFromApp:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RedisSecurityGroup
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      SourceSecurityGroupId: !Ref AppSecurityGroup
+
+  MediaBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: [GET, HEAD, PUT, POST]
+            AllowedOrigins:
+              - !Sub https://${ApplicationDomain}
+            ExposedHeaders: [ETag]
+            MaxAge: 3600
+      LifecycleConfiguration:
+        Rules:
+          - Id: AbortIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+          - Id: ExpireOldNoncurrentVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 90
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-media
+  MediaBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MediaBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt MediaBucket.Arn
+              - !Sub ${MediaBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  Repository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: !Sub ${ProjectName}-${EnvironmentName}-app
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: >-
+          {"rules":[{"rulePriority":1,"description":"Keep 30 release images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":30},
+          "action":{"type":"expire"}}]}
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: UVPRO private database subnets
+      SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      AllocatedStorage: !Ref DatabaseAllocatedStorage
+      AutoMinorVersionUpgrade: true
+      BackupRetentionPeriod: !Ref DatabaseBackupRetentionDays
+      CopyTagsToSnapshot: true
+      DBInstanceClass: !Ref DatabaseInstanceClass
+      DBName: !Ref DatabaseName
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      DeletionProtection: !If [ProtectDatabase, true, false]
+      EnableCloudwatchLogsExports: [postgresql, upgrade]
+      EnableIAMDatabaseAuthentication: true
+      Engine: postgres
+      ManageMasterUserPassword: true
+      MasterUsername: !Ref DatabaseUsername
+      MaxAllocatedStorage: 2000
+      MultiAZ: !If [UseDatabaseMultiAZ, true, false]
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      StorageType: gp3
+      VPCSecurityGroups: [!Ref DatabaseSecurityGroup]
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-postgres
+
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: UVPRO private Redis subnets
+      SubnetIds: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+  Redis:
+    Type: AWS::ElastiCache::ReplicationGroup
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      AtRestEncryptionEnabled: true
+      AutomaticFailoverEnabled: !If [RedisHighAvailability, true, false]
+      AutoMinorVersionUpgrade: true
+      CacheNodeType: !Ref RedisNodeType
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      Engine: redis
+      MultiAZEnabled: !If [RedisHighAvailability, true, false]
+      NumCacheClusters: !Ref RedisNodeCount
+      ReplicationGroupDescription: !Sub ${ProjectName}-${EnvironmentName} Redis
+      SecurityGroupIds: [!Ref RedisSecurityGroup]
+      SnapshotRetentionLimit: 7
+      TransitEncryptionEnabled: true
+
+  ApplicationSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Sub ${ProjectName}-${EnvironmentName} Django secret
+      GenerateSecretString:
+        ExcludePunctuation: true
+        GenerateStringKey: SECRET_KEY
+        PasswordLength: 64
+        SecretStringTemplate: "{}"
+
+  RuntimeDatabaseSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Restricted UVPRO application database credentials
+      GenerateSecretString:
+        GenerateStringKey: password
+        PasswordLength: 40
+        ExcludePunctuation: true
+        SecretStringTemplate: '{"username":"uvpro_app"}'
+
+  BootstrapAdministratorSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: BootstrapAdmin
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: First UVPRO administrator credentials; change password after first login
+      GenerateSecretString:
+        GenerateStringKey: password
+        PasswordLength: 32
+        ExcludePunctuation: true
+        SecretStringTemplate: !Sub '{"email":"${BootstrapAdminEmail}"}'
+
+  WebLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${ProjectName}/${EnvironmentName}/web
+      RetentionInDays: !Ref LogRetentionDays
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${ProjectName}/${EnvironmentName}/worker
+      RetentionInDays: !Ref LogRetentionDays
+  MigrationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${ProjectName}/${EnvironmentName}/migration
+      RetentionInDays: !Ref LogRetentionDays
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ReadRuntimeSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref ApplicationSecret
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RuntimeDatabaseSecret
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref RuntimeDatabaseSecret
+        - PolicyName: PrivateMediaBucketAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ListMediaBucket
+                Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource: !GetAtt MediaBucket.Arn
+              - Sid: ManageMediaObjects
+                Effect: Allow
+                Action:
+                  - s3:AbortMultipartUpload
+                  - s3:DeleteObject
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub ${MediaBucket.Arn}/*
+
+  MigrationTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: MigrationSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !GetAtt Database.MasterUserSecret.SecretArn
+                  - !Ref RuntimeDatabaseSecret
+                  - !If [BootstrapAdmin, !Ref BootstrapAdministratorSecret, !Ref AWS::NoValue]
+        - PolicyName: MigrationMedia
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:ListBucket, s3:GetBucketLocation]
+                Resource: !GetAtt MediaBucket.Arn
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub ${MediaBucket.Arn}/*
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${ProjectName}-${EnvironmentName}
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+
+  WebTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${ProjectName}-${EnvironmentName}-web
+      Cpu: !Ref WebCpu
+      Memory: !Ref WebMemory
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: web
+          Image: !Sub ${Repository.RepositoryUri}:${ImageTag}
+          Essential: true
+          Command:
+            - gunicorn
+            - config.asgi:application
+            - --worker-class
+            - uvicorn.workers.UvicornWorker
+            - --workers
+            - "2"
+            - --bind
+            - 0.0.0.0:8000
+            - --access-logfile
+            - "-"
+            - --error-logfile
+            - "-"
+          PortMappings:
+            - ContainerPort: 8000
+              Protocol: tcp
+          Environment:
+            - Name: DEBUG
+              Value: "False"
+            - Name: ALLOWED_HOSTS
+              Value: !Ref ApplicationDomain
+            - Name: CORS_ALLOWED_ORIGINS
+              Value: !Sub https://${ApplicationDomain}
+            - Name: CSRF_TRUSTED_ORIGINS
+              Value: !Sub https://${ApplicationDomain}
+            - Name: DATABASE_SSL_REQUIRE
+              Value: "True"
+            - Name: DB_HOST
+              Value: !GetAtt Database.Endpoint.Address
+            - Name: DB_PORT
+              Value: !GetAtt Database.Endpoint.Port
+            - Name: DB_NAME
+              Value: !Ref DatabaseName
+            - Name: DB_SECRET_ARN
+              Value: !Ref RuntimeDatabaseSecret
+            - Name: DATABASE_SSL_ROOT_CERT
+              Value: /app/certs/rds-global-bundle.pem
+            - Name: REDIS_URL
+              Value: !Sub rediss://${Redis.PrimaryEndPoint.Address}:${Redis.PrimaryEndPoint.Port}/0?ssl_cert_reqs=required
+            - Name: AWS_STORAGE_BUCKET_NAME
+              Value: !Ref MediaBucket
+            - Name: AWS_S3_REGION_NAME
+              Value: !Ref AWS::Region
+            - Name: USE_S3_STORAGE
+              Value: "True"
+            - Name: AWS_QUERYSTRING_EXPIRE
+              Value: "3600"
+            - Name: SESSION_COOKIE_SECURE
+              Value: "True"
+            - Name: CSRF_COOKIE_SECURE
+              Value: "True"
+            - Name: SECURE_HSTS_SECONDS
+              Value: "31536000"
+          Secrets:
+            - Name: SECRET_KEY
+              ValueFrom: !Join ["", [!Ref ApplicationSecret, ":SECRET_KEY::"]]
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - >-
+                python -c "import urllib.request;
+                urllib.request.urlopen('http://127.0.0.1:8000/api/health/', timeout=3)" || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 45
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref WebLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: web
+
+  WorkerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${ProjectName}-${EnvironmentName}-worker
+      Cpu: !Ref WorkerCpu
+      Memory: !Ref WorkerMemory
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: worker
+          Image: !Sub ${Repository.RepositoryUri}:${ImageTag}
+          Essential: true
+          Command:
+            - celery
+            - -A
+            - config
+            - worker
+            - --loglevel=INFO
+            - --concurrency=2
+          Environment:
+            - Name: DEBUG
+              Value: "False"
+            - Name: ALLOWED_HOSTS
+              Value: !Ref ApplicationDomain
+            - Name: CORS_ALLOWED_ORIGINS
+              Value: !Sub https://${ApplicationDomain}
+            - Name: CSRF_TRUSTED_ORIGINS
+              Value: !Sub https://${ApplicationDomain}
+            - Name: DATABASE_SSL_REQUIRE
+              Value: "True"
+            - Name: DB_HOST
+              Value: !GetAtt Database.Endpoint.Address
+            - Name: DB_PORT
+              Value: !GetAtt Database.Endpoint.Port
+            - Name: DB_NAME
+              Value: !Ref DatabaseName
+            - Name: DB_SECRET_ARN
+              Value: !Ref RuntimeDatabaseSecret
+            - Name: DATABASE_SSL_ROOT_CERT
+              Value: /app/certs/rds-global-bundle.pem
+            - Name: REDIS_URL
+              Value: !Sub rediss://${Redis.PrimaryEndPoint.Address}:${Redis.PrimaryEndPoint.Port}/0?ssl_cert_reqs=required
+            - Name: AWS_STORAGE_BUCKET_NAME
+              Value: !Ref MediaBucket
+            - Name: AWS_S3_REGION_NAME
+              Value: !Ref AWS::Region
+            - Name: USE_S3_STORAGE
+              Value: "True"
+            - Name: AWS_QUERYSTRING_EXPIRE
+              Value: "3600"
+            - Name: SESSION_COOKIE_SECURE
+              Value: "True"
+            - Name: CSRF_COOKIE_SECURE
+              Value: "True"
+            - Name: SECURE_HSTS_SECONDS
+              Value: "31536000"
+          Secrets:
+            - Name: SECRET_KEY
+              ValueFrom: !Join ["", [!Ref ApplicationSecret, ":SECRET_KEY::"]]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref WorkerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: worker
+
+  MigrationTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${ProjectName}-${EnvironmentName}-migration
+      Cpu: "256"
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt MigrationTaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: migration
+          Image: !Sub ${Repository.RepositoryUri}:${MigrationImageTag}
+          Essential: true
+          Command:
+            - /bin/sh
+            - -ec
+            - python manage.py migrate --noinput && python manage.py provision_runtime_database && python manage.py bootstrap_admin
+          Environment:
+            - Name: RUNTIME_DB_SECRET_ARN
+              Value: !Ref RuntimeDatabaseSecret
+            - Name: BOOTSTRAP_ADMIN_SECRET_ARN
+              Value: !If [BootstrapAdmin, !Ref BootstrapAdministratorSecret, ""]
+            - Name: DEBUG
+              Value: "False"
+            - Name: ALLOWED_HOSTS
+              Value: !Ref ApplicationDomain
+            - Name: CORS_ALLOWED_ORIGINS
+              Value: !Sub https://${ApplicationDomain}
+            - Name: CSRF_TRUSTED_ORIGINS
+              Value: !Sub https://${ApplicationDomain}
+            - Name: DATABASE_SSL_REQUIRE
+              Value: "True"
+            - Name: DB_HOST
+              Value: !GetAtt Database.Endpoint.Address
+            - Name: DB_PORT
+              Value: !GetAtt Database.Endpoint.Port
+            - Name: DB_NAME
+              Value: !Ref DatabaseName
+            - Name: DB_SECRET_ARN
+              Value: !GetAtt Database.MasterUserSecret.SecretArn
+            - Name: DATABASE_SSL_ROOT_CERT
+              Value: /app/certs/rds-global-bundle.pem
+            - Name: REDIS_URL
+              Value: !Sub rediss://${Redis.PrimaryEndPoint.Address}:${Redis.PrimaryEndPoint.Port}/0?ssl_cert_reqs=required
+            - Name: AWS_STORAGE_BUCKET_NAME
+              Value: !Ref MediaBucket
+            - Name: AWS_S3_REGION_NAME
+              Value: !Ref AWS::Region
+            - Name: USE_S3_STORAGE
+              Value: "True"
+            - Name: AWS_QUERYSTRING_EXPIRE
+              Value: "3600"
+            - Name: SESSION_COOKIE_SECURE
+              Value: "True"
+            - Name: CSRF_COOKIE_SECURE
+              Value: "True"
+            - Name: SECURE_HSTS_SECONDS
+              Value: "31536000"
+          Secrets:
+            - Name: SECRET_KEY
+              ValueFrom: !Join ["", [!Ref ApplicationSecret, ":SECRET_KEY::"]]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref MigrationLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: migration
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      SecurityGroups: [!Ref AlbSecurityGroup]
+      Subnets: [!Ref PublicSubnet1, !Ref PublicSubnet2]
+      Type: application
+      LoadBalancerAttributes:
+        - Key: deletion_protection.enabled
+          Value: !If [ProtectAlb, "true", "false"]
+        - Key: idle_timeout.timeout_seconds
+          Value: "120"
+        - Key: routing.http.drop_invalid_header_fields.enabled
+          Value: "true"
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-${EnvironmentName}-alb
+  WebTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref Vpc
+      Port: 8000
+      Protocol: HTTP
+      ProtocolVersion: HTTP1
+      TargetType: ip
+      HealthCheckEnabled: true
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /api/ready/
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: "200"
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "30"
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: "443"
+            StatusCode: HTTP_301
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref AcmCertificateArn
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref WebTargetGroup
+
+  WebAcl:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub ${ProjectName}-${EnvironmentName}-web-acl
+      Scope: REGIONAL
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub ${ProjectName}-${EnvironmentName}-web-acl
+        SampledRequestsEnabled: true
+      Rules:
+        - Name: AWSCommonRules
+          Priority: 0
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              RuleActionOverrides:
+                # Cloud state and report payloads can legitimately exceed the
+                # ALB WAF body inspection window. Keep telemetry without
+                # rejecting them solely for size.
+                - Name: SizeRestrictions_BODY
+                  ActionToUse:
+                    Count: {}
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: aws-common-rules
+            SampledRequestsEnabled: true
+        - Name: AWSKnownBadInputs
+          Priority: 1
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: aws-known-bad-inputs
+            SampledRequestsEnabled: true
+        - Name: AWSIpReputation
+          Priority: 2
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesAmazonIpReputationList
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: aws-ip-reputation
+            SampledRequestsEnabled: true
+  WebAclAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+      ResourceArn: !GetAtt LoadBalancer.LoadBalancerArn
+      WebACLArn: !GetAtt WebAcl.Arn
+
+  WebService:
+    Type: AWS::ECS::Service
+    DependsOn: [HttpsListener, PrivateDefaultRoute1, PrivateDefaultRoute2, AppIngressFromAlb, DatabaseIngressFromApp, RedisIngressFromApp]
+    Properties:
+      ServiceName: !Sub ${ProjectName}-${EnvironmentName}-web
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref WebTaskDefinition
+      DesiredCount: !Ref DesiredWebCount
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      EnableECSManagedTags: true
+      HealthCheckGracePeriodSeconds: 90
+      LoadBalancers:
+        - ContainerName: web
+          ContainerPort: 8000
+          TargetGroupArn: !Ref WebTargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups: [!Ref AppSecurityGroup]
+          Subnets: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+      PlatformVersion: LATEST
+      PropagateTags: SERVICE
+  WorkerService:
+    Type: AWS::ECS::Service
+    DependsOn: [PrivateDefaultRoute1, PrivateDefaultRoute2, DatabaseIngressFromApp, RedisIngressFromApp]
+    Properties:
+      ServiceName: !Sub ${ProjectName}-${EnvironmentName}-worker
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref WorkerTaskDefinition
+      DesiredCount: !Ref DesiredWorkerCount
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      EnableECSManagedTags: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups: [!Ref AppSecurityGroup]
+          Subnets: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+      PlatformVersion: LATEST
+      PropagateTags: SERVICE
+
+  WebScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: EnableWebAutoscaling
+    Properties:
+      ServiceNamespace: ecs
+      ScalableDimension: ecs:service:DesiredCount
+      ResourceId: !Join
+        - /
+        - - service
+          - !Ref Cluster
+          - !GetAtt WebService.Name
+      MinCapacity: !Ref DesiredWebCount
+      MaxCapacity: !Ref MaxWebCount
+  WebCpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableWebAutoscaling
+    Properties:
+      PolicyName: !Sub ${ProjectName}-${EnvironmentName}-web-cpu
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref WebScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleInCooldown: 180
+        ScaleOutCooldown: 60
+        TargetValue: 60
+
+  ApplicationDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: CreateDnsRecord
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref ApplicationDomain
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt LoadBalancer.DNSName
+        HostedZoneId: !GetAtt LoadBalancer.CanonicalHostedZoneID
+        EvaluateTargetHealth: true
+
+Outputs:
+  ApplicationUrl:
+    Value: !Sub https://${ApplicationDomain}
+  LoadBalancerDnsName:
+    Value: !GetAtt LoadBalancer.DNSName
+  EcrRepositoryUri:
+    Value: !GetAtt Repository.RepositoryUri
+  MediaBucketName:
+    Value: !Ref MediaBucket
+  ClusterName:
+    Value: !Ref Cluster
+  WebServiceName:
+    Value: !GetAtt WebService.Name
+  WorkerServiceName:
+    Value: !GetAtt WorkerService.Name
+  WebTaskDefinitionArn:
+    Value: !Ref WebTaskDefinition
+  WorkerTaskDefinitionArn:
+    Value: !Ref WorkerTaskDefinition
+  MigrationTaskDefinitionArn:
+    Value: !Ref MigrationTaskDefinition
+  MigrationLogGroupName:
+    Value: !Ref MigrationLogGroup
+  AppSecurityGroupId:
+    Value: !Ref AppSecurityGroup
+  PrivateSubnetIds:
+    Value: !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2]]
+  DatabaseEndpoint:
+    Value: !GetAtt Database.Endpoint.Address
+  DatabaseSecretArn:
+    Value: !GetAtt Database.MasterUserSecret.SecretArn
+  RuntimeDatabaseSecretArn:
+    Value: !Ref RuntimeDatabaseSecret
+  BootstrapAdministratorSecretArn:
+    Condition: BootstrapAdmin
+    Value: !Ref BootstrapAdministratorSecret
+  RedisEndpoint:
+    Value: !GetAtt Redis.PrimaryEndPoint.Address
+  WebAclArn:
+    Value: !GetAtt WebAcl.Arn

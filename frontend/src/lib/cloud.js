@@ -58,9 +58,17 @@ function createAwsClient() {
       const response = await awsRequest("/api/cloud/auth/login/", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
+        signal: AbortSignal.timeout(8000),
       }, false);
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) return { data: {}, error: new Error(body.error || "Sign-in failed") };
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.toLowerCase().includes("application/json")) {
+        return { data: {}, error: new Error("The login API is unavailable or returned an invalid response. Check the server and retry.") };
+      }
+      const body = await response.json().catch(() => null);
+      if (!response.ok) return { data: {}, error: new Error(body?.error || "Sign-in failed") };
+      if (!body?.access || !body?.refresh || !body?.user) {
+        return { data: {}, error: new Error("The login API returned an incomplete response. Check the server configuration.") };
+      }
       const session = { access_token: body.access, refresh_token: body.refresh, user: body.user };
       writeAwsSession(session);
       return { data: { session, user: body.user }, error: null };
@@ -183,6 +191,7 @@ let timer = null;
 let refreshJob = null;
 const failures = new Map();
 const pending = new Set();
+const storeAccessMessage = "Your store assignment no longer permits this data. Your local changes are retained; ask an administrator to restore access or sign in with the assigned store account.";
 let status = { state: "connecting", message: "Connecting to store data…" };
 export const getCloudSyncStatus = () => status;
 export const subscribeBusinessState = (listener) => { subscribers.add(listener); return () => subscribers.delete(listener); };
@@ -195,7 +204,7 @@ function emit(key, value) {
 }
 function report() {
   status = failures.size
-    ? { state: "error", message: [...failures.values()][0], pending: failures.size }
+    ? { state: "error", message: failures.get("connection") || [...failures.values()][0], pending: failures.size }
     : pending.size ? { state: "saving", message: "Saving store changes…", pending: pending.size }
     : { state: "synced", message: "Store data saved to cloud", pending: 0 };
   emit();
@@ -209,9 +218,13 @@ export function stopCloudSync() {
 }
 function configureCloudSync(profile, userId) {
   const namespace = `${window.location?.origin || "local"}:${userId}`;
-  if (syncContext?.namespace === namespace) return;
+  const stores = [...new Set((profile.allowedStoreIds || (profile.storeId ? [profile.storeId] : [])).map(String))].sort();
+  const superAdmin = Boolean(profile.isSuperuser || profile.role === "super_admin");
+  if (syncContext?.namespace === namespace
+    && syncContext.superAdmin === superAdmin
+    && JSON.stringify(syncContext.stores) === JSON.stringify(stores)) return;
   stopCloudSync();
-  const context = { namespace, superAdmin: profile.isSuperuser || profile.role === "super_admin", stores: profile.allowedStoreIds || (profile.storeId ? [profile.storeId] : []) };
+  const context = { namespace, superAdmin, stores };
   // Browser caches can outlive a login. Keep a recovery copy and expose only
   // the new login's store records to the application.
   if (!context.superAdmin) {
@@ -285,17 +298,32 @@ export const syncVersionedSharedListState = syncLocalStateKeyToCloud;
 export async function syncLocalStateToCloud() {
   if (!synchronizer || window.vestoraCloudStateReady !== true) return;
   if (refreshJob) return refreshJob;
-  const context = syncContext;
   refreshJob = (async () => {
-    const rows = await cloudJson("/api/cloud/state/");
-    if (syncContext !== context) return;
-    const keys = new Set([...Object.keys(rawStorage).filter(allowedKey), ...rows.map((row) => row.state_key).filter(allowedKey)]);
-    const byKey = new Map(rows.map((row) => [row.state_key, row]));
-    const results = await Promise.allSettled([...keys].map((key) => syncLocalStateKeyToCloud(key, { row: byKey.get(key) })));
-    const failure = results.find((result) => result.status === "rejected");
-    if (failure) throw failure.reason;
-    failures.delete("connection"); report();
-  })().catch((error) => { if (syncContext === context) { failures.set("connection", error.message); report(); } throw error; }).finally(() => { refreshJob = null; });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const context = syncContext;
+      try {
+        const rows = await cloudJson("/api/cloud/state/");
+        if (syncContext !== context) continue;
+        const keys = new Set([...Object.keys(rawStorage).filter(allowedKey), ...rows.map((row) => row.state_key).filter(allowedKey)]);
+        const byKey = new Map(rows.map((row) => [row.state_key, row]));
+        const results = await Promise.allSettled([...keys].map((key) => syncLocalStateKeyToCloud(key, { row: byKey.get(key) })));
+        const failure = results.find((result) => result.status === "rejected");
+        if (failure) throw failure.reason;
+        failures.delete("connection"); report();
+        return;
+      } catch (error) {
+        if (error.status === 403 && attempt === 0 && syncContext === context) {
+          await cloudProfile();
+          if (syncContext !== context) continue;
+        }
+        if (syncContext === context) {
+          failures.set("connection", error.status === 403 ? storeAccessMessage : error.message);
+          report();
+        }
+        throw error;
+      }
+    }
+  })().finally(() => { refreshJob = null; });
   return refreshJob;
 }
 export async function fetchSharedSuperAdminStores() {
@@ -312,11 +340,20 @@ export async function hydrateLocalStateFromCloud() {
   // Retain browser-only additions. Backups are made before the first merge;
   // an existing checkpoint also preserves unsent edits across reloads.
   const byKey = new Map(rows.map((row) => [row.state_key, row]));
+  const accessErrors = [];
   await Promise.allSettled([...keys].map(async (key) => {
     try { await sync.sync(key, { row: byKey.get(key) }); if (sync === synchronizer) failures.delete(key); }
-    catch (error) { if (sync === synchronizer) failures.set(key, error.message); }
+    catch (error) {
+      if (sync === synchronizer) failures.set(key, error.message);
+      if (error.status === 403) accessErrors.push(error);
+    }
   }));
   if (sync !== synchronizer) throw new Error("Sign-in changed. Please retry.");
+  if (accessErrors.length) {
+    await cloudProfile();
+    if (sync !== synchronizer) return hydrateLocalStateFromCloud();
+    failures.set("connection", storeAccessMessage);
+  }
   report();
   return true;
 }

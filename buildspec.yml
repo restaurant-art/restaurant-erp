@@ -2,21 +2,27 @@ version: 0.2
 
 env:
   variables:
-    ECR_REPOSITORY: vestora-prod-backend
+    ECR_REPOSITORY: uvpro-prod-app
 
 phases:
   pre_build:
     commands:
-      - ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
-      - REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-      - IMAGE_TAG="$(tr -d '\r\n' < .release-tag)"
-      - IMAGE_URI="${REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+      - export ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+      - export REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+      - export SOURCE_TAG="$(printf '%s' "${CODEBUILD_RESOLVED_SOURCE_VERSION:-manual}" | cut -c1-12)"
+      - export RELEASE_TAG="${IMAGE_TAG:-${SOURCE_TAG}-${CODEBUILD_BUILD_NUMBER:-0}}"
+      - export IMAGE_URI="${REGISTRY}/${ECR_REPOSITORY}:${RELEASE_TAG}"
       - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "$REGISTRY"
   build:
     commands:
-      - docker build --file deploy/Dockerfile.aws --tag "$IMAGE_URI" .
+      - docker build --platform linux/amd64 --file deploy/Dockerfile.aws --tag "$IMAGE_URI" .
   post_build:
     commands:
       - docker push "$IMAGE_URI"
       - printf 'Built and pushed %s\n' "$IMAGE_URI"
+      - printf '{"ImageURI":"%s"}\n' "$IMAGE_URI" > imageDetail.json
+
+artifacts:
+  files:
+    - imageDetail.json
 

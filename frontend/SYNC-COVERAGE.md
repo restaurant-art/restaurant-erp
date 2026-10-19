@@ -36,8 +36,9 @@ banner reports pending or failed changes.
 The API validates store access for explicit keys, list reads and writes, filters
 multi-store ledgers, strips credentials, and preserves other stores' records.
 All writes require a version and operation ID. Django checks the version and
-records the result in one database transaction, so a lost acknowledgement can
-be replayed without applying a stock deduction twice.
+claims the operation ID before changing shared state, and records the result in
+the same database transaction. A concurrent replay therefore waits for and
+returns the original result instead of applying a stock deduction twice.
 
 Disjoint record/field changes merge; conflicting edits to the same business
 field remain local and report an error. Stock quantities merge by change amount,
@@ -51,6 +52,8 @@ an overselling lock across offline cashiers.
 - `node --test src/lib/*.test.js`: two-device cases for the complete registry,
   object settings, nested menu setup, offline/reload recovery, stale writes,
   deletion, secrets, store denial and lost responses.
+- `python manage.py test apps.core.tests.test_cloud_sync`: API regression cases
+  for exact mutation replay, mutation-ID misuse and retrying version conflicts.
 - `node scripts/sync-browser-check.cjs`: isolated Chrome sessions against a
   local preview and mocked AWS API; no production test records.
 - Apply backend schema changes through Django migrations. Do not run ad hoc SQL

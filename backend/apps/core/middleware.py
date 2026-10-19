@@ -1,4 +1,35 @@
+from django.conf import settings
+
 from .models import Restaurant
+
+
+class HealthCheckHostMiddleware:
+    """Let infrastructure probes reach only the public health endpoint.
+
+    ALB target checks address a Fargate task by its private IP, so their Host
+    header cannot be listed statically in ``ALLOWED_HOSTS``.  Normalizing the
+    Host for this one read-only endpoint keeps strict host validation in place
+    for every application route while allowing both ALB and container probes.
+    """
+
+    paths = {"/api/health/", "/api/ready/"}
+    methods = {"GET", "HEAD"}
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if request.path in self.paths and request.method in self.methods:
+            canonical_host = next(
+                (
+                    host
+                    for host in settings.ALLOWED_HOSTS
+                    if host and host != "*" and not host.startswith(".")
+                ),
+                "localhost",
+            )
+            request.META["HTTP_HOST"] = canonical_host
+        return self.get_response(request)
 
 
 class TenantContextMiddleware:

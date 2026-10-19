@@ -1,0 +1,35 @@
+.vesty-shell { position: fixed; inset: 0 0 0 auto; z-index: 1300; display: flex; justify-content: flex-end; font-family: inherit; color: var(--theme-text, #10231f); pointer-events: none; }
+.vesty-launcher { position: absolute; right: 0; bottom: 26px; width: 144px; min-height: 50px; padding: 0 14px 0 8px; border: 1px solid color-mix(in srgb, var(--theme-primary, #17604b) 80%, #fff); border-right: 0; border-radius: 26px 0 0 26px; background: var(--theme-primary, #17604b); color: #fff; box-shadow: 0 12px 32px rgb(5 32 24 / 22%); display: flex; align-items: center; justify-content: flex-start; gap: 9px; font-size: 13px; font-weight: 700; cursor: pointer; pointer-events: auto; transform: translateX(75%); transition: box-shadow .18s ease; }
+.vesty-launcher:hover { box-shadow: 0 15px 38px rgb(5 32 24 / 26%); }
+.vesty-panel { width: min(430px, calc(100vw - 28px)); height: 100dvh; background: var(--theme-surface, #fff); border: 0; border-left: 1px solid var(--design-border, #dce6e1); border-radius: 17px 0 0 17px; box-shadow: -18px 0 60px rgb(4 30 22 / 22%); display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto; overflow: hidden; pointer-events: auto; animation: vesty-slide-in .22s ease-out; }
+.vesty-shell.expanded .vesty-panel { width: min(720px, calc(100vw - 44px)); }
+@keyframes vesty-slide-in { from { opacity: .55; transform: translateX(28px); } to { opacity: 1; transform: translateX(0); } }
+.vesty-head { display: flex; align-items: center; gap: 11px; padding: 16px 17px; border-bottom: 1px solid var(--design-border, #dce6e1); background: color-mix(in srgb, var(--theme-primary, #17604b) 4%, var(--theme-surface, #fff)); }
+.vesty-avatar { display: grid; place-items: center; width: 38px; height: 38px; flex-shrink: 0; color: #fff; border-radius: 12px; background: var(--theme-primary, #17604b); }
+.vesty-head > div:nth-child(2) { display: grid; gap: 4px; min-width: 0; margin-right: auto; }
+.vesty-head strong { font-size: 15px; }
+.vesty-head span { display: flex; align-items: center; gap: 6px; color: var(--theme-muted, #62766e); font-size: 10px; white-space: nowrap; }
+.vesty-head span i { width: 7px; height: 7px; border-radius: 50%; background: #21aa78; box-shadow: 0 0 0 3px rgb(33 170 120 / 12%); }
+.vesty-head-actions { display: flex; gap: 3px; }
+.vesty-head-actions button { display: grid; place-items: center; width: 31px; min-height: 31px; padding: 0; border: 0; background: transparent; color: var(--theme-muted, #62766e); border-radius: 8px; cursor: pointer; }
+.vesty-head-actions button:hover { background: color-mix(in srgb, var(--theme-primary, #17604b) 8%, transparent); }
+.vesty-context { display: flex; align-items: center; gap: 7px; padding: 10px 17px; color: var(--theme-muted, #62766e); background: color-mix(in srgb, var(--theme-primary, #17604b) 2%, var(--theme-surface, #fff)); border-bottom: 1px solid var(--design-border, #dce6e1); font-size: 10px; }
+.vesty-context svg { color: var(--theme-primary, #17604b); }
+.vesty-messages { padding: 18px 16px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; background: color-mix(in srgb, var(--theme-bg, #f5f8f6) 68%, var(--theme-surface, #fff)); }
+.vesty-message { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 16px; }
+.vesty-message.user { justify-content: flex-end; }
+.vesty-message > div:last-child { max-width: 88%; }
+.vesty-message p { margin: 0; padding: 11px 13px; border: 1px solid var(--design-border, #dce6e1); border-radius: 5px 13px 13px 13px; background: var(--theme-surface, #fff); font-size: 12px; line-height: 1.62; white-space: pre-line; overflow-wrap: anywhere; }
+.vesty-message.user p { color: #fff; background: var(--theme-primary, #17604b); border-color: var(--theme-primary, #17604b); border-radius: 13px 5px 13px 13px; }
+.vesty-mini-avatar { display: grid; place-items: center; width: 27px; height: 27px; flex-shrink: 0; border-radius: 9px; color: var(--theme-primary, #17604b); background: color-mix(in srgb, var(--theme-primary, #17604b) 10%, var(--theme-surface, #fff)); }
+.vesty-suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.vesty-suggestions button { min-height: 29px; padding: 5px 9px; border: 1px solid color-mix(in srgb, var(--theme-primary, #17604b) 25%, var(--design-border, #dce6e1)); border-radius: 14px; color: var(--theme-primary, #17604b); background: var(--theme-surface, #fff); font: inherit; font-size: 9px; font-weight: 600; cursor: pointer; }
+.vesty-composer { display: flex; align-items: center; gap: 8px; padding: 12px 13px; border-top: 1px solid var(--design-border, #dce6e1); background: var(--theme-surface, #fff); }
+.vesty-composer input { flex: 1; min-width: 0; height: 42px; border: 1px solid var(--design-border, #dce6e1); border-radius: 11px; padding: 0 13px; background: var(--theme-surface, #fff); color: var(--theme-text, #10231f); font: inherit; font-size: 12px; }
+.vesty-composer input:focus { outline: 2px solid color-mix(in srgb, var(--theme-primary, #17604b) 35%, transparent); border-color: var(--theme-primary, #17604b); }
+.vesty-composer button { display: grid; place-items: center; width: 42px; height: 42px; min-height: 42px; padding: 0; border: 0; border-radius: 11px; background: var(--theme-primary, #17604b); color: #fff; cursor: pointer; }
+.vesty-composer button:disabled { opacity: .38; cursor: default; }
+.vesty-panel > footer { padding: 0 14px 11px; color: var(--theme-muted, #62766e); background: var(--theme-surface, #fff); text-align: center; font-size: 9px; }
+.dark .vesty-panel { color-scheme: dark; }
+@media (max-width: 760px) { .vesty-launcher { bottom: 14px; min-height: 46px; padding-left: 8px; } .vesty-panel, .vesty-shell.expanded .vesty-panel { width: 100vw; height: 100dvh; border-left: 0; border-radius: 0; } .vesty-head { padding: 13px; } .vesty-head-actions button:nth-child(2) { display: none; } .vesty-messages { padding: 14px 12px; } }
+@media print { .vesty-shell { display: none !important; } }

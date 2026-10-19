@@ -7,9 +7,13 @@ UVPRO uses a shared-database multi-tenant architecture. Every tenant-owned model
 - Django handles domain models, admin, security middleware, and ORM.
 - Django REST Framework exposes CRUD APIs and operational endpoints.
 - Simple JWT secures API access.
-- Django Channels provides WebSocket plumbing for KDS, table, and POS events.
-- Celery and Redis run background jobs for report exports, subscription expiry, notifications, forecasts, and backups.
-- Cloudflare R2 stores uploaded files through S3-compatible `django-storages`.
+- Django Channels provides session-authenticated WebSocket plumbing with origin
+  validation and restaurant authorization. JWT clients use the HTTP sync APIs.
+- Celery and Redis provide a worker for explicitly queued jobs. Periodic jobs
+  require a scheduler; forecasts and backup jobs are not implemented here.
+- A private Amazon S3 bucket stores uploaded files through `django-storages`.
+  ECS authorizes requests with an IAM task role, so no static AWS access key is
+  present in application configuration.
 
 ## Frontend
 
@@ -24,8 +28,25 @@ UVPRO uses a shared-database multi-tenant architecture. Every tenant-owned model
 - JWT access and refresh tokens protect APIs.
 - Role permissions are editable per tenant.
 - Audit logs capture actor, action, entity, and before/after payloads.
-- HTTPS, Cloudflare WAF, CSRF, CORS, and rate limiting should be enforced in production.
+- The AWS Application Load Balancer redirects HTTP to HTTPS and uses an ACM
+  certificate. AWS WAF managed rules, Django CSRF/CORS checks, tenant checks,
+  provide layered controls.
 
 ## Data Isolation
 
 Tenant isolation is implemented in `TenantScopedViewSet`. Additional hardening for very large deployments can move tenants to separate schemas or databases while preserving the same API contract.
+
+## AWS Production Topology
+
+The load balancer is the only public application component. Web and Celery
+tasks run in private subnets and connect to private RDS and ElastiCache
+endpoints through security-group references. RDS, Redis, and S3 are encrypted;
+S3 blocks every form of public access and issues time-limited signed URLs.
+
+The same immutable ECR image supplies the web, worker, and one-off migration
+tasks. Database migrations run in a dedicated ECS task before a rolling release,
+never in the web container startup command. CloudWatch captures separate web,
+worker, and migration logs.
+
+The canonical infrastructure definition and operational procedure are in
+`deploy/aws/cloudformation.yml` and `docs/AWS_DEPLOYMENT.md`.

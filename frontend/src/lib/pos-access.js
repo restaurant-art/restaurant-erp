@@ -32,3 +32,8 @@ export function findOpenStoreShift(shifts) {
 export function canCashierUseOpenShift(cashier, openShift) {
   return Boolean(cashier) && (!openShift || String(openShift.cashierId) === String(cashier.id));
 }
+
+export function restorePosCashierSession(savedCashier, eligibleCashiers) {
+  if (!savedCashier?.id || !Array.isArray(eligibleCashiers)) return null;
+  return eligibleCashiers.find((cashier) => String(cashier.id) === String(savedCashier.id)) || null;
+}

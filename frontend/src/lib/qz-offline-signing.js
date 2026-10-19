@@ -87,6 +87,10 @@ export async function saveOfflineQzSigner(certificatePem, privateKeyPem) {
   return { certificate, savedAt: Date.now() };
 }
 
+export async function removeOfflineQzSigner() {
+  await storeRequest("readwrite", (store) => store.delete(signerKey));
+}
+
 export async function signOfflineQzRequest(requestText) {
   const signer = await getOfflineQzSigner();
   if (!signer) throw new Error("Offline QZ signing is not set up on this computer");

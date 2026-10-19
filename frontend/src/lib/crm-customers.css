@@ -1,0 +1,10 @@
+.crm-customer-filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.crm-customer-filters button { display: inline-flex; align-items: center; gap: 14px; padding: 12px 18px; border: 1px solid var(--theme-border, #d9e4df); border-radius: 10px; background: var(--theme-surface, #fff); color: var(--theme-text, #163a30); font-weight: 700; }
+.crm-customer-filters button[aria-pressed="true"] { background: var(--theme-primary, #17634f); color: white; border-color: transparent; }
+.crm-customer-filters button span { min-width: 24px; padding: 2px 7px; border-radius: 6px; background: color-mix(in srgb, currentColor 12%, transparent); }
+.crm-customer-filters button:focus-visible { outline: 3px solid var(--theme-primary, #17634f); outline-offset: 3px; }
+.crm-filter-help { margin: 0 0 18px; color: var(--theme-muted, #61766c); font-size: 13px; }
+.crm-workspace .table-panel { overflow-x: auto; }
+@media (max-width: 600px) { .crm-workspace { padding: 16px; } .crm-customer-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); } .crm-customer-filters button { justify-content: space-between; padding: 10px 12px; } }
+.crm-workspace { padding: 24px 30px; }
+.crm-workspace > .screen { padding: 0; }

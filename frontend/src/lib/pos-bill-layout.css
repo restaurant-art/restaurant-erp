@@ -1,0 +1,11 @@
+/* Keep the complete payable breakdown reachable even on short POS screens. */
+@media screen {
+  .pos-page .bill-panel-top { flex: 0 0 auto; }
+  .pos-page .bill-panel .bill-paper { overflow-y: auto; overscroll-behavior: contain; }
+  .pos-page .bill-panel .bill-items.scrollable {
+    flex: 1 1 150px;
+    min-height: 64px;
+  }
+  .pos-page .bill-panel .bill-items .empty { min-height: 64px; }
+  .pos-page .bill-panel .totals { flex: 0 0 auto; }
+}

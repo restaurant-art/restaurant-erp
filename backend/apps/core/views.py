@@ -515,3 +515,19 @@ def report_summary(request):
 @permission_classes([AllowAny])
 def health(request):
     return Response({"status": "ok", "service": "UVPRO"})
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def readiness(request):
+    from django.db import connection
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+    except Exception:
+        # Infrastructure must see a failed check without receiving database
+        # addresses, credentials or internal error messages.
+        return Response({"status": "unavailable"}, status=503)
+    return Response({"status": "ready", "service": "UVPRO"})

@@ -273,9 +273,34 @@ class AnnouncementSerializer(serializers.ModelSerializer):
 
 
 class IntegrationSettingSerializer(serializers.ModelSerializer):
+    credentials = serializers.JSONField(write_only=True, required=False)
+    configured = serializers.SerializerMethodField()
+
+    def get_configured(self, instance) -> bool:
+        return bool(instance.credentials)
+
+    def validate(self, attrs):
+        provider = attrs.get("provider", getattr(self.instance, "provider", ""))
+        if provider == "amazon_s3":
+            rejected = {}
+            if attrs.get("credentials"):
+                rejected["credentials"] = (
+                    "Amazon S3 credentials must come from the server IAM role."
+                )
+            if attrs.get("config"):
+                rejected["config"] = (
+                    "Amazon S3 configuration is managed by the server deployment."
+                )
+            if rejected:
+                raise serializers.ValidationError(rejected)
+        return attrs
+
     class Meta:
         model = IntegrationSetting
-        fields = "__all__"
+        fields = (
+            "id", "restaurant", "branch", "provider", "enabled", "configured",
+            "credentials", "config", "created_at", "updated_at",
+        )
         read_only_fields = ("restaurant",)
 
 

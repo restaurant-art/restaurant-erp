@@ -1,9 +1,14 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import QRCode from "qrcode";
+import { withBillingPrice, repriceCart, wholesalePriceError, ecommercePriceError } from "./lib/pos-pricing.js";
+import { AttendanceLeaveList } from "./lib/attendance-leave-list.jsx";
+import { canRecordManualAttendance, MANUAL_ATTENDANCE_PERMISSION } from "./lib/attendance-permissions.js";
 import qz from "qz-tray";
 import { loadBillingPrinter, billingPrintOptions } from "./lib/billing-printer.js";
-import { getOfflineQzSigner, saveOfflineQzSigner, signOfflineQzRequest } from "./lib/qz-offline-signing.js";
+import { buildBankAccountSummaries } from "./lib/finance-bank-balances.js";
+import { installNumberInputWheelGuard } from "./lib/number-input-wheel.js";
+import { getOfflineQzSigner, removeOfflineQzSigner, saveOfflineQzSigner, signOfflineQzRequest } from "./lib/qz-offline-signing.js";
 import {
   Area,
   AreaChart,
@@ -70,6 +75,7 @@ import {
   Table2,
   Truck,
   Trash2,
+  Undo2,
   Upload,
   User,
   UserCheck,
@@ -80,17 +86,70 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
+import "./workspace-design.css";
+import { FlyerDesign, PosterDesign } from "./lib/poster-design.jsx";
+import { FinanceEntryDialog } from "./lib/finance-entry-dialog.jsx";
+import { PromotionsWorkspace } from "./lib/promotions-workspace.jsx";
+import { editablePromotion, evaluatePromotion, promotionSummary } from "./lib/promotion-rules.js";
+import "./lib/pos-pricing.css";
+import { buildFilteredLedgerActivity, ledgerVendorOptions } from "./lib/ledger-vendor-filter.js";
+import { buildProductSearchCatalog, filterPosCatalog } from "./lib/pos-catalog.js";
+import { selectAutomaticOffer } from "./lib/pos-auto-offers.js";
+import { usePromotionTime } from "./lib/use-promotion-time.js";
+import { buildCustomerRows, customerTypes, mergeCustomerEdits } from "./lib/crm-customers.js";
+import "./lib/crm-customers.css";
+import { calculateInclusiveBill } from "./lib/pos-bill-totals.js";
+import "./lib/pos-bill-layout.css";
+import { ReportsWorkspace } from "./lib/reports-workspace.jsx";
+import { VestyAssistant } from "./lib/vesty-assistant.jsx";
+import { AIIntelligence } from "./lib/ai-intelligence.jsx";
+import { PurchaseItemPicker } from "./lib/purchase-item-picker.jsx";
+import { handlePurchaseArrowNavigation } from "./lib/purchase-keyboard.js";
+import { applyPurchaseSellingPrices } from "./lib/purchase-selling-price.js";
+import { purchaseBatchFields } from "./lib/purchase-batches.js";
+import { PurchaseGstSelect } from "./lib/purchase-gst-select.jsx";
+import { VendorFormSurface } from "./lib/vendor-form-surface.jsx";
+import { accessPermissionsForModule, prepareRolePermissionsForEdit, pruneRolePermissions, roleAccessPermission, roleAccessSections, roleCanAccessOption } from "./lib/role-permissions.js";
+import { deletePurchaseDraftRecord, normalizePurchaseDraftDays, purchaseDraftMatches, purchaseDraftNumber, requestPurchaseApprovalRecord, returnPurchaseToDraft, savePurchaseDraftRecord, submitPurchaseDraftRecord } from "./lib/purchase-drafts.js";
+import { PurchaseEntryList } from "./lib/purchase-entry-list.jsx";
+import { PurchaseOrdersWorkspace } from "./lib/purchase-orders.jsx";
+import { automaticPurchaseOrderForEntry, purchaseOrderToPurchaseDraft } from "./lib/purchase-orders.js";
+import { VendorSettlementsView } from "./lib/vendor-settlements-view.jsx";
+import { VendorPurchasePayables } from "./lib/vendor-purchase-payables.jsx";
+import { FinancePageIntro } from "./lib/finance-page-intro.jsx";
+import { AttendancePageIntro } from "./lib/attendance-page-intro.jsx";
+import { filterVendorPaymentHistory, withPaymentPurchaseNumbers } from "./lib/vendor-payment-filters.js";
+import { buildPurchasePayables, paymentMatchesPurchase } from "./lib/vendor-settlements.js";
+import { calculatePurchaseInvoice } from "./lib/purchase-invoice-adjustments.js";
+import { PurchaseInvoiceAdjustments } from "./lib/purchase-invoice-adjustments.jsx";
 import { businessStorage as localStorage, stopCloudSync } from "./lib/cloud";
 import { useBusinessState, useCloudSyncStatus } from "./lib/use-business-state";
 import { fetchSharedSuperAdminStores, getCloudSession, hydrateLocalStateFromCloud, signInWithCloud, cloudClient, cloudApiList, cloudApiRequest, cloudConfigured, cloudJson, cloudProfile, syncInventoryState, syncLocalStateKeyToCloud, syncLocalStateToCloud, updateCloudPassword } from "./lib/cloud";
-import { canCashierUseOpenShift, findOpenStoreShift, isEligiblePosCashier } from "./lib/pos-access";
+import { canCashierUseOpenShift, findOpenStoreShift, isEligiblePosCashier, restorePosCashierSession } from "./lib/pos-access";
 import { pickQzPrinter } from "./lib/qz-printer";
 import { createNextRecipeVersion, listRecipeVersions, removeRecipeVersion } from "./lib/recipe-versions";
+import { applyPurchaseToInventory, purchaseLineAmounts, purchaseTotals, reversePurchaseInventory } from "./lib/purchase-inventory";
+import { isSensitiveRecoveryKey, normalizeAwsStorageStatus, stripBrowserCloudConfiguration } from "./lib/aws-storage";
 
 const appBaseUrl = import.meta.env.BASE_URL || "/";
 const localAuthEnabled = String(import.meta.env.VITE_LOCAL_AUTH_ENABLED || "").toLowerCase() === "true";
 const localAuthEmail = String(import.meta.env.VITE_LOCAL_AUTH_EMAIL || "").trim().toLowerCase();
 const localAuthPassword = String(import.meta.env.VITE_LOCAL_AUTH_PASSWORD || "");
+const workspaceLocationStorageKey = "uvpro-workspace-location";
+const workspaceScrollStorageKey = "uvpro-workspace-scroll-positions";
+
+function loadSessionRecord(key) {
+  try {
+    const value = JSON.parse(window.sessionStorage.getItem(key) || "{}");
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSessionRecord(key, value) {
+  try { window.sessionStorage.setItem(key, JSON.stringify(value)); } catch { /* Session storage can be unavailable in restricted browser modes. */ }
+}
 
 function publicAssetPath(path) {
   const cleanBase = appBaseUrl.endsWith("/") ? appBaseUrl : `${appBaseUrl}/`;
@@ -110,9 +169,10 @@ const modules = [
   { id: "production", label: "Production", icon: DatabaseZap },
   { id: "item-stock", label: "Item Stock", icon: PackageSearch },
   { id: "crm", label: "CRM", icon: Users },
-  { id: "offers", label: "Offers & Promotions", icon: Percent },
+  { id: "offers", label: "Marketing", icon: Sparkles },
   { id: "attendance", label: "Attendance", icon: Camera },
   { id: "finance", label: "Finance", icon: BadgeIndianRupee },
+  { id: "intelligence", label: "AI Intelligence", icon: Sparkles },
   { id: "reports", label: "Reports", icon: FileBarChart },
   { id: "mis", label: "MIS Reports", icon: Gauge },
   { id: "admin", label: "Admin", icon: ShieldCheck },
@@ -153,11 +213,7 @@ function preparePosProducts(items) {
     }
     return item;
   });
-  const existingNames = new Set(correctedItems.map((item) => String(item.name || "").trim().toLowerCase()));
-  return [
-    ...correctedItems,
-    ...menuItems.filter((item) => !existingNames.has(item.name.toLowerCase())),
-  ];
+  return correctedItems;
 }
 
 const menuItemPhotos = {
@@ -255,6 +311,28 @@ const defaultInventoryItems = [
   { id: "INV-003", name: "Cooking Gas", sku: "OPS-GAS-01", category: "Operations", stock: 3, unit: "cyl", reorder: 4, cost: 1150 },
   { id: "INV-004", name: "Coffee Beans", sku: "RAW-COFFEE-01", category: "Beverages", stock: 11, unit: "kg", reorder: 6, cost: 680 },
 ];
+const inventoryDepartmentOptions = ["Food & Beverage", "Kitchen", "Housekeeping", "Packaging", "Operations", "Other"];
+const inventoryGstRateOptions = [0, 0.25, 1.5, 3, 5, 18, 40];
+const inventorySubcategoriesByCategory = {
+  "Dry goods": ["Rice & grains", "Flour & baking", "Pulses & legumes", "Spices & condiments", "Sugar & sweeteners"],
+  Dairy: ["Milk & cream", "Cheese & paneer", "Butter & ghee", "Curd & yoghurt"],
+  Vegetables: ["Fresh vegetables", "Herbs & leaves", "Roots & tubers", "Fruits"],
+  Beverages: ["Tea & coffee", "Juices", "Soft drinks", "Water"],
+  Operations: ["Fuel & utilities", "Cleaning supplies", "Maintenance", "Stationery"],
+  Packaging: ["Containers", "Cups & lids", "Carry bags", "Tissues & disposables"],
+  Other: ["Other"],
+};
+
+function inventorySubcategorySuggestions(category, items = []) {
+  return Array.from(new Set([
+    ...(inventorySubcategoriesByCategory[category] || []),
+    ...items.filter((item) => item.category === category).map((item) => item.subcategory).filter(Boolean),
+  ]));
+}
+
+function defaultInventorySubcategory(category) {
+  return inventorySubcategoriesByCategory[category]?.[0] || "";
+}
 const defaultRecipes = [
   {
     id: "REC-001",
@@ -417,17 +495,23 @@ const settingsSectionConfig = {
     fields: [["upiId", "UPI ID"], ["terminal", "Card terminal"], ["wallets", "Wallets"], ["settlement", "Settlement account"]],
     defaults: { upiId: "uvpro@upi", terminal: "PineLabs Counter 1", wallets: "Paytm, PhonePe, GPay", settlement: "HDFC Current Account" },
   },
+  "Purchase controls": {
+    description: "Control how long a purchase bill may remain in Draft before it is flagged overdue for review.",
+    action: "Apply draft policy",
+    fields: [["maximumDraftDays", "Maximum purchase draft days"]],
+    defaults: { maximumDraftDays: "7" },
+  },
   "Integrations": {
     description: "Configure branch-level delivery outlets, menu mappings, stock, kitchen tickets, and test order flows.",
     action: "Open integrations",
     fields: [],
     defaults: {},
   },
-  "Cloudflare R2": {
-    description: "Cloud backup storage for bills, reports, and uploads.",
-    action: "Test R2",
-    fields: [["bucket", "Bucket"], ["endpoint", "Endpoint"], ["accessKey", "Access key"], ["backupPath", "Backup path"]],
-    defaults: { bucket: "uvpro-backups", endpoint: "https://r2.cloudflare.com", accessKey: "Configured", backupPath: "/demo-spice/indiranagar" },
+  "Amazon S3 storage": {
+    description: "Read-only status for server-managed Amazon S3 file storage. AWS credentials are never sent to or stored in this browser.",
+    action: "Refresh status",
+    fields: [],
+    defaults: {},
   },
   "WhatsApp templates": {
     description: "Customer bill, order ready, and campaign messages.",
@@ -436,10 +520,10 @@ const settingsSectionConfig = {
     defaults: { billTemplate: "Your UVPRO bill is ready", orderTemplate: "Your order is ready", sender: "+91 90000 11111", language: "English" },
   },
   "Backup policy": {
-    description: "Automatic local and cloud backup schedule.",
-    action: "Run backup",
-    fields: [["frequency", "Frequency"], ["time", "Backup time"], ["retention", "Retention"], ["destination", "Destination"]],
-    defaults: { frequency: "Daily", time: "12:30 AM", retention: "90 days", destination: "Local + Cloudflare R2" },
+    description: "Download a sanitised local recovery export. Automated AWS database snapshots and S3 protection are managed by the server infrastructure.",
+    action: "Download local export",
+    fields: [],
+    defaults: {},
   },
   "QR ordering": {
     description: "Generate this store's customer ordering QR code.",
@@ -448,7 +532,7 @@ const settingsSectionConfig = {
     defaults: {},
   },
   "Theme and language": {
-    description: "Display mode, custom website colors, default language, and currency preferences.",
+    description: "Display scale, appearance, language, currency, and timezone preferences.",
     action: "Apply theme",
     fields: [["theme", "Display mode"], ["themePreset", "Theme preset"], ["primaryColor", "Primary color"], ["accentColor", "Accent color"], ["sidebarColor", "Sidebar color"], ["backgroundColor", "Page background"], ["surfaceColor", "Card surface"], ["textColor", "Text color"], ["mutedColor", "Muted text"], ["language", "Language"], ["currency", "Currency"], ["timezone", "Timezone"]],
     defaults: { theme: "Light", themePreset: "Emerald", primaryColor: "#17604b", accentColor: "#c28a3a", sidebarColor: "#10231f", backgroundColor: "#f7f8f5", surfaceColor: "#ffffff", textColor: "#10231f", mutedColor: "#60736a", language: "English", currency: "INR", timezone: "Asia/Kolkata" },
@@ -460,6 +544,7 @@ const storeSettingsSections = [
   "Print bill format",
   "Printer setup",
   "Payment providers",
+  "Purchase controls",
   "Integrations",
   "QR ordering",
   "Theme and language",
@@ -613,12 +698,12 @@ const roleModuleAccess = {
   "Super Admin": modules.map((module) => module.id),
   "Restaurant Admin": modules.map((module) => module.id),
   "Restaurant Owner": modules.map((module) => module.id),
-  "Branch Manager": ["dashboard", "pos", "kds", "tables", "menu", "inventory", "production", "item-stock", "crm", "offers", "attendance", "reports", "mis", "settings"],
-  "HR Manager": ["dashboard", "attendance", "reports", "mis", "settings"],
+  "Branch Manager": ["dashboard", "pos", "kds", "tables", "menu", "inventory", "production", "item-stock", "crm", "offers", "attendance", "intelligence", "reports", "mis", "settings"],
+  "HR Manager": ["dashboard", "attendance", "reports", "mis", "intelligence", "settings"],
   Cashier: ["dashboard", "pos", "tables", "offers", "finance"],
   Waiter: ["tables", "kds"],
   Chef: ["kds", "inventory", "production", "item-stock"],
-  Accountant: ["dashboard", "finance", "reports", "mis"],
+  Accountant: ["dashboard", "finance", "reports", "mis", "intelligence"],
 };
 
 const adminRoleChoicesAll = ["Restaurant Admin", "Branch Manager", "Cashier", "Waiter", "Chef", "Accountant"];
@@ -635,6 +720,48 @@ function formatPreciseMoney(value) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(Number(value || 0));
+}
+
+function calculateVariantMargin(cost, sellingPrice) {
+  if (cost === "" || cost === null || cost === undefined || sellingPrice === "" || sellingPrice === null || sellingPrice === undefined) {
+    return { amount: null, percentage: null };
+  }
+  const costValue = Number(cost);
+  const sellingValue = Number(sellingPrice);
+  if (!Number.isFinite(costValue) || !Number.isFinite(sellingValue)) return { amount: null, percentage: null };
+  const amount = sellingValue - costValue;
+  return { amount, percentage: sellingValue > 0 ? (amount / sellingValue) * 100 : null };
+}
+
+function calculateCostWithGst(price, gstRate) {
+  if (price === "" || price === null || price === undefined || gstRate === "" || gstRate === null || gstRate === undefined) return null;
+  const priceValue = Number(price);
+  const rateValue = Number(gstRate);
+  if (!Number.isFinite(priceValue) || !Number.isFinite(rateValue)) return null;
+  return Math.round((priceValue * (1 + rateValue / 100) + Number.EPSILON) * 100) / 100;
+}
+
+function calculateMarkupPercentage(cost, sellingPrice) {
+  if (cost === "" || cost === null || cost === undefined || sellingPrice === "" || sellingPrice === null || sellingPrice === undefined) return null;
+  const costValue = Number(cost);
+  const sellingValue = Number(sellingPrice);
+  if (!Number.isFinite(costValue) || !Number.isFinite(sellingValue) || costValue <= 0) return null;
+  return ((sellingValue - costValue) / costValue) * 100;
+}
+
+function calculateSellingPriceFromMarkup(cost, markupPercentage) {
+  if (cost === "" || cost === null || cost === undefined || markupPercentage === "" || markupPercentage === null || markupPercentage === undefined) return null;
+  const costValue = Number(cost);
+  const markupValue = Number(markupPercentage);
+  if (!Number.isFinite(costValue) || !Number.isFinite(markupValue) || markupValue < 0) return null;
+  return Math.round((costValue * (1 + markupValue / 100) + Number.EPSILON) * 100) / 100;
+}
+
+function calculatePriceBeforeGst(cost, gstRate) {
+  const costValue = Number(cost);
+  const rateValue = Number(gstRate);
+  if (!Number.isFinite(costValue) || !Number.isFinite(rateValue)) return "";
+  return (costValue / (1 + rateValue / 100)).toFixed(2);
 }
 
 function roleToAuthRole(role) {
@@ -1225,6 +1352,7 @@ function ChangePasswordDialog({ onClose, notify }) {
 }
 
 function App() {
+  useEffect(() => installNumberInputWheelGuard(document), []);
   const params = new URLSearchParams(window.location.search);
   // Keep older printed QR codes working even if they predate the explicit
   // `order=1` flag. Staff links do not use these public ordering parameters.
@@ -1247,6 +1375,7 @@ function CloudSyncBanner() {
 }
 
 function AuthenticatedApp() {
+  const [initialWorkspaceLocation] = useState(() => loadSessionRecord(workspaceLocationStorageKey));
   const [currentUser, setCurrentUser] = useState(() => {
     // A device can retain the last staff member's cached profile. Never use
     // it for a cloud-backed session, because it could briefly expose that
@@ -1258,38 +1387,95 @@ function AuthenticatedApp() {
     return { ...user, role: roleToAuthRole(user.role), appRole: user.appRole || roleLabelForUser(user) };
   });
   const [cloudStateReady, setCloudStateReady] = useState(() => !cloudConfigured);
-  const [active, setActive] = useState("dashboard");
+  const [active, setActive] = useState(() => initialWorkspaceLocation.active || "dashboard");
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [returnModule, setReturnModule] = useState("dashboard");
   const [superAdminLanding, setSuperAdminLanding] = useState(() => currentUser?.role === "super_admin" && localStorage.getItem("vestora-super-admin-in-store") !== "true");
   const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia("(max-width: 760px)").matches);
+  const [displayScale, setDisplayScale] = useState(() => {
+    const savedScale = Number(window.localStorage.getItem("vestora-display-scale"));
+    return Number.isInteger(savedScale) && savedScale >= 80 && savedScale <= 120 && savedScale % 5 === 0 ? savedScale : 100;
+  });
+  const [navigationSearch, setNavigationSearch] = useState("");
   const [installPrompt, setInstallPrompt] = useState(null);
   const [appInstalled, setAppInstalled] = useState(() => window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true);
   const [adminMenuOpen, setAdminMenuOpen] = useState(false);
-  const [adminView, setAdminView] = useState("all");
+  const [adminView, setAdminView] = useState(() => initialWorkspaceLocation.adminView || "all");
   const [menuNavOpen, setMenuNavOpen] = useState(false);
-  const [menuView, setMenuView] = useState("items");
+  const [menuView, setMenuView] = useState(() => initialWorkspaceLocation.menuView || "items");
   const [menuItemEditId, setMenuItemEditId] = useState("");
+  const [inventoryNavOpen, setInventoryNavOpen] = useState(false);
+  const [purchaseNavOpen, setPurchaseNavOpen] = useState(false);
+  const [inventoryView, setInventoryView] = useState(() => initialWorkspaceLocation.inventoryView || "stock");
+  const [inventoryCreateProductRequest, setInventoryCreateProductRequest] = useState(0);
   const [productionNavOpen, setProductionNavOpen] = useState(false);
-  const [productionView, setProductionView] = useState("Recipes");
+  const [productionView, setProductionView] = useState(() => initialWorkspaceLocation.productionView || "Recipes");
   const [productionReportsOpen, setProductionReportsOpen] = useState(false);
-  const [productionReportView, setProductionReportView] = useState("Daily Production");
+  const [productionReportView, setProductionReportView] = useState(() => initialWorkspaceLocation.productionReportView || "Daily Production");
   const [attendanceNavOpen, setAttendanceNavOpen] = useState(false);
-  const [attendanceView, setAttendanceView] = useState("Add Face ID");
+  const [attendanceView, setAttendanceView] = useState(() => initialWorkspaceLocation.attendanceView || "Add Face ID");
   const [offersNavOpen, setOffersNavOpen] = useState(false);
-  const [offersView, setOffersView] = useState("Happy hour offer");
+  const [offersView, setOffersView] = useState(() => initialWorkspaceLocation.offersView || "All offers");
   const [financeNavOpen, setFinanceNavOpen] = useState(false);
-  const [financeView, setFinanceView] = useState("Expenses");
+  const [financeView, setFinanceView] = useState(() => initialWorkspaceLocation.financeView || "Expenses");
   const [reportNavOpen, setReportNavOpen] = useState(false);
-  const [reportView, setReportView] = useState("Daily sales");
+  const [reportView, setReportView] = useState(() => initialWorkspaceLocation.reportView || "Daily sales");
+  const workspaceSubpage = active === "menu" ? menuView
+    : active === "inventory" ? inventoryView
+      : active === "production" ? `${productionView}:${productionView === "Reports" ? productionReportView : ""}`
+        : active === "attendance" ? attendanceView
+          : active === "offers" ? offersView
+            : active === "finance" ? financeView
+              : active === "reports" ? reportView
+                : active === "admin" ? adminView : "";
+  const workspacePageKey = `${active}:${workspaceSubpage}`;
+  useEffect(() => {
+    saveSessionRecord(workspaceLocationStorageKey, {
+      active, adminView, menuView, inventoryView, productionView, productionReportView,
+      attendanceView, offersView, financeView, reportView,
+    });
+  }, [active, adminView, menuView, inventoryView, productionView, productionReportView, attendanceView, offersView, financeView, reportView]);
+  useEffect(() => {
+    if (!currentUser || (cloudConfigured && !cloudStateReady)) return undefined;
+    let saveFrame = 0;
+    const restoreFrame = window.requestAnimationFrame(() => {
+      const savedTop = Number(loadSessionRecord(workspaceScrollStorageKey)[workspacePageKey]);
+      if (Number.isFinite(savedTop) && savedTop >= 0) window.scrollTo({ top: savedTop, behavior: "auto" });
+    });
+    const savePosition = () => {
+      const positions = loadSessionRecord(workspaceScrollStorageKey);
+      positions[workspacePageKey] = window.scrollY;
+      saveSessionRecord(workspaceScrollStorageKey, positions);
+    };
+    const handleScroll = () => {
+      window.cancelAnimationFrame(saveFrame);
+      saveFrame = window.requestAnimationFrame(savePosition);
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      window.cancelAnimationFrame(restoreFrame);
+      window.cancelAnimationFrame(saveFrame);
+      savePosition();
+      window.removeEventListener("scroll", handleScroll);
+    };
+  }, [workspacePageKey, currentUser?.id, cloudStateReady]);
   const [selectedStoreId, setSelectedStoreId] = useState(() => localStorage.getItem("vestora-selected-store") || "GLOBAL");
   const settingsStoreId = currentUser?.role === "super_admin" ? selectedStoreId : normalizeStoreId(currentUser?.storeId);
   const [themeConfig, setThemeConfig] = useBusinessState(`vestora-theme-config-${settingsStoreId}`, () => normalizeThemeConfig(loadStoredObject("vestora-theme-config")));
   const [dark, setDark] = useState(() => themeConfig.mode === "Dark");
+  useEffect(() => {
+    const scaleFactor = displayScale / 100;
+    document.documentElement.style.setProperty("--app-display-scale", String(scaleFactor));
+    document.documentElement.style.setProperty("--app-sidebar-viewport-height", `${100 / scaleFactor}dvh`);
+    window.localStorage.setItem("vestora-display-scale", String(displayScale));
+  }, [displayScale]);
   const [cart, setCart] = useState([]);
-  // Always require an explicit cashier choice when POS is entered. The saved
-  // record is retained only to recover a legacy offline shift after refresh.
-  const [posCashier, setPosCashier] = useState(null);
+  // Keep the authenticated cashier available across Exit POS and browser
+  // refreshes. Only an explicit logout or cashier change clears this session.
+  const [posCashier, setPosCashier] = useState(() => {
+    const savedCashier = loadStoredObject("vestora-pos-cashier");
+    return savedCashier?.id ? savedCashier : null;
+  });
   const [orderType, setOrderType] = useState("Dine-in");
   const [toast, setToast] = useState("");
   const [lastShiftClose, setLastShiftClose] = useBusinessState(`vestora-last-shift-close-${settingsStoreId}`, () => loadStoredObject(`vestora-last-shift-close-${settingsStoreId}`));
@@ -1360,6 +1546,13 @@ function AuthenticatedApp() {
   const queuedOrders = JSON.parse(localStorage.getItem("vestora-offline-orders") || "[]").length;
   const canManageAll = currentUser?.role === "super_admin";
   const canManage = canManageAll || currentUser?.role === "restaurant_admin";
+  useEffect(() => {
+    // Do not discard a restored Purchase/Inventory subpage while the cloud
+    // session is still resolving the user's permissions after a reload.
+    if (!currentUser || canManage || inventoryView === "stock") return;
+    setInventoryView("stock");
+    setInventoryNavOpen(false);
+  }, [currentUser, canManage, inventoryView]);
   // Some legacy administrator accounts are scoped through the directory and
   // arrive without a single default branch. They may choose a branch in POS;
   // all backend requests still enforce their permitted store scope.
@@ -1439,10 +1632,25 @@ function AuthenticatedApp() {
   const scopedKdsOrders = kdsOrders.filter((order) => normalizeStoreId(order.storeId) === activeStore.id);
   const scopedTableOrders = tableOrders.filter((order) => normalizeStoreId(order.storeId) === activeStore.id);
   const activeCashiers = users.filter((user) => isEligiblePosCashier(user, customRoles, activeStore.id));
+  useEffect(() => {
+    if (!cloudStateReady || !posCashier?.id) return;
+    const restoredCashier = restorePosCashierSession(posCashier, activeCashiers);
+    if (!restoredCashier) {
+      setPosCashier(null);
+      localStorage.removeItem("vestora-pos-cashier");
+      return;
+    }
+    if (restoredCashier !== posCashier) setPosCashier(restoredCashier);
+  }, [cloudStateReady, settingsStoreId, users, customRoles, posCashier?.id]);
   const comparisonStores = (canManageAll ? stores.filter((store) => store.name === activeStore.name) : [activeStore])
     .filter((store) => store && store.status !== "Inactive" && (store.branch || store.id === activeStore.id));
   const comparisonSalesLedger = canManageAll ? salesLedger : scopedSalesLedger;
   const currentRoleLabel = roleLabelForUser(currentUser);
+  const activeCustomRole = customRoles.find((role) => role.status !== "Inactive"
+    && role.name === currentRoleLabel
+    && (role.storeId === activeStore.id || role.storeId === "GLOBAL")) || null;
+  const canAccessRoleOption = (moduleId, optionId) => roleCanAccessOption(activeCustomRole, moduleId, optionId);
+  const canManualAttendance = canRecordManualAttendance({ isAdmin: canManage, roles: customRoles, roleName: currentRoleLabel, storeId: activeStore.id });
   const roleAccessMap = {
     ...roleModuleAccess,
     ...Object.fromEntries(customRoles.filter((role) => role.status !== "Inactive").map((role) => [role.name, role.modules?.length ? role.modules : roleModuleAccess.Cashier])),
@@ -1491,6 +1699,8 @@ function AuthenticatedApp() {
   }
 
   function openModule(moduleId) {
+    if (window.matchMedia("(max-width: 760px)").matches) setSidebarOpen(false);
+    setNavigationSearch("");
     if (moduleId === "pos") {
       setReturnModule(activeModule === "pos" ? returnModule : activeModule);
     } else {
@@ -1498,6 +1708,10 @@ function AuthenticatedApp() {
     }
     if (moduleId !== "admin") setAdminMenuOpen(false);
     if (moduleId !== "menu") setMenuNavOpen(false);
+  if (moduleId !== "inventory") {
+    setInventoryNavOpen(false);
+    setPurchaseNavOpen(false);
+  }
   if (moduleId !== "production") setProductionNavOpen(false);
   if (moduleId !== "attendance") setAttendanceNavOpen(false);
   if (moduleId !== "offers") setOffersNavOpen(false);
@@ -1523,6 +1737,18 @@ function AuthenticatedApp() {
   window.scrollTo(0, 0);
   }
 
+  function openInventoryView(view, requestNewProduct = false) {
+    if (window.matchMedia("(max-width: 760px)").matches) setSidebarOpen(false);
+    setNavigationSearch("");
+    setInventoryView(view);
+    if (requestNewProduct) setInventoryCreateProductRequest((current) => current + 1);
+    setInventoryNavOpen(view === "stock" || view === "create" || view === "variants" || view === "category-setup" || view === "tax-setup" || view === "brand-setup");
+    setPurchaseNavOpen(["vendors", "purchase-order", "purchase", "purchase-return", "vendor-settlements"].includes(view));
+    setReturnModule("inventory");
+    setActive("inventory");
+    window.scrollTo(0, 0);
+  }
+
   function openProductionView(view) {
     setProductionView(view);
     setProductionNavOpen(true);
@@ -1538,6 +1764,8 @@ function AuthenticatedApp() {
   }
 
   function openAttendanceView(view) {
+    if (view === "Leave Approvals" && !canManage) { notify("Admin permission is required to review leave"); return; }
+    if (view === "Manual Check In/Out" && !canManualAttendance) { notify("Manual attendance permission is required"); return; }
     setAttendanceView(view);
     setAttendanceNavOpen(true);
     setReturnModule("attendance");
@@ -1656,8 +1884,9 @@ function AuthenticatedApp() {
         if (!openSuperAdminLanding) setSuperAdminLanding(false);
         const loginRole = roleLabelForUser(loginUser);
         const landingModule = loginRole === "Waiter" ? "tables" : loginRole === "Chef" ? "kds" : "dashboard";
-        setActive(landingModule);
-        setReturnModule(landingModule);
+        const rememberedModule = loadSessionRecord(workspaceLocationStorageKey).active || landingModule;
+        setActive(rememberedModule);
+        setReturnModule(rememberedModule);
         window.vestoraCloudStateReady = true;
         setCloudStateReady(true);
         loadedUserId = session.user.id;
@@ -1727,24 +1956,14 @@ function AuthenticatedApp() {
 
   function exitPOS() {
     const fallback = visibleModules.some((module) => module.id === returnModule) ? returnModule : "dashboard";
-    setPosCashier(null);
-    localStorage.removeItem("vestora-pos-cashier");
     setActive(fallback);
-    notify("POS closed");
+    notify("POS closed · cashier session remains signed in");
   }
 
   function changeCashier() {
     setPosCashier(null);
     localStorage.removeItem("vestora-pos-cashier");
     notify(activeStoreShift ? `Select ${activeStoreShift.cashierName || "the active cashier"} to resume this shift` : "Select cashier");
-  }
-
-  function lockPOSAfterInactivity() {
-    setCart([]);
-    setPosCashier(null);
-    localStorage.removeItem("vestora-pos-cashier");
-    setActive("pos");
-    notify("POS locked after 10 minutes of inactivity. Sign in to continue.");
   }
 
   function showOperationalNotifications() {
@@ -1804,8 +2023,6 @@ function AuthenticatedApp() {
     localStorage.setItem(historyKey, JSON.stringify([...loadStoredArray(historyKey).filter((entry) => entry.id !== shiftClose.id), shiftClose]));
     syncLocalStateKeyToCloud(shiftCloseKey).catch(() => {});
     localStorage.removeItem("vestora-current-shift");
-    localStorage.removeItem("vestora-pos-cashier");
-    setPosCashier(null);
     exitPOS();
     notify(`Shift closed at ${formatMoney(balance)}`);
   }
@@ -2259,7 +2476,21 @@ function AuthenticatedApp() {
   }
 
   const content = {
-    dashboard: <Dashboard notify={notify} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} kdsOrders={scopedKdsOrders} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} storeId={activeStore.id} onNavigate={setActive} />,
+    intelligence: <AIIntelligence key={`${activeStore.id}-${currentUser.id}-${currentRoleLabel}`} store={activeStore} userId={currentUser.id} cloudStateReady={cloudStateReady} allowedModules={allowedModuleIds} canAccessOption={canAccessRoleOption} notify={notify}
+      sources={{ sales: scopedSalesLedger, refunds: scopedRefundLedger, voids: scopedVoidLedger, kds: scopedKdsOrders, tables: scopedTableOrders, menu: productItems, foodStock, users: users.filter(user => user.storeId === activeStore.id || user.storeId === "GLOBAL") }}
+      onNavigate={({module,view}) => {
+        if (!allowedModuleIds.includes(module) || (view && !(module === "offers" && view === "All offers") && !canAccessRoleOption(module,view))) return notify("Your role does not have access to this page");
+        if (module === "inventory") return openInventoryView(view || "stock");
+        if (module === "production") return openProductionView(view || "Recipes");
+        if (module === "attendance") return openAttendanceView(view || "Attendance Records");
+        if (module === "admin") return openAdminView(view || "all");
+        if (module === "menu") return openMenuView(view || "items");
+        if (module === "finance" && view) setFinanceView(view);
+        if (module === "reports" && view) setReportView(view);
+        if (module === "offers") setOffersView("All offers");
+        openModule(module);
+      }} />,
+    dashboard: <Dashboard notify={notify} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} kdsOrders={scopedKdsOrders} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} storeId={activeStore.id} onNavigate={setActive} onOpenIntelligence={allowedModuleIds.includes("intelligence") ? () => openModule("intelligence") : undefined} />,
     pos: !posCashier
       ? <CashierLogin cashiers={activeCashiers} activeStore={activeStore} stores={stores} currentShift={activeStoreShift} onAuthenticated={(cashier) => {
         if (!canCashierUseOpenShift(cashier, activeStoreShift)) {
@@ -2276,12 +2507,12 @@ function AuthenticatedApp() {
         return true;
       }} onExit={exitPOS} onLogout={handleLogout} onCreateCashier={() => openAdminView("create")} />
       : currentShift
-        ? <POS cart={cart} setCart={setCart} items={productItems} storeId={activeStore.id} foodStock={foodStock} onFoodStockChange={updateFoodStock} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} billingPrinter={billingPrinter} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onLogout={handleLogout} onIdleLogout={lockPOSAfterInactivity} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} refundLedger={scopedRefundLedger} onRefund={recordRefund} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
+        ? <POS cart={cart} setCart={setCart} items={productItems} storeId={activeStore.id} foodStock={foodStock} onFoodStockChange={updateFoodStock} orderType={orderType} setOrderType={setOrderType} online={online} notify={notify} billTemplate={billTemplate} billingPrinter={billingPrinter} onSale={recordSale} onVoidItem={recordVoidItem} onExit={exitPOS} onLogout={handleLogout} currentShift={currentShift} onCloseShift={closeShift} shiftBills={scopedSalesLedger.filter((bill) => bill.shiftId === currentShift.id)} shiftRefunds={scopedRefundLedger.filter((refund) => refund.shiftId === currentShift.id)} refundLedger={scopedRefundLedger} onRefund={recordRefund} orderHistory={scopedSalesLedger} currentUser={posCashier} pendingTableOrders={scopedTableOrders.filter((order) => order.status === "Ready for billing")} onTableOrderPaid={completeTableOrder} />
         : <ShiftOpening online={online} onOpenShift={openShift} onExit={exitPOS} onLogout={handleLogout} cashier={posCashier} />,
     kds: <KDS notify={notify} orders={scopedKdsOrders} setOrders={setKdsOrders} kotPrinter={kotPrinter} />,
     tables: <Tables key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} items={productItems} currentUser={currentUser} tableOrders={scopedTableOrders} onSaveOrder={saveTableOrder} onSendKot={sendTableKot} onSendReception={sendTableToReception} onCancelOrder={cancelTableOrder} onCancelItem={cancelTableOrderItem} kotPrinter={kotPrinter} cloudStateReady={cloudStateReady} />,
     menu: <MenuManagement key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} productItems={productItems} setProductItems={setProductItems} activeView={menuView} editingItemId={menuItemEditId} onNavigate={openMenuView} />,
-    inventory: <Inventory key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} cloudStateReady={cloudStateReady} />,
+    inventory: <Inventory key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} cloudStateReady={cloudStateReady} activeView={inventoryView} createProductRequest={inventoryCreateProductRequest} onViewChange={openInventoryView} />,
     production: <Production key={activeStore.id} storeId={activeStore.id} notify={notify} canManageAll={canManage} activeView={productionView} activeReport={productionReportView} onViewChange={setProductionView} foodStock={foodStock} onFoodStockChange={updateFoodStock} cloudStateReady={cloudStateReady} />,
     "item-stock": <ItemStock
       key={activeStore.id}
@@ -2292,14 +2523,20 @@ function AuthenticatedApp() {
       onOpenProduction={() => openProductionView("Food Stock")}
     />,
     crm: <CRM notify={notify} canManageAll={canManage} storeId={activeStore.id} salesLedger={scopedSalesLedger} />,
-    attendance: <AttendanceModule key={activeStore.id} notify={notify} activeStore={activeStore} stores={stores} users={users} canManage={canManage} canManageAll={canManageAll} activeView={attendanceView} onViewChange={setAttendanceView} onOpenAdmin={() => openAdminView("create")} />,
-    offers: <OffersPromotions key={activeStore.id} storeId={activeStore.id} productItems={productItems} notify={notify} canManage={canManage} activeView={offersView} onViewChange={setOffersView} />,
+    attendance: <AttendanceModule key={activeStore.id} notify={notify} activeStore={activeStore} stores={stores} users={users} canManualAttendance={canManualAttendance} canManage={canManage} canManageAll={canManageAll} activeView={attendanceView} onViewChange={setAttendanceView} onOpenAdmin={() => openAdminView("create")} />,
+    offers: offersView === "Poster Design" && canAccessRoleOption("offers", "Poster Design")
+      ? <PosterDesign key={activeStore.id} storeId={activeStore.id} brand={activeStore.name} canManage={canManage} notify={notify} />
+      : offersView === "Flyer Design" && canAccessRoleOption("offers", "Flyer Design")
+        ? <FlyerDesign key={activeStore.id} storeId={activeStore.id} brand={activeStore.name} canManage={canManage} notify={notify} />
+        : <PromotionsWorkspace key={activeStore.id} storeId={activeStore.id} productItems={productItems} notify={notify} canManage={canManage} initialOffers={localOfferCatalog} canAccessOption={(option) => canAccessRoleOption("offers", option)} />,
   finance: <Finance notify={notify} canManageAll={canManage} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} storeId={activeStore.id} view={financeView} />,
     reports: <Reports notify={notify} storeId={activeStore.id} salesLedger={scopedSalesLedger} voidLedger={scopedVoidLedger} refundLedger={scopedRefundLedger} lastShiftClose={lastShiftClose} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} activeView={reportView} onReportChange={setReportView} />,
     mis: <MISReports salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} notify={notify} />,
     admin: <Admin notify={notify} users={users} setUsers={setUsers} currentUser={currentUser} canManageAll={canManageAll} canManageStore={canManage} stores={stores} activeStore={activeStore} activeView={adminView} onViewChange={openAdminView} customRoles={customRoles} setCustomRoles={setCustomRoles} />,
-    settings: <SettingsView notify={notify} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} billingPrinter={billingPrinter} setBillingPrinter={setBillingPrinter} canManage={canManage} canManageAll={canManageAll} activeStore={activeStore} setStores={setStores} menuItems={productItems} themeConfig={{ ...themeConfig, mode: dark ? "Dark" : "Light" }} setThemeConfig={setThemeConfig} setDark={setDark} />,
+    settings: <SettingsView notify={notify} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} billingPrinter={billingPrinter} setBillingPrinter={setBillingPrinter} canManage={canManage} canManageAll={canManageAll} activeStore={activeStore} setStores={setStores} menuItems={productItems} themeConfig={{ ...themeConfig, mode: dark ? "Dark" : "Light" }} setThemeConfig={setThemeConfig} setDark={setDark} displayScale={displayScale} setDisplayScale={setDisplayScale} />,
   }[activeModule];
+  const vesty = <VestyAssistant store={activeStore} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger}
+    tableOrders={scopedTableOrders} kdsOrders={scopedKdsOrders} menuItems={productItems} allowedModules={allowedModuleIds} />;
 
   if (activeModule === "pos") {
     return (
@@ -2307,6 +2544,7 @@ function AuthenticatedApp() {
         <CloudSyncBanner />
         {subscriptionWarning}
         {content}
+        {vesty}
         {toast && <div className="toast">{toast}</div>}
       </div>
     );
@@ -2316,13 +2554,19 @@ function AuthenticatedApp() {
     <div className={`${dark ? "app dark" : "app"} ${sidebarOpen ? "sidebar-expanded" : "sidebar-collapsed"}`} style={themeVariables}>
       <CloudSyncBanner />
       {subscriptionWarning}
+      {vesty}
       <aside id="primary-navigation" className={sidebarOpen ? "sidebar" : "sidebar collapsed"}>
         <div className="brand">
           <img src={uvproLogoPath} alt="" />
-          {sidebarOpen && <div><strong>UVPRO</strong><span>ERP & POS</span></div>}
+          {sidebarOpen && <div><strong>UVPRO<span className="brand-dot">.</span></strong><span>ERP &amp; POS</span></div>}
+          {sidebarOpen && <button className="sidebar-mobile-close" type="button" aria-label="Close navigation" onClick={() => setSidebarOpen(false)}><X size={18} /></button>}
         </div>
-        <nav>
-          {visibleModules.map((item) => {
+        {sidebarOpen && <div className="navigation-intro">
+          <label className="navigation-search"><Search size={16} /><input aria-label="Find a module" placeholder="Find a module…" value={navigationSearch} onChange={(event) => setNavigationSearch(event.target.value)} />{navigationSearch && <button type="button" aria-label="Clear module search" onClick={() => setNavigationSearch("")}><X size={14} /></button>}</label>
+          <span className="navigation-label">Workspace</span>
+        </div>}
+        <nav aria-label="Main navigation">
+          {visibleModules.filter((item) => !sidebarOpen || `${item.label} ${item.id === "offers" ? "Offers & Promotions Poster Design Flyer Design" : ""}`.toLowerCase().includes(navigationSearch.trim().toLowerCase())).map((item) => {
             const Icon = item.icon;
             if (item.id === "menu") {
               const menuActive = activeModule === "menu";
@@ -2333,9 +2577,9 @@ function AuthenticatedApp() {
                     {sidebarOpen && <><span>{item.label}</span><ChevronDown className={menuNavOpen ? "sidebar-chevron open" : "sidebar-chevron"} size={16} /></>}
                   </button>
                   {sidebarOpen && menuNavOpen && <div className="sidebar-subnav">
-                    <button className={menuView === "items" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openMenuView("items")}><PackageSearch size={15} /> All items</button>
-                    <button className={menuView === "create" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openMenuView("create")}><Plus size={15} /> Item creation</button>
-                    <button className={menuView === "setup" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openMenuView("setup")}><ClipboardList size={15} /> Menu setup</button>
+                    {canAccessRoleOption("menu", "items") && <button className={menuView === "items" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openMenuView("items")}><PackageSearch size={15} /> All items</button>}
+                    {canAccessRoleOption("menu", "create") && <button className={menuView === "create" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openMenuView("create")}><Plus size={15} /> Item creation</button>}
+                    {canAccessRoleOption("menu", "setup") && <button className={menuView === "setup" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openMenuView("setup")}><ClipboardList size={15} /> Menu setup</button>}
                   </div>}
                 </div>
               );
@@ -2349,11 +2593,42 @@ function AuthenticatedApp() {
                     {sidebarOpen && <><span>{item.label}</span><ChevronDown className={adminMenuOpen ? "sidebar-chevron open" : "sidebar-chevron"} size={16} /></>}
                   </button>
                   {sidebarOpen && adminMenuOpen && <div className="sidebar-subnav">
-                    <button className={adminView === "all" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAdminView("all")}><Users size={15} /> All users</button>
-                    <button className={adminView === "create" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAdminView("create")}><UserPlus size={15} /> User creation</button>
-                    <button className={adminView === "roles" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAdminView("roles")}><ShieldCheck size={15} /> Role creation</button>
+                    {canAccessRoleOption("admin", "all") && <button className={adminView === "all" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAdminView("all")}><Users size={15} /> All users</button>}
+                    {canAccessRoleOption("admin", "create") && <button className={adminView === "create" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAdminView("create")}><UserPlus size={15} /> User creation</button>}
+                    {canAccessRoleOption("admin", "roles") && <button className={adminView === "roles" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAdminView("roles")}><ShieldCheck size={15} /> Role creation</button>}
                   </div>}
                 </div>
+              );
+            }
+            if (item.id === "inventory") {
+              const inventoryActive = activeModule === "inventory" && ["stock", "create", "variants", "category-setup", "tax-setup", "brand-setup"].includes(inventoryView);
+              const purchaseActive = activeModule === "inventory" && ["vendors", "purchase-order", "purchase", "purchase-return", "vendor-settlements"].includes(inventoryView);
+              return (
+                <React.Fragment key={item.id}>
+                  <div className="sidebar-admin-group">
+                    <button className={inventoryActive ? "nav active" : "nav"} onClick={() => { if (!inventoryActive) openInventoryView(canManage ? "create" : "stock"); else setInventoryNavOpen((open) => !open); }} title={item.label} aria-expanded={sidebarOpen && inventoryNavOpen}>
+                      <Icon size={18} />
+                      {sidebarOpen && <><span>{item.label}</span><ChevronDown className={inventoryNavOpen ? "sidebar-chevron open" : "sidebar-chevron"} size={16} /></>}
+                    </button>
+                    {sidebarOpen && inventoryNavOpen && <div className="sidebar-subnav inventory-sidebar-subnav">
+                      {canManage && canAccessRoleOption("inventory", "create") && <button className={inventoryView === "create" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openInventoryView("create", true)}><Plus size={15} /> Product Master</button>}
+                      {canManage && canAccessRoleOption("inventory", "variants") && <button className={inventoryView === "variants" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openInventoryView("variants")}><PackageSearch size={15} /> Batches</button>}
+                      {canManage && canAccessRoleOption("inventory", "category-setup") && <button className={["category-setup", "tax-setup", "brand-setup"].includes(inventoryView) ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openInventoryView("category-setup")}><Boxes size={15} /> Inventory setup</button>}
+                    </div>}
+                  </div>
+                  {canManage && <div className="sidebar-admin-group">
+                    <button className={purchaseActive ? "nav active" : "nav"} onClick={() => { if (!purchaseActive) openInventoryView("purchase"); else setPurchaseNavOpen((open) => !open); }} title="Purchase" aria-expanded={sidebarOpen && purchaseNavOpen}>
+                      <ReceiptText size={18} />
+                      {sidebarOpen && <><span>Purchase</span><ChevronDown className={purchaseNavOpen ? "sidebar-chevron open" : "sidebar-chevron"} size={16} /></>}
+                    </button>
+                    {sidebarOpen && purchaseNavOpen && <div className="sidebar-subnav inventory-sidebar-subnav">
+                      {canAccessRoleOption("inventory", "vendors") && <button className={inventoryView === "vendors" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openInventoryView("vendors")}><Truck size={15} /> Vendor creation</button>}
+                      {canAccessRoleOption("inventory", "purchase-order") && <button className={inventoryView === "purchase-order" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openInventoryView("purchase-order")}><ClipboardList size={15} /> Purchase order</button>}
+                      {canAccessRoleOption("inventory", "purchase") && <button className={inventoryView === "purchase" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openInventoryView("purchase")}><ReceiptText size={15} /> Purchase entry</button>}
+                      {canAccessRoleOption("inventory", "purchase-return") && <button className={inventoryView === "purchase-return" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openInventoryView("purchase-return")}><Undo2 size={15} /> Purchase Return</button>}
+                    </div>}
+                  </div>}
+                </React.Fragment>
               );
             }
             if (item.id === "production") {
@@ -2365,15 +2640,15 @@ function AuthenticatedApp() {
                     {sidebarOpen && <><span>{item.label}</span><ChevronDown className={productionNavOpen ? "sidebar-chevron open" : "sidebar-chevron"} size={16} /></>}
                   </button>
                   {sidebarOpen && productionNavOpen && <div className="sidebar-subnav">
-                     <button className={productionView === "Recipes" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Recipes")}><ClipboardList size={15} /> Recipes</button>
-                     <button className={productionView === "Planning" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Planning")}><CalendarClock size={15} /> Planning</button>
-                     <button className={productionView === "Batches" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Batches")}><PackageSearch size={15} /> Batches</button>
-                     <button className={productionView === "Food Stock" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Food Stock")}><Boxes size={15} /> Food Stock</button>
-                     <button className={productionView === "Wastage" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Wastage")}><Trash2 size={15} /> Wastage</button>
-                    <div className="sidebar-subnav-report-group">
+                     {canAccessRoleOption("production", "Recipes") && <button className={productionView === "Recipes" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Recipes")}><ClipboardList size={15} /> Recipes</button>}
+                     {canAccessRoleOption("production", "Planning") && <button className={productionView === "Planning" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Planning")}><CalendarClock size={15} /> Planning</button>}
+                     {canAccessRoleOption("production", "Batches") && <button className={productionView === "Batches" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Batches")}><PackageSearch size={15} /> Batches</button>}
+                     {canAccessRoleOption("production", "Food Stock") && <button className={productionView === "Food Stock" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Food Stock")}><Boxes size={15} /> Food Stock</button>}
+                     {canAccessRoleOption("production", "Wastage") && <button className={productionView === "Wastage" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionView("Wastage")}><Trash2 size={15} /> Wastage</button>}
+                    {(canAccessRoleOption("production", "Reports") || productionReportNames.some((report) => canAccessRoleOption("production", `report:${report}`))) && <div className="sidebar-subnav-report-group">
                       <button className={productionView === "Reports" ? "sidebar-subnav-item sidebar-subnav-toggle active" : "sidebar-subnav-item sidebar-subnav-toggle"} onClick={() => { if (productionView !== "Reports") openProductionView("Reports"); setProductionReportsOpen((open) => productionView === "Reports" ? !open : true); }} aria-expanded={productionReportsOpen}><ReceiptText size={15} /> Reports<ChevronDown className={productionReportsOpen ? "sidebar-chevron open" : "sidebar-chevron"} size={14} /></button>
-                      {productionReportsOpen && <div className="sidebar-nested-subnav">{productionReportNames.map((report) => <button key={report} className={productionView === "Reports" && productionReportView === report ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionReport(report)}>{report}</button>)}</div>}
-                    </div>
+                      {productionReportsOpen && <div className="sidebar-nested-subnav">{productionReportNames.filter((report) => canAccessRoleOption("production", `report:${report}`)).map((report) => <button key={report} className={productionView === "Reports" && productionReportView === report ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionReport(report)}>{report}</button>)}</div>}
+                    </div>}
                   </div>}
                 </div>
               );
@@ -2387,13 +2662,15 @@ function AuthenticatedApp() {
                     {sidebarOpen && <><span>{item.label}</span><ChevronDown className={attendanceNavOpen ? "sidebar-chevron open" : "sidebar-chevron"} size={16} /></>}
                   </button>
                   {sidebarOpen && attendanceNavOpen && <div className="sidebar-subnav attendance-sidebar-subnav">
-                    <button className={attendanceView === "Add Face ID" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Add Face ID")}><UserCheck size={15} /> Add Face ID</button>
-                    <button className={attendanceView === "Face Check In/Out" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Face Check In/Out")}><Camera size={15} /> Check In/Out</button>
-                    <button className={attendanceView === "Attendance Report" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Attendance Report")}><FileBarChart size={15} /> Attendance report</button>
-                    <button className={attendanceView === "Attendance Records" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Attendance Records")}><ClipboardList size={15} /> Attendance records</button>
-                    <button className={attendanceView === "Leave Requests" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Leave Requests")}><CalendarClock size={15} /> Leave requests</button>
-                    <button className={attendanceView === "Payroll Summary" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Payroll Summary")}><FileDown size={15} /> Payroll summary</button>
-                    <button className={attendanceView === "Settings" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Settings")}><SlidersHorizontal size={15} /> Settings</button>
+                    {canAccessRoleOption("attendance", "Add Face ID") && <button className={attendanceView === "Add Face ID" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Add Face ID")}><UserCheck size={15} /> Add Face ID</button>}
+                    {canAccessRoleOption("attendance", "Face Check In/Out") && <button className={attendanceView === "Face Check In/Out" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Face Check In/Out")}><Camera size={15} /> Check In/Out</button>}
+                    {canManualAttendance && canAccessRoleOption("attendance", "Manual Check In/Out") && <button className={attendanceView === "Manual Check In/Out" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Manual Check In/Out")}><Pencil size={15} /> Manual Check In/Out</button>}
+                    {canAccessRoleOption("attendance", "Attendance Report") && <button className={attendanceView === "Attendance Report" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Attendance Report")}><FileBarChart size={15} /> Attendance report</button>}
+                    {canAccessRoleOption("attendance", "Attendance Records") && <button className={attendanceView === "Attendance Records" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Attendance Records")}><ClipboardList size={15} /> Attendance records</button>}
+                    {canAccessRoleOption("attendance", "Leave Requests") && <button className={attendanceView === "Leave Requests" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Leave Requests")}><CalendarClock size={15} /> Leave requests</button>}
+                    {canManage && canAccessRoleOption("attendance", "Leave Approvals") && <button className={attendanceView === "Leave Approvals" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Leave Approvals")}><ShieldCheck size={15} /> Leave approvals</button>}
+                    {canAccessRoleOption("attendance", "Payroll Summary") && <button className={attendanceView === "Payroll Summary" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Payroll Summary")}><FileDown size={15} /> Payroll summary</button>}
+                    {canAccessRoleOption("attendance", "Settings") && <button className={attendanceView === "Settings" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openAttendanceView("Settings")}><SlidersHorizontal size={15} /> Settings</button>}
                   </div>}
                 </div>
               );
@@ -2402,13 +2679,14 @@ function AuthenticatedApp() {
               const offersActive = activeModule === "offers";
               return (
                 <div className="sidebar-admin-group" key={item.id}>
-                  <button className={offersActive ? "nav active" : "nav"} onClick={() => { if (!offersActive) openModule("offers"); setOffersNavOpen((open) => offersActive ? !open : true); }} title={item.label} aria-expanded={sidebarOpen && offersNavOpen}>
+                  <button className={offersActive ? "nav active" : "nav"} onClick={() => { if (!sidebarOpen) { setSidebarOpen(true); setOffersNavOpen(true); } else setOffersNavOpen(open => !open); }} title={item.label} aria-expanded={sidebarOpen && (offersNavOpen || Boolean(navigationSearch.trim()))}>
                     <Icon size={18} />
-                    {sidebarOpen && <><span>{item.label}</span><ChevronDown className={offersNavOpen ? "sidebar-chevron open" : "sidebar-chevron"} size={16} /></>}
+                    {sidebarOpen && <><span>{item.label}</span><ChevronDown className={offersNavOpen || navigationSearch.trim() ? "sidebar-chevron open" : "sidebar-chevron"} size={16} /></>}
                   </button>
-                  {sidebarOpen && offersNavOpen && <div className="sidebar-subnav offers-sidebar-subnav">
-                    <button className={offersView === "Happy hour offer" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openOffersView("Happy hour offer")}><Clock size={15} /> Happy hour offer</button>
-                    {["BOGO offers", "Combo discounts", "Weekend offers", "Coupons"].map((offer) => <button key={offer} className={offersView === offer ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openOffersView(offer)}><Sparkles size={15} /> {offer}</button>)}
+                  {sidebarOpen && (offersNavOpen || navigationSearch.trim()) && <div className="sidebar-subnav marketing-sidebar-subnav">
+                    <button className={offersActive && !["Poster Design", "Flyer Design"].includes(offersView) ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => { setOffersView("All offers"); openModule("offers"); setOffersNavOpen(true); }}><Percent size={15} /> Offers &amp; Promotions</button>
+                    {canAccessRoleOption("offers", "Poster Design") && <button className={offersActive && offersView === "Poster Design" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => { setOffersView("Poster Design"); openModule("offers"); setOffersNavOpen(true); }}><Sparkles size={15} /> Poster Design</button>}
+                    {canAccessRoleOption("offers", "Flyer Design") && <button className={offersActive && offersView === "Flyer Design" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => { setOffersView("Flyer Design"); openModule("offers"); setOffersNavOpen(true); }}><FileDown size={15} /> Flyer Design</button>}
                   </div>}
                 </div>
               );
@@ -2422,12 +2700,12 @@ function AuthenticatedApp() {
                     {sidebarOpen && <><span>{item.label}</span><ChevronDown className={reportNavOpen ? "sidebar-chevron open" : "sidebar-chevron"} size={16} /></>}
                   </button>
                   {sidebarOpen && reportNavOpen && <div className="sidebar-subnav report-sidebar-subnav">
-                    <button className={reportView === "Daily sales" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openReportView("Daily sales")}><BadgeIndianRupee size={15} /> Daily sales</button>
-                    <button className={reportView === "Item-wise sales" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openReportView("Item-wise sales")}><PackageSearch size={15} /> Item-wise sales</button>
-                    <button className={reportView === "GST" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openReportView("GST")}><Percent size={15} /> GST report</button>
-                    <button className={reportView === "Cashier closing" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openReportView("Cashier closing")}><History size={15} /> Cashier closing</button>
-                    <button className={reportView === "Void and refund" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openReportView("Void and refund")}><ReceiptText size={15} /> Void & refunds</button>
-                    <button className={activeModule === "production" && productionView === "Reports" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionReport(productionReportView)}><DatabaseZap size={15} /> Production reports</button>
+                    {canAccessRoleOption("reports", "Daily sales") && <button className={reportView === "Daily sales" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openReportView("Daily sales")}><BadgeIndianRupee size={15} /> Daily sales</button>}
+                    {canAccessRoleOption("reports", "Item-wise sales") && <button className={reportView === "Item-wise sales" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openReportView("Item-wise sales")}><PackageSearch size={15} /> Item-wise sales</button>}
+                    {canAccessRoleOption("reports", "GST") && <button className={reportView === "GST" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openReportView("GST")}><Percent size={15} /> GST report</button>}
+                    {canAccessRoleOption("reports", "Cashier closing") && <button className={reportView === "Cashier closing" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openReportView("Cashier closing")}><History size={15} /> Cashier closing</button>}
+                    {canAccessRoleOption("reports", "Void and refund") && <button className={reportView === "Void and refund" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openReportView("Void and refund")}><ReceiptText size={15} /> Void & refunds</button>}
+                    {canAccessRoleOption("reports", "Production reports") && <button className={activeModule === "production" && productionView === "Reports" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionReport(productionReportView)}><DatabaseZap size={15} /> Production reports</button>}
                   </div>}
                 </div>
               );
@@ -2450,13 +2728,13 @@ function AuthenticatedApp() {
                   </button>
                   {sidebarOpen && financeNavOpen && (
                     <div className="sidebar-subnav finance-sidebar-subnav">
-                      <button className={financeView === "Receipts" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openFinanceView("Receipts")}><ReceiptText size={15} /> Receipts</button>
-                      <button className={financeView === "Expenses" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openFinanceView("Expenses")}><BadgeIndianRupee size={15} /> Expenses</button>
-                      <button className={financeView === "Bank Accounts" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openFinanceView("Bank Accounts")}><CreditCard size={15} /> Bank accounts</button>
-                      <button className={financeView === "Vendor Payments" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openFinanceView("Vendor Payments")}><BadgeIndianRupee size={15} /> Vendor payments</button>
-                      <button className={financeView === "Journal Entries" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openFinanceView("Journal Entries")}><ClipboardList size={15} /> Journal entries</button>
-                      <button className={financeView === "General Ledger" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openFinanceView("General Ledger")}><BookOpen size={15} /> General ledger</button>
-                      <button className={financeView === "Finance Reports" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openFinanceView("Finance Reports")}><FileBarChart size={15} /> Finance reports</button>
+                      {canAccessRoleOption("finance", "Receipts") && <button className={financeView === "Receipts" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openFinanceView("Receipts")}><ReceiptText size={15} /> Receipts</button>}
+                      {canAccessRoleOption("finance", "Expenses") && <button className={financeView === "Expenses" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openFinanceView("Expenses")}><BadgeIndianRupee size={15} /> Expenses</button>}
+                      {canAccessRoleOption("finance", "Bank Accounts") && <button className={financeView === "Bank Accounts" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openFinanceView("Bank Accounts")}><CreditCard size={15} /> Bank accounts</button>}
+                      {canAccessRoleOption("finance", "Vendor Payments") && <button className={financeView === "Vendor Payments" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openFinanceView("Vendor Payments")}><BadgeIndianRupee size={15} /> Vendor payments</button>}
+                      {canAccessRoleOption("finance", "Journal Entries") && <button className={financeView === "Journal Entries" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openFinanceView("Journal Entries")}><ClipboardList size={15} /> Journal entries</button>}
+                      {canAccessRoleOption("finance", "General Ledger") && <button className={financeView === "General Ledger" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openFinanceView("General Ledger")}><BookOpen size={15} /> General ledger</button>}
+                      {canAccessRoleOption("finance", "Finance Reports") && <button className={financeView === "Finance Reports" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openFinanceView("Finance Reports")}><FileBarChart size={15} /> Finance reports</button>}
                     </div>
                   )}
                 </div>
@@ -2469,11 +2747,16 @@ function AuthenticatedApp() {
               </button>
             );
           })}
+          {sidebarOpen && navigationSearch && !visibleModules.some((item) => `${item.label} ${item.id === "offers" ? "Offers & Promotions Poster Design Flyer Design" : ""}`.toLowerCase().includes(navigationSearch.trim().toLowerCase())) && <p className="navigation-empty">No modules found. Try another name.</p>}
           <button className="nav sidebar-logout" onClick={handleLogout} title="Logout">
             <LogOut size={18} />
             {sidebarOpen && <span>Logout</span>}
           </button>
         </nav>
+        <div className="workspace-account" title={`${currentUser.name || currentUser.email} · ${currentRoleLabel}`}>
+          <span className="workspace-avatar">{(currentUser.name || currentUser.email || "U").slice(0, 1).toUpperCase()}</span>
+          {sidebarOpen && <div><strong>{currentUser.name || currentUser.email}</strong><span>{currentRoleLabel}</span></div>}
+        </div>
       </aside>
       {sidebarOpen && <button className="sidebar-backdrop" type="button" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
       <main>
@@ -2484,7 +2767,7 @@ function AuthenticatedApp() {
             </button>
             <div>
               <p>{storeLabel(activeStore)}</p>
-        <h1>{activeModule === "attendance" ? `Attendance - ${attendanceView}` : activeModule === "offers" ? `Offers & Promotions - ${offersView}` : activeModule === "finance" ? `Finance - ${financeView}` : modules.find((item) => item.id === activeModule)?.label}</h1>
+        <h1>{activeModule === "inventory" && inventoryView === "vendor-settlements" ? "Purchase - Vendor settlements" : activeModule === "inventory" && inventoryView === "purchase-order" ? "Purchase - Purchase order" : activeModule === "attendance" ? `Attendance - ${attendanceView}` : activeModule === "offers" ? `Marketing - ${["Poster Design", "Flyer Design"].includes(offersView) ? offersView : "Offers & Promotions"}` : activeModule === "finance" ? `Finance - ${financeView}` : activeModule === "inventory" ? `Inventory - ${inventoryView === "stock" ? "Stock details" : inventoryView === "variants" ? "Batches" : inventoryView === "create" ? "Product Master" : inventoryView === "category-setup" ? "Category setup" : inventoryView === "tax-setup" ? "HSN & GST setup" : inventoryView === "brand-setup" ? "Brand & manufacturer" : inventoryView === "vendors" ? "Vendor creation" : inventoryView === "purchase-return" ? "Purchase Return" : "Purchase entry"}` : modules.find((item) => item.id === activeModule)?.label}</h1>
             </div>
           </div>
           <div className="topbar-actions">
@@ -2496,8 +2779,7 @@ function AuthenticatedApp() {
                   {stores.map((store) => <option key={store.id} value={store.id}>{store.name} - {store.branch}</option>)}
                 </select>
               </>
-            ) : <span className="pill store-pill">{activeStore.branch} store</span>}
-            <span className="pill role-pill">{currentRoleLabel}</span>
+            ) : null}
             {!appInstalled && <button className="install-app-button" type="button" onClick={installWebApp} title="Install UVPRO as an application"><Download size={16} /><span>Install app</span></button>}
             <button className="icon-btn" onClick={showOperationalNotifications} title="Operational alerts"><Bell size={18} /></button>
             <button className="icon-btn" onClick={() => setThemeConfig((current) => ({ ...current, mode: dark ? "Light" : "Dark" }))} title="Toggle theme">{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
@@ -2634,9 +2916,11 @@ function LoginScreen({ onLogin }) {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function login(event) {
     event.preventDefault();
+    if (isSubmitting) return;
     const loginId = email.trim().toLowerCase();
     if (localAuthEnabled && loginId === localAuthEmail && password === localAuthPassword) {
       onLogin({
@@ -2652,43 +2936,59 @@ function LoginScreen({ onLogin }) {
     }
     if (cloudConfigured) {
       setError("");
-      const { data, error: authError } = await signInWithCloud(loginId, password);
-      if (!authError && data.user) {
-        // The auth listener owns profile verification and hydration. A second
-        // competing profile request here could replace the verified user.
-        return;
+      setIsSubmitting(true);
+      try {
+        const { data, error: authError } = await signInWithCloud(loginId, password);
+        if (!authError && data.user) {
+          // The auth listener owns profile verification and hydration. A second
+          // competing profile request here could replace the verified user.
+          return;
+        }
+        setError(authError?.message || "Sign-in failed. Check your email and password, then retry.");
+      } catch (loginError) {
+        const detail = String(loginError?.message || "");
+        setError(detail.toLowerCase().includes("did not respond in time")
+          ? detail
+          : "Can't reach the sign-in service. Check your connection or API server, then retry.");
+      } finally {
+        setIsSubmitting(false);
       }
-      setError(authError?.message || "AWS sign-in failed");
       return;
     }
     setError("Secure sign-in is not configured for this deployment.");
   }
 
   return (
-    <div className="login-screen">
+    <div className="login-screen workspace-login">
+      <section className="login-story" aria-label="UVPRO restaurant workspace">
+        <div className="login-story-brand"><img src={uvproLogoPath} alt="" /><strong>UVPRO<span>.</span></strong><span>ERP & POS</span></div>
+        <div className="login-story-copy"><span className="design-eyebrow">A little clarity. A better service.</span><h2>Great hospitality.<br />Beautifully managed.</h2><p>From the first order to the last closing report, bring your restaurant together in one workspace.</p></div>
+        <div className="login-workflow"><span><ShoppingCart size={22} /><strong>Take orders</strong><small>Keep service flowing</small></span><ChevronRight size={18} /><span><ChefHat size={22} /><strong>Connect your team</strong><small>Stay in sync</small></span><ChevronRight size={18} /><span><FileBarChart size={22} /><strong>See the bigger picture</strong><small>Know your business</small></span></div>
+        <footer>Driven by excellence. <span>Powered by Vestano Retail</span></footer>
+      </section>
       <form className="login-card" onSubmit={login}>
         <div className="login-brand-panel">
           <img src={uvproLogoPath} alt="" />
           <div>
             <span>UVPRO ERP & POS</span>
-            <h1>Staff sign in</h1>
-            <p>Restaurant operations workspace</p>
-            <small className="login-tagline">Driven by Excellence. Powered by Vestano Retail</small>
+            <h1>Welcome back.</h1>
+            <p>Sign in to your restaurant workspace.</p>
           </div>
         </div>
         <div className="login-form-fields">
-          <label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" /></label>
+          <label>Email address<input type="email" required placeholder="you@restaurant.com" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} autoComplete="username" /></label>
           <label>Password
             <span className="password-field">
-              <input value={password} type={showPassword ? "text" : "password"} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
+              <input required placeholder="Enter your password" value={password} type={showPassword ? "text" : "password"} onChange={(event) => { setPassword(event.target.value); setError(""); }} autoComplete="current-password" />
               <button type="button" onClick={() => setShowPassword((value) => !value)} title={showPassword ? "Hide password" : "Show password"}>
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </span>
           </label>
         </div>
-        {error && <strong className="login-error">{error}</strong>}
-        <button className="login-submit" type="submit">Login</button>
+        {error && <strong className="login-error" role="alert" aria-live="polite">{error}</strong>}
+        <button className="login-submit" type="submit" disabled={isSubmitting}>{isSubmitting ? "Signing in…" : <>Sign in <ChevronRight size={18} /></>}</button>
+        <p className="login-support"><ShieldCheck size={16} /> Your assigned stores, securely connected.</p>
       </form>
     </div>
   );
@@ -3355,7 +3655,7 @@ function ExcelReportSheet({ title, range, columns, rows, columnTotals = {} }) {
   );
 }
 
-function Dashboard({ notify, salesLedger, refundLedger = [], kdsOrders, comparisonStores = [], comparisonSalesLedger = [], storeId, onNavigate }) {
+function Dashboard({ notify, salesLedger, refundLedger = [], kdsOrders, comparisonStores = [], comparisonSalesLedger = [], storeId, onNavigate, onOpenIntelligence }) {
   const [range, setRange] = useState("Weekly");
   const [analysisUpdatedAt, setAnalysisUpdatedAt] = useState(new Date());
   const [inventorySnapshot, setInventorySnapshot] = useBusinessState(`vestora-inventory-${storeId}`, () => {
@@ -3467,14 +3767,15 @@ function Dashboard({ notify, salesLedger, refundLedger = [], kdsOrders, comparis
     const saved = loadStoredArray(`vestora-inventory-${storeId}`);
     setInventorySnapshot(stripUntouchedDefaultRecords(saved, defaultInventoryItems, ["updatedAt"]));
     setAnalysisUpdatedAt(new Date());
-    notify("AI insights updated from live branch data");
+    notify("AI Intelligence updated from live branch data");
   };
   const openInsight = (insight) => {
     onNavigate?.(insight.module);
     notify(insight.action);
   };
   return (
-    <section className="screen">
+    <section className="screen dashboard-screen">
+      <div className="workspace-heading"><div><span className="design-eyebrow">Daily overview</span><h2>Your business, at a glance.</h2><p>A clear view of today's service, sales, and priorities.</p></div><span className="workspace-date"><CalendarClock size={17} />{new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" }).format(new Date())}</span></div>
       <div className="metric-grid">
         <Metric icon={BadgeIndianRupee} label="Today's sales" value={formatMoney(todaySales)} trend={ledgerOrders ? `${ledgerOrders} bills today` : "New day restart"} />
         <Metric icon={ReceiptText} label="Today's orders" value={String(todayOrders)} trend={ledgerOrders ? "POS bills today" : "No bills after midnight"} />
@@ -3482,23 +3783,31 @@ function Dashboard({ notify, salesLedger, refundLedger = [], kdsOrders, comparis
         <Metric icon={PackageSearch} label="Low stock" value={String(lowStockItems.length)} trend={lowStockItems.length ? "Needs review" : "Stock healthy"} danger={lowStockItems.length > 0} />
       </div>
       <div className="split dashboard-intelligence-grid">
-        <div className="panel large">
-          <PanelHead title={`Sales analytics - ${range}`} icon={Gauge} actions={["Weekly", "Monthly", "Yearly"]} activeAction={range} onAction={(action) => { setRange(action); notify(`${action} analytics loaded`); }} />
-          <ResponsiveContainer width="100%" height={270}>
-            <AreaChart data={dynamicSalesGraph}>
-              <defs><linearGradient id="sales" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#22745e" stopOpacity={0.34} /><stop offset="95%" stopColor="#22745e" stopOpacity={0} /></linearGradient></defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="day" />
-              <YAxis />
-              <Tooltip formatter={(value) => formatMoney(value)} />
-              <Area type="monotone" dataKey="sales" stroke="#22745e" fill="url(#sales)" strokeWidth={3} />
-            </AreaChart>
-          </ResponsiveContainer>
+        <div className="dashboard-main-column">
+          <div className="panel large">
+            <PanelHead title="Sales performance" icon={Gauge} actions={["Weekly", "Monthly", "Yearly"]} activeAction={range} onAction={(action) => { setRange(action); notify(`${action} analytics loaded`); }} />
+            <p className="chart-description">{range} revenue from completed orders</p>
+            <ResponsiveContainer width="100%" height={270}>
+              <AreaChart data={dynamicSalesGraph}>
+                <defs><linearGradient id="sales" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#22745e" stopOpacity={0.34} /><stop offset="95%" stopColor="#22745e" stopOpacity={0} /></linearGradient></defs>
+                <CartesianGrid strokeDasharray="3 5" vertical={false} stroke="var(--design-border)" />
+                <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: "var(--theme-muted)", fontSize: 11 }} dy={10} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fill: "var(--theme-muted)", fontSize: 11 }} width={50} />
+                <Tooltip formatter={(value) => formatMoney(value)} />
+                <Area type="monotone" dataKey="sales" stroke="#22745e" fill="url(#sales)" strokeWidth={3} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="ops-grid">
+            <StatusBoard title="Order mix" data={orderMix} />
+            <StatusBoard title="By branch" data={branchComparison} money />
+            <StatusBoard title="Payments" data={paymentMix} percent />
+          </div>
         </div>
         <div className="panel ai-copilot-panel">
           <div className="ai-copilot-head">
-            <div className="ai-copilot-title"><span><Sparkles size={19} /></span><div><small>Decision intelligence</small><h2>AI insights</h2></div></div>
-            <button type="button" onClick={refreshInsights}><Sparkles size={15} /> Refresh</button>
+            <div className="ai-copilot-title"><span><Sparkles size={19} /></span><div><small>Decision intelligence</small><h2>AI Intelligence</h2></div></div>
+            <div className="ai-heading-actions">{onOpenIntelligence&&<button type="button" onClick={onOpenIntelligence}>View all<ChevronRight size={15}/></button>}<button type="button" onClick={refreshInsights}><Sparkles size={15} /> Refresh</button></div>
           </div>
           <div className="ai-health-strip">
             <div className={`ai-health-score ${operationalScore < 70 ? "danger" : operationalScore < 85 ? "warning" : ""}`}><strong>{operationalScore}</strong><span>/100</span></div>
@@ -3522,11 +3831,6 @@ function Dashboard({ notify, salesLedger, refundLedger = [], kdsOrders, comparis
           </div>
           <div className="ai-copilot-foot"><span>Updated {analysisUpdatedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span><span>Based on live branch operations</span></div>
         </div>
-      </div>
-      <div className="ops-grid">
-        <StatusBoard title="Order mix" data={orderMix} />
-        <StatusBoard title="Branch comparison" data={branchComparison} money />
-        <StatusBoard title="Payments" data={paymentMix} percent />
       </div>
     </section>
   );
@@ -3969,12 +4273,12 @@ function CashierLogin({ cashiers, activeStore, stores = [], currentShift, onAuth
 }
 
 function ShiftOpening({ online, onOpenShift, onExit, onLogout, cashier }) {
-  const [openingBalance, setOpeningBalance] = useState("0");
+  const [openingBalance, setOpeningBalance] = useState("");
   const balance = Number(openingBalance || 0);
 
   function submit(event) {
     event.preventDefault();
-    if (Number.isNaN(balance) || balance < 0) return;
+    if (!openingBalance.trim() || Number.isNaN(balance) || balance < 0) return;
     onOpenShift(balance);
   }
 
@@ -4000,7 +4304,7 @@ function ShiftOpening({ online, onOpenShift, onExit, onLogout, cashier }) {
           </div>
           <label className="shift-balance-field">
             <span>Opening balance</span>
-            <span className="shift-currency-input"><span>₹</span><input type="number" min="0" value={openingBalance} onChange={(event) => setOpeningBalance(event.target.value)} autoFocus /></span>
+            <span className="shift-currency-input"><span>₹</span><input type="number" min="0" value={openingBalance} onChange={(event) => setOpeningBalance(event.target.value)} autoFocus required /></span>
           </label>
         </div>
         <div className="shift-actions">
@@ -4056,24 +4360,29 @@ function BillReceiptMeta({ billTemplate, rows }) {
   );
 }
 
-function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange, orderType, setOrderType, online, notify, billTemplate, billingPrinter, onSale, onVoidItem, onExit, onLogout, onIdleLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], refundLedger = [], onRefund, orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
-  const catalogItems = (items?.length ? items : menuItems).filter((item) => item.status !== "Inactive");
-  const categories = ["All", ...Array.from(new Set(catalogItems.map((item) => item.category).filter(Boolean))), "Favourites"];
+function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange, orderType, setOrderType, online, notify, billTemplate, billingPrinter, onSale, onVoidItem, onExit, onLogout, currentShift, onCloseShift, shiftBills, shiftRefunds = [], refundLedger = [], onRefund, orderHistory, currentUser, pendingTableOrders = [], onTableOrderPaid }) {
+  const [offerNow,refreshOfferNow] = usePromotionTime();
+  const [inventoryProducts] = useBusinessState(`vestora-inventory-${storeId}`, () => loadStoredArray(`vestora-inventory-${storeId}`));
+  const [pricingMode, setPricingMode] = useState(() => cart[0]?.pricingMode === "Wholesale" ? "Wholesale" : "Retail");
+  const baseCatalogItems = buildProductSearchCatalog(items || [], inventoryProducts || []);
+  const catalogItems = baseCatalogItems.map((item) => withBillingPrice(item, pricingMode));
+  const menuCatalogItems = (items || []).filter((item) => item.status !== "Inactive").map((item) => {
+    const master = baseCatalogItems.find((entry) => entry.productMasterItem && String(entry.name).trim().toLowerCase() === String(item.name).trim().toLowerCase());
+    return withBillingPrice(master || item, pricingMode);
+  });
+  const categories = ["All", ...Array.from(new Set(menuCatalogItems.map((item) => item.category).filter(Boolean))), "Favourites"];
   const [category, setCategory] = useState("All");
   const [query, setQuery] = useState("");
+  const [posSearchOpen, setPosSearchOpen] = useState(false);
+  const [activePosSuggestionIndex, setActivePosSuggestionIndex] = useState(0);
   const [paymentMode, setPaymentMode] = useState("UPI");
   const [customerName, setCustomerName] = useState("");
   const [customerMobile, setCustomerMobile] = useState("");
   const [discount, setDiscount] = useState(0);
-  const [offerDiscount, setOfferDiscount] = useState(0);
-  const [selectedOfferId, setSelectedOfferId] = useState("");
-  const [couponEntry, setCouponEntry] = useState("");
-  const [appliedOffer, setAppliedOffer] = useState(null);
   const [posOffers] = useBusinessState(`vestora-offers-${storeId}`, () => {
-    const savedOffers = loadStoredArray(`vestora-offers-${storeId}`);
-    return savedOffers.length ? savedOffers : localOfferCatalog;
+    return loadStoredArray(`vestora-offers-${storeId}`);
   });
-  const [closingBalance, setClosingBalance] = useState(String(currentShift?.openingBalance || 0));
+  const [closingBalance, setClosingBalance] = useState("");
   const [varianceNote, setVarianceNote] = useState("");
   const [showCloseShift, setShowCloseShift] = useState(false);
   const [showOrderHistory, setShowOrderHistory] = useState(false);
@@ -4092,26 +4401,8 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
   const [recentlyAddedKey, setRecentlyAddedKey] = useState("");
   const billPanelRef = useRef(null);
   const billItemsRef = useRef(null);
-  const idleLogoutRef = useRef(onIdleLogout);
-  idleLogoutRef.current = onIdleLogout;
   const [orderNumber, setOrderNumber] = useState(() => `ORD-${Date.now().toString().slice(-6)}`);
   const [orderCreatedAt, setOrderCreatedAt] = useState(() => new Date());
-
-  useEffect(() => {
-    const idleTimeoutMs = 10 * 60 * 1000;
-    let idleTimer;
-    const resetIdleTimer = () => {
-      window.clearTimeout(idleTimer);
-      idleTimer = window.setTimeout(() => idleLogoutRef.current?.(), idleTimeoutMs);
-    };
-    const activityEvents = ["pointerdown", "keydown", "touchstart"];
-    activityEvents.forEach((eventName) => window.addEventListener(eventName, resetIdleTimer, { passive: true }));
-    resetIdleTimer();
-    return () => {
-      window.clearTimeout(idleTimer);
-      activityEvents.forEach((eventName) => window.removeEventListener(eventName, resetIdleTimer));
-    };
-  }, []);
 
   function openSystemPrintDialog(bodyClass, message) {
     const cleanup = () => document.body.classList.remove(bodyClass);
@@ -4121,28 +4412,19 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
     window.setTimeout(() => window.print(), 80);
   }
 
-  const filtered = catalogItems.filter((item) => {
-    const inCategory = category === "All" || item.category === category || (category === "Favourites" && item.fav);
-    const searchText = query.trim().toLowerCase();
-    const inSearch = !searchText
-      || String(item.name || "").toLowerCase().includes(searchText)
-      || String(item.category || "").toLowerCase().includes(searchText)
-      || String(item.barcode || "").toLowerCase().includes(searchText);
-    return inCategory && inSearch;
-  });
+  const visibleMenuItems = filterPosCatalog(menuCatalogItems, catalogItems, "", category);
+  const posSearchSuggestions = query.trim()
+    ? filterPosCatalog(menuCatalogItems, catalogItems, query, category).slice(0, 8)
+    : [];
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
-  const totalDiscount = Math.min(subtotal, discount + offerDiscount);
-  const taxableSubtotal = Math.max(subtotal - totalDiscount, 0);
-  const itemTax = cart.reduce((sum, item) => {
-    const rate = Number.isFinite(Number(item.tax)) ? Number(item.tax) : 5;
-    return sum + Number(item.price || 0) * Number(item.qty || 0) * (rate / 100);
-  }, 0);
-  const tax = Math.round(subtotal > 0 ? itemTax * (taxableSubtotal / subtotal) : 0);
-  const cgst = Math.round(tax / 2);
-  const sgst = tax - cgst;
-  const total = Math.max(subtotal - totalDiscount, 0) + tax;
-  const activePosOffers = posOffers.filter((offer) => offer.status === "Active");
-  const selectedOffer = activePosOffers.find((offer) => offer.id === selectedOfferId) || null;
+  const offerCalculation = selectAutomaticOffer(posOffers, cart, calculatePosOffer, { customerMobile, orderHistory, orderType, now: offerNow });
+  const appliedOffer = offerCalculation.appliedOffer;
+  const offerDiscount = offerCalculation.amount;
+  const { totalDiscount, taxableSubtotal, tax, cgst, sgst, total } = calculateInclusiveBill(cart, discount, offerCalculation);
+  const productOfferRate = (item) => {
+    const result = selectAutomaticOffer(posOffers.filter(offer => offer.template === "product-discounts"), [{ ...item, qty: 1 }], calculatePosOffer, { customerMobile, orderHistory, orderType, now: offerNow });
+    return result.amount > 0 ? Number(item.price) - result.amount : null;
+  };
   const cartItemCount = cart.reduce((sum, item) => sum + Number(item.qty || 0), 0);
   const shiftCashReceipts = shiftBills.reduce((sum, bill) => {
     if (bill.payment === "Cash") return sum + Number(bill.total || 0);
@@ -4221,23 +4503,22 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
     }
   }, [pendingTableOrders, selectedReceptionOrderId]);
 
-  useEffect(() => {
-    if (!appliedOffer) return;
-    const offer = posOffers.find((entry) => entry.id === appliedOffer.id);
-    const result = offer ? calculatePosOffer(offer, cart, appliedOffer.couponCode || "") : { amount: 0 };
-    if (!result.amount) {
-      setAppliedOffer(null);
-      setOfferDiscount(0);
-      return;
-    }
-    if (result.amount !== offerDiscount) setOfferDiscount(result.amount);
-  }, [cart, posOffers, appliedOffer, offerDiscount]);
+
 
   function getCartItemKey(item) {
     return `${String(item.id ?? "item")}::${String(item.name ?? "").trim().toLowerCase()}`;
   }
 
+  function changePricingMode(mode) {
+    if (!["Retail", "Wholesale"].includes(mode)) return;
+    setPricingMode(mode);
+    setCart((current) => repriceCart(current, baseCatalogItems, mode));
+    setShowSplitPayment(false);
+    notify(`${mode} billing selected; item prices updated`);
+  }
+
   function add(item) {
+    item = withBillingPrice(item, pricingMode);
     const cartItemKey = getCartItemKey(item);
     const trackedStock = foodStockRecordFor(foodStock, item);
     const currentCartQty = cart.find((entry) => getCartItemKey(entry) === cartItemKey)?.qty || 0;
@@ -4257,10 +4538,46 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
   function addBarcodeMatch() {
     const scannedCode = query.trim().toLowerCase();
     if (!scannedCode) return;
-    const matchedItem = catalogItems.find((item) => String(item.barcode || "").trim().toLowerCase() === scannedCode);
+    const matchedItem = catalogItems.find((item) => String(item.barcode || "").trim().toLowerCase() === scannedCode
+      || (item.additionalBarcodes || []).some((barcode) => String(barcode).trim().toLowerCase() === scannedCode));
     if (!matchedItem) return;
     add(matchedItem);
     setQuery("");
+    setPosSearchOpen(false);
+    setActivePosSuggestionIndex(0);
+  }
+
+  function handlePosSearchKeyDown(event) {
+    if (event.key === "ArrowDown" && posSearchOpen && posSearchSuggestions.length) {
+      event.preventDefault();
+      setActivePosSuggestionIndex((current) => (current + 1) % posSearchSuggestions.length);
+      return;
+    }
+    if (event.key === "ArrowUp" && posSearchOpen && posSearchSuggestions.length) {
+      event.preventDefault();
+      setActivePosSuggestionIndex((current) => (current - 1 + posSearchSuggestions.length) % posSearchSuggestions.length);
+      return;
+    }
+    if (event.key === "Escape") {
+      setPosSearchOpen(false);
+      return;
+    }
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const scannedCode = query.trim().toLowerCase();
+    const exactBarcodeMatch = catalogItems.find((item) => String(item.barcode || "").trim().toLowerCase() === scannedCode
+      || (item.additionalBarcodes || []).some((barcode) => String(barcode).trim().toLowerCase() === scannedCode));
+    if (exactBarcodeMatch) {
+      addBarcodeMatch();
+      return;
+    }
+    const selected = posSearchSuggestions[Math.min(activePosSuggestionIndex, posSearchSuggestions.length - 1)];
+    if (selected) {
+      add(selected);
+      setQuery("");
+      setPosSearchOpen(false);
+      setActivePosSuggestionIndex(0);
+    }
   }
 
   function changeQty(cartItemKey, delta) {
@@ -4280,32 +4597,14 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
     notify(removed ? `${removed.name} voided` : "Item removed");
   }
 
-  function applyOffer() {
-    if (!cart.length) {
-      notify("Add items before applying an offer");
-      return;
-    }
-    if (appliedOffer) {
-      setAppliedOffer(null);
-      setOfferDiscount(0);
-      notify(`${appliedOffer.name} removed`, 4200);
-      return;
-    }
-    if (!selectedOffer) {
-      notify("Choose an active offer first");
-      return;
-    }
-    const result = calculatePosOffer(selectedOffer, cart, couponEntry);
-    if (!result.amount) {
-      notify(result.error || "This offer cannot be applied to the current bill");
-      return;
-    }
-    setOfferDiscount(result.amount);
-    setAppliedOffer({ id: selectedOffer.id, name: selectedOffer.name, type: selectedOffer.type, amount: result.amount, couponCode: couponEntry.trim().toUpperCase() });
-    notify(`${selectedOffer.name} applied: ${formatMoney(result.amount)} off`);
-  }
-
   function completeCheckout(selectedPayment, splitPayments = []) {
+    const latestOffer = selectAutomaticOffer(posOffers, cart, calculatePosOffer, { customerMobile, orderHistory, orderType });
+    if (latestOffer.appliedOffer?.id !== appliedOffer?.id || Math.abs(latestOffer.amount - offerDiscount) > 0.005) {
+      refreshOfferNow();
+      setOrderCreatedAt(new Date());
+      notify("Offer eligibility changed. Review the updated bill before payment.");
+      return false;
+    }
     if (customerName && !customerNameValid) {
       notify("Enter at least 2 characters for customer name or leave it blank");
       return false;
@@ -4334,7 +4633,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
         return false;
       }
     }
-    const bill = { id: `BILL-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, orderNumber, cashier: currentUser?.name || "POS User", customerName: customerName.trim(), customerMobile, orderType, tableOrderId: sourceTableOrder?.id || "", tableName: sourceTableOrder?.tableName || "", waiter: sourceTableOrder?.waiterName || "", guestCount: Number(sourceTableOrder?.guestCount || 0), items: cart, subtotal, cgst, sgst, tax, discount: totalDiscount, appliedOffer, total, payment: selectedPayment, paymentStatus: ["Cash", "Credit"].includes(selectedPayment) ? "Recorded" : "Manually confirmed", splitPayments, itemCount: cart.reduce((sum, item) => sum + item.qty, 0), syncStatus: online ? "Synced" : "Pending sync", completedAt: new Date().toISOString() };
+    const bill = { id: `BILL-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, orderNumber, cashier: currentUser?.name || "POS User", customerName: customerName.trim(), customerMobile, orderType, pricingMode, tableOrderId: sourceTableOrder?.id || "", tableName: sourceTableOrder?.tableName || "", waiter: sourceTableOrder?.waiterName || "", guestCount: Number(sourceTableOrder?.guestCount || 0), items: cart, subtotal, taxInclusive: true, taxableSubtotal, cgst, sgst, tax, discount: totalDiscount, appliedOffer, total, payment: selectedPayment, paymentStatus: ["Cash", "Credit"].includes(selectedPayment) ? "Recorded" : "Manually confirmed", splitPayments, itemCount: cart.reduce((sum, item) => sum + item.qty, 0), syncStatus: online ? "Synced" : "Pending sync", completedAt: new Date().toISOString() };
     if (!online) {
       const queued = JSON.parse(localStorage.getItem("vestora-offline-orders") || "[]");
       localStorage.setItem("vestora-offline-orders", JSON.stringify([...queued, bill]));
@@ -4357,15 +4656,12 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
     }
     if (sourceTableOrder) onTableOrderPaid?.(sourceTableOrder, bill);
     setCompletedBill(bill);
+    setPricingMode("Retail");
     setShowSplitPayment(false);
     setCart([]);
     setCustomerName("");
     setCustomerMobile("");
     setDiscount(0);
-    setOfferDiscount(0);
-    setAppliedOffer(null);
-    setSelectedOfferId("");
-    setCouponEntry("");
     setSourceTableOrder(null);
     setOrderNumber(`ORD-${Date.now().toString().slice(-6)}`);
     setOrderCreatedAt(new Date());
@@ -4431,7 +4727,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
   function confirmCloseShift(event) {
     event.preventDefault();
     const balance = Math.round(Number(closingBalance));
-    if (Number.isNaN(balance) || balance < 0) {
+    if (!closingBalance.trim() || Number.isNaN(balance) || balance < 0) {
       notify("Enter valid closing amount");
       return;
     }
@@ -4522,7 +4818,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
       if (!name) return null;
       const qty = Math.max(1, Number(item.qty || 1));
       const price = Number(item.price ?? catalogMatch?.price ?? 0);
-      const normalized = { ...item, name, qty, price: Number.isFinite(price) ? price : 0 };
+      const normalized = withBillingPrice({ ...item, name, qty, retailPrice: Number(itemRecord.retailPrice ?? itemRecord.price ?? catalogMatch?.retailPrice ?? price), wholesalePrice: catalogMatch?.wholesalePrice ?? item.wholesalePrice }, pricingMode);
       return { ...normalized, cartItemKey: getCartItemKey(normalized) };
     }).filter(Boolean);
 
@@ -4571,6 +4867,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
           </div>
         </div>
         <div className="pos-page-actions">
+          <label className="pos-pricing-control">Price type<select aria-label="Billing price type" value={pricingMode} onChange={(event) => changePricingMode(event.target.value)}><option value="Retail">Retail</option><option value="Wholesale">Wholesale</option></select></label>
           <span className="shift-pill"><small>Opening float</small><strong>{formatMoney(currentShift.openingBalance)}</strong></span>
           <span className="shift-pill"><small>Cash sales</small><strong>{formatMoney(shiftCashSales)}</strong></span>
           <span className={online ? "pill online pos-network-pill" : "pill offline pos-network-pill"}>{online ? <Wifi size={15} /> : <WifiOff size={15} />} {online ? "Online" : "Offline"}</span>
@@ -4582,30 +4879,37 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
       </div>
       <div className="pos-catalog">
         <div className="toolbar">
-          <label className="search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addBarcodeMatch(); } }} placeholder="Search item or scan barcode" /></label>
+          <div className="pos-search-autocomplete" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setPosSearchOpen(false); }}>
+            <label className="search"><Search size={17} /><input role="combobox" aria-label="Search item or scan barcode" aria-expanded={posSearchOpen && Boolean(query.trim())} aria-controls="pos-search-suggestions" aria-autocomplete="list" value={query} onFocus={() => setPosSearchOpen(Boolean(query.trim()))} onChange={(event) => { setQuery(event.target.value); setPosSearchOpen(true); setActivePosSuggestionIndex(0); }} onKeyDown={handlePosSearchKeyDown} placeholder="Search item or scan barcode" /></label>
+            {posSearchOpen && query.trim() && <div className="pos-search-suggestions" id="pos-search-suggestions" role="listbox" aria-label="Matching products">
+              {posSearchSuggestions.map((item, index) => <button type="button" role="option" aria-selected={index === activePosSuggestionIndex} className={index === activePosSuggestionIndex ? "active" : ""} key={getCartItemKey(item)} onMouseEnter={() => setActivePosSuggestionIndex(index)} onMouseDown={(event) => event.preventDefault()} onClick={() => { add(item); setQuery(""); setPosSearchOpen(false); setActivePosSuggestionIndex(0); }}>
+                <span className="pos-search-suggestion-copy"><strong>{item.name}</strong><small>{[item.category, item.sku ? `SKU ${item.sku}` : ""].filter(Boolean).join(" · ")}</small></span><strong className={productOfferRate(item) !== null ? "pos-search-suggestion-price has-offer" : "pos-search-suggestion-price"}>{productOfferRate(item) !== null && <small className="pos-original-rate">{formatMoney(item.price)}</small>}{productOfferRate(item) !== null ? formatMoney(productOfferRate(item)) : formatMoney(item.price)}{productOfferRate(item) !== null && <small className="pos-offer-rate-label">Offer rate</small>}{item.wholesaleFallback && <small className="pos-retail-fallback">Retail fallback</small>}</strong>
+              </button>)}
+              {!posSearchSuggestions.length && <p className="pos-search-no-results">No matching products found</p>}
+            </div>}
+          </div>
           <div className="segmented">{["Dine-in", "Takeaway", "Delivery", "Online"].map((type) => <button key={type} className={orderType === type ? "selected" : ""} onClick={() => { setOrderType(type); notify(`${type} billing selected`); }}>{type}</button>)}</div>
         </div>
+
         {!!lowStockFoodItems.length && <div className="pos-food-stock-alert"><AlertTriangle size={18} /><div><strong>Food stock alert</strong><span>{lowStockFoodItems.map((record) => `${record.item}: ${Number(record.available || 0)} left`).join(" · ")}</span></div></div>}
-        <div className="catalog-section-head"><div><span>Menu catalog</span><strong>{filtered.length} available items</strong></div><div className="category-row">{categories.map((name) => <button key={name} className={category === name ? "chip active" : "chip"} onClick={() => setCategory(name)}>{name}</button>)}</div></div>
-        <div className="item-grid">{filtered.map((item) => {
+        <div className="catalog-section-head"><div><span>Menu catalog</span><strong>{visibleMenuItems.length} available items</strong></div><div className="category-row">{categories.map((name) => <button key={name} className={category === name ? "chip active" : "chip"} onClick={() => setCategory(name)}>{name}</button>)}</div></div>
+        <div className="item-grid">{visibleMenuItems.map((item) => {
           const catalogItemKey = getCartItemKey(item);
           const stockRecord = foodStockRecordFor(foodStock, item);
           const stockAvailable = stockRecord ? Number(stockRecord.available || 0) : null;
-          return <button key={catalogItemKey} className={stockRecord && stockAvailable <= 0 ? "item-card out-of-stock" : "item-card"} onClick={() => add(item)} disabled={stockRecord && stockAvailable <= 0}><img className="item-photo" src={getMenuItemPhoto(item)} alt="" loading="lazy" /><span>{item.category}</span><strong>{item.name}</strong>{item.barcode && <small className="item-barcode">Barcode {item.barcode}</small>}{stockRecord && <small className={stockAvailable <= foodStockThreshold(stockRecord) ? "item-food-stock low" : "item-food-stock"}>{stockAvailable > 0 ? `${stockAvailable} ${stockRecord.unit || "portions"} left` : "Out of food stock"}</small>}<em>{formatMoney(item.price)}</em></button>;
+          const offerRate = productOfferRate(item);
+          return <button key={catalogItemKey} className={stockRecord && stockAvailable <= 0 ? "item-card out-of-stock" : offerRate !== null ? "item-card has-product-offer" : "item-card"} onClick={() => add(item)} disabled={stockRecord && stockAvailable <= 0}><img className="item-photo" src={getMenuItemPhoto(item)} alt="" loading="lazy" /><span>{item.category}</span><strong>{item.name}</strong>{item.barcode && <small className="item-barcode">Barcode {item.barcode}</small>}{stockRecord && <small className={stockAvailable <= foodStockThreshold(stockRecord) ? "item-food-stock low" : "item-food-stock"}>{stockAvailable > 0 ? `${stockAvailable} ${stockRecord.unit || "portions"} left` : "Out of food stock"}</small>}{offerRate !== null ? <span className="item-offer-price"><small>{formatMoney(item.price)}</small><em>{formatMoney(offerRate)}</em><b>Offer</b></span> : <em>{formatMoney(item.price)}</em>}</button>;
         })}</div>
       </div>
       <div ref={billPanelRef} className="bill-panel">
         <div className="bill-panel-top">
           <PanelHead title={sourceTableOrder ? `Bill preview · ${cartItemCount} ${cartItemCount === 1 ? "item" : "items"}` : "Bill preview"} icon={ReceiptText} />
-          <div className="pos-offer-apply">
-            <select value={selectedOfferId} onChange={(event) => { setSelectedOfferId(event.target.value); setCouponEntry(""); }} disabled={Boolean(appliedOffer)} aria-label="Choose active offer"><option value="">Apply offer</option>{activePosOffers.map((offer) => <option key={offer.id} value={offer.id}>{offer.name} · {offer.type}</option>)}</select>
-            <button type="button" className={appliedOffer ? "active" : ""} onClick={applyOffer} disabled={!appliedOffer && !activePosOffers.length}>{appliedOffer ? "Remove" : "Apply"}</button>
-            {selectedOffer?.type === "Coupon" && !appliedOffer && <label className="coupon-entry"><span>Coupon code</span><input value={couponEntry} onChange={(event) => setCouponEntry(event.target.value.toUpperCase())} placeholder="Enter code" maxLength="24" /></label>}
-            {appliedOffer && <span className="pos-offer-applied"><CircleCheck size={14} /> {appliedOffer.name}</span>}
-          </div>
+
           </div>
           <div className={previewBillPaperClass} style={billPaperStyle}>
-          {billTemplate.showOrderInfo !== false && <div className="bill-type-row"><span>Billing type</span><strong>{orderType}</strong></div>}
+          {billTemplate.showOrderInfo !== false && <div className="bill-type-row"><span>Order type</span><strong>{orderType}</strong></div>}
+          <div className="bill-type-row"><span>Price type</span><strong>{pricingMode}</strong></div>
+          {pricingMode === "Wholesale" && <p className="pos-wholesale-note">Wholesale prices applied. Items without a wholesale price use retail price.{cart.some((item) => item.wholesaleFallback) ? ` Retail fallback: ${cart.filter((item) => item.wholesaleFallback).map((item) => item.name).join(", ")}.` : ""}</p>}
           {sourceTableOrder && (
             <div className="bill-table-row">
               <span className="bill-table-detail">
@@ -4644,8 +4948,10 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
             billTemplate.showPayment !== false && ["Payment", paymentMode],
           ]} />
           <div ref={billItemsRef} className="bill-items scrollable" tabIndex={0} aria-label="Selected bill items">
-            {cart.length === 0 ? <p className="empty">No items added</p> : cart.map((item) => {
+            {cart.length === 0 ? <p className="empty">No items added</p> : cart.map((item, index) => {
               const cartItemKey = getCartItemKey(item);
+              const originalLineTotal = Number(item.qty || 0) * Number(item.price || 0);
+              const lineOfferDiscount = Number(offerCalculation.lineDiscounts?.[index] || 0);
               return (
               <div className={recentlyAddedKey === cartItemKey ? "bill-line editable recently-added" : "bill-line editable"} key={cartItemKey} data-cart-item-key={cartItemKey}>
                 <span>{item.qty} x {item.name}</span>
@@ -4653,7 +4959,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
                   <button onClick={() => changeQty(cartItemKey, -1)} title="Decrease"><Minus size={14} /></button>
                   <button onClick={() => changeQty(cartItemKey, 1)} title="Increase"><Plus size={14} /></button>
                   <button onClick={() => removeItem(cartItemKey)} title="Remove"><Trash2 size={14} /></button>
-                  <strong>{formatMoney(item.qty * item.price)}</strong>
+                  {lineOfferDiscount > 0 ? <strong className="bill-line-offer-price"><small>{formatMoney(originalLineTotal)}</small>{formatMoney(originalLineTotal - lineOfferDiscount)}</strong> : <strong>{formatMoney(originalLineTotal)}</strong>}
                 </div>
               </div>
               );
@@ -4662,11 +4968,11 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
           <div className="totals">
             <span>Subtotal <strong>{formatMoney(subtotal)}</strong></span>
             <span>Discount <strong>{formatMoney(totalDiscount)}</strong></span>
-            {appliedOffer && <span className="bill-applied-offer">Offer · {appliedOffer.name}<strong>-{formatMoney(offerDiscount)}</strong></span>}
-            {billTemplate.showTaxBreakup !== false && <span>CGST <strong>{formatMoney(cgst)}</strong></span>}
-            {billTemplate.showTaxBreakup !== false && <span>SGST <strong>{formatMoney(sgst)}</strong></span>}
+            {appliedOffer && <span className="bill-applied-offer">Auto offer · {appliedOffer.name}<strong>-{formatMoney(offerDiscount)}</strong></span>}
+            <span>GST included <strong>{formatPreciseMoney(tax)}</strong></span>
+            {billTemplate.showTaxBreakup !== false && <span>CGST / SGST included <strong>{formatPreciseMoney(cgst)} / {formatPreciseMoney(sgst)}</strong></span>}
             {billTemplate.showItemCount && <span>Items <strong>{cartItemCount}</strong></span>}
-            <b>Grand total <strong>{formatMoney(total)}</strong></b>
+            <b>Grand total <strong>{formatPreciseMoney(total)}</strong></b>
             <BillReceiptFooter billTemplate={billTemplate} />
           </div>
         </div>
@@ -4689,7 +4995,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
           }}><Percent size={17} /> {discount > 0 ? "Remove discount" : "Discount"}</button>
           <button className={showRefund ? "refund-action active-secondary-action" : "refund-action"} onClick={openRefund}><ReceiptText size={17} /> Refund</button>
           <button className={showOrderHistory ? "history-action active-secondary-action" : "history-action"} onClick={openOrderHistory}><History size={17} /> Order history</button>
-          <button className="primary" disabled={!cart.length} onClick={checkout}>Complete sale {formatMoney(total)}</button>
+          <button className="primary" disabled={!cart.length} onClick={checkout}>Complete sale {formatPreciseMoney(total)}</button>
         </div>
       </div>
       {showRefund && (
@@ -4714,7 +5020,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
                 </select>
               </label>
               <label>Amount
-                <input type="number" min="0.01" step="0.01" max={refundRemaining || undefined} value={refundDraft.amount} onChange={(event) => setRefundDraft((current) => ({ ...current, amount: event.target.value }))} placeholder="0" disabled={!refundBill} />
+                <input type="number" min="0.01" step="0.01" max={refundRemaining || undefined} value={refundDraft.amount} onChange={(event) => setRefundDraft((current) => ({ ...current, amount: event.target.value }))} disabled={!refundBill} />
               </label>
             </div>
             {refundBill && <div className="pos-refund-balance"><span>Refundable {refundDraft.payment || "payment"}</span><strong>{formatMoney(refundRemaining)}</strong></div>}
@@ -4740,7 +5046,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
               {Object.keys(splitAmounts).map((method) => (
                 <label className={Number(splitAmounts[method] || 0) > 0 ? "split-payment-method selected" : "split-payment-method"} key={method}>
                   <span>{method}</span>
-                  <span className="split-amount-input"><small>₹</small><input type="number" min="0" step="0.01" value={splitAmounts[method]} onChange={(event) => setSplitAmounts((current) => ({ ...current, [method]: event.target.value }))} placeholder="0" /></span>
+                  <span className="split-amount-input"><small>₹</small><input type="number" min="0" step="0.01" value={splitAmounts[method]} onChange={(event) => setSplitAmounts((current) => ({ ...current, [method]: event.target.value }))} /></span>
                 </label>
               ))}
             </div>
@@ -4802,6 +5108,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
             <div className="completed-bill-summary">
               <span><small>Order number</small><strong>{completedBill.orderNumber}</strong></span>
               <span><small>Billing type</small><strong>{completedBill.orderType}</strong></span>
+              <span><small>Price type</small><strong>{completedBill.pricingMode || "Retail"}</strong></span>
               <span><small>Payment</small><strong>{completedBill.payment}</strong></span>
               {completedBill.customerName && <span><small>Customer name</small><strong>{completedBill.customerName}</strong></span>}
               {completedBill.customerMobile && <span><small>Customer mobile</small><strong>{completedBill.customerMobile}</strong></span>}
@@ -4811,10 +5118,11 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
             <div className={`${billPaperClass} completed-receipt completed-print-receipt`} style={billPaperStyle} aria-hidden="true">
               <BillReceiptHeader billTemplate={billTemplate} />
               <div className="bill-type-row"><span>Billing type</span><strong>{completedBill.orderType}{completedBill.tableName ? ` · ${completedBill.tableName}` : ""}</strong></div>
+              <div className="bill-type-row"><span>Price type</span><strong>{completedBill.pricingMode || "Retail"}</strong></div>
               <div className="bill-order-details"><span><small>Order number</small><strong>{completedBill.orderNumber}</strong></span><span><small>Payment</small><strong>{completedBill.payment}</strong></span>{completedBill.customerName && <span><small>Customer name</small><strong>{completedBill.customerName}</strong></span>}{completedBill.customerMobile && <span><small>Customer mobile</small><strong>{completedBill.customerMobile}</strong></span>}</div>
               {completedBill.payment === "Split" && <div className="completed-split-lines">{completedBill.splitPayments.map((entry) => <span key={entry.method}>{entry.method}<strong>{formatMoney(entry.amount)}</strong></span>)}</div>}
               <div className="bill-items">{completedBill.items.map((item) => <div className="bill-line" key={getCartItemKey(item)}><span>{item.qty} x {item.name}</span><strong>{formatMoney(item.qty * item.price)}</strong></div>)}</div>
-              <div className="totals"><span>Subtotal <strong>{formatMoney(completedBill.subtotal)}</strong></span><span>Discount <strong>{formatMoney(completedBill.discount)}</strong></span>{billTemplate.showTaxBreakup !== false && <span>CGST <strong>{formatMoney(Number(completedBill.cgst ?? Math.round(Number(completedBill.tax || 0) / 2)))}</strong></span>}{billTemplate.showTaxBreakup !== false && <span>SGST <strong>{formatMoney(Number(completedBill.sgst ?? Number(completedBill.tax || 0) - Math.round(Number(completedBill.tax || 0) / 2)))}</strong></span>}{billTemplate.showItemCount && <span>Items <strong>{completedBill.itemCount}</strong></span>}<b>Grand total <strong>{formatMoney(completedBill.total)}</strong></b><BillReceiptFooter billTemplate={billTemplate} /></div>
+              <div className="totals"><span>Subtotal <strong>{formatMoney(completedBill.subtotal)}</strong></span><span>Discount <strong>{formatMoney(completedBill.discount)}</strong></span>{billTemplate.showTaxBreakup !== false && <span>CGST{completedBill.taxInclusive ? " included" : ""} <strong>{formatPreciseMoney(Number(completedBill.cgst ?? Math.round(Number(completedBill.tax || 0) / 2)))}</strong></span>}{billTemplate.showTaxBreakup !== false && <span>SGST{completedBill.taxInclusive ? " included" : ""} <strong>{formatPreciseMoney(Number(completedBill.sgst ?? Number(completedBill.tax || 0) - Math.round(Number(completedBill.tax || 0) / 2)))}</strong></span>}{billTemplate.showItemCount && <span>Items <strong>{completedBill.itemCount}</strong></span>}<b>Grand total <strong>{formatPreciseMoney(completedBill.total)}</strong></b><BillReceiptFooter billTemplate={billTemplate} /></div>
             </div>
             <div className="shift-actions completed-bill-actions"><button type="button" onClick={() => setCompletedBill(null)}>Done</button><button className="primary-table-action" type="button" onClick={printCompletedBill}><Printer size={17} /> Print bill</button></div>
           </section>
@@ -4862,6 +5170,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
                 </div>
                 <div className="order-history-meta">
                   <span><small>Billing type</small><strong>{selectedHistoryBill.orderType}</strong></span>
+              <span><small>Price type</small><strong>{selectedHistoryBill.pricingMode || "Retail"}</strong></span>
                   <span><small>Payment</small><strong>{selectedHistoryBill.payment}</strong></span>
                   {selectedHistoryBill.customerName && <span><small>Customer name</small><strong>{selectedHistoryBill.customerName}</strong></span>}
                   {selectedHistoryBill.customerMobile && <span><small>Customer mobile</small><strong>{selectedHistoryBill.customerMobile}</strong></span>}
@@ -4873,13 +5182,14 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
                 <div className="order-history-totals">
                   <span>Subtotal<strong>{formatMoney(Number(selectedHistoryBill.subtotal || 0))}</strong></span>
                   <span>Discount<strong>{formatMoney(Number(selectedHistoryBill.discount || 0))}</strong></span>
-                  <span>CGST<strong>{formatMoney(selectedHistoryCgst)}</strong></span>
-                  <span>SGST<strong>{formatMoney(selectedHistorySgst)}</strong></span>
+                  <span>CGST{selectedHistoryBill.taxInclusive ? " included" : ""}<strong>{formatPreciseMoney(selectedHistoryCgst)}</strong></span>
+                  <span>SGST{selectedHistoryBill.taxInclusive ? " included" : ""}<strong>{formatPreciseMoney(selectedHistorySgst)}</strong></span>
                   <b>Grand total<strong>{formatMoney(Number(selectedHistoryBill.total || 0))}</strong></b>
                 </div>
                 <div className={`${billPaperClass} completed-receipt completed-print-receipt history-print-receipt`} style={billPaperStyle} aria-hidden="true">
                   <BillReceiptHeader billTemplate={billTemplate} />
                   <div className="bill-type-row"><span>Billing type</span><strong>{selectedHistoryBill.orderType}{selectedHistoryBill.tableName ? ` · ${selectedHistoryBill.tableName}` : ""}</strong></div>
+              <div className="bill-type-row"><span>Price type</span><strong>{selectedHistoryBill.pricingMode || "Retail"}</strong></div>
                   <div className="bill-order-details">
                     <span><small>Order number</small><strong>{selectedHistoryBill.orderNumber || selectedHistoryBill.id}</strong></span>
                     <span><small>Date & time</small><strong>{formatDateTime(selectedHistoryBill.createdAt || selectedHistoryBill.completedAt)}</strong></span>
@@ -4891,7 +5201,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
                   </div>
                   {selectedHistoryBill.payment === "Split" && <div className="completed-split-lines">{(selectedHistoryBill.splitPayments || []).map((entry) => <span key={entry.method}>{entry.method}<strong>{formatMoney(Number(entry.amount || 0))}</strong></span>)}</div>}
                   <div className="bill-items">{(selectedHistoryBill.items || []).map((item) => <div className="bill-line" key={getCartItemKey(item)}><span>{item.qty} x {item.name}</span><strong>{formatMoney(Number(item.qty || 0) * Number(item.price || 0))}</strong></div>)}</div>
-                  <div className="totals"><span>Subtotal <strong>{formatMoney(Number(selectedHistoryBill.subtotal || 0))}</strong></span><span>Discount <strong>{formatMoney(Number(selectedHistoryBill.discount || 0))}</strong></span>{billTemplate.showTaxBreakup !== false && <span>CGST <strong>{formatMoney(selectedHistoryCgst)}</strong></span>}{billTemplate.showTaxBreakup !== false && <span>SGST <strong>{formatMoney(selectedHistorySgst)}</strong></span>}{billTemplate.showItemCount && <span>Items <strong>{selectedHistoryBill.itemCount || (selectedHistoryBill.items || []).reduce((sum, item) => sum + Number(item.qty || 0), 0)}</strong></span>}<b>Grand total <strong>{formatMoney(Number(selectedHistoryBill.total || 0))}</strong></b><BillReceiptFooter billTemplate={billTemplate} /></div>
+                  <div className="totals"><span>Subtotal <strong>{formatMoney(Number(selectedHistoryBill.subtotal || 0))}</strong></span><span>Discount <strong>{formatMoney(Number(selectedHistoryBill.discount || 0))}</strong></span>{billTemplate.showTaxBreakup !== false && <span>CGST{selectedHistoryBill.taxInclusive ? " included" : ""} <strong>{formatPreciseMoney(selectedHistoryCgst)}</strong></span>}{billTemplate.showTaxBreakup !== false && <span>SGST{selectedHistoryBill.taxInclusive ? " included" : ""} <strong>{formatPreciseMoney(selectedHistorySgst)}</strong></span>}{billTemplate.showItemCount && <span>Items <strong>{selectedHistoryBill.itemCount || (selectedHistoryBill.items || []).reduce((sum, item) => sum + Number(item.qty || 0), 0)}</strong></span>}<b>Grand total <strong>{formatPreciseMoney(Number(selectedHistoryBill.total || 0))}</strong></b><BillReceiptFooter billTemplate={billTemplate} /></div>
                 </div>
               </div>
             )}
@@ -4915,7 +5225,7 @@ function POS({ cart, setCart, items, storeId, foodStock = [], onFoodStockChange,
               <span>Entered closing<strong>{Number.isNaN(Number(closingBalance)) ? "Invalid" : formatMoney(Number(closingBalance || 0))}</strong></span>
               <span className={closingVariance === 0 ? "shift-variance ok" : "shift-variance warn"}>{closingVariance === 0 ? "Tallied" : closingVariance > 0 ? "Excess cash" : "Short cash"}<strong>{Number.isNaN(enteredClosingBalance) ? "Invalid" : formatMoney(Math.abs(closingVariance || 0))}</strong></span>
             </div>
-            <label>Close shift amount<input type="number" min="0" step="1" value={closingBalance} onChange={(event) => setClosingBalance(event.target.value)} autoFocus /></label>
+            <label>Close shift amount<input type="number" min="0" step="1" value={closingBalance} onChange={(event) => setClosingBalance(event.target.value)} autoFocus required /></label>
             {needsVarianceNote && <label>Variance note<textarea value={varianceNote} minLength="15" onChange={(event) => setVarianceNote(event.target.value)} placeholder="Enter reason for short/excess cash before closing shift" /><small>Minimum 15 characters required. {varianceNote.trim().length}/15</small></label>}
             <div className="shift-actions">
               <button type="button" onClick={() => setShowCloseShift(false)}>Cancel</button>
@@ -4969,6 +5279,7 @@ function KDS({ notify, orders, setOrders, kotPrinter }) {
 }
 
 function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders = [], onSaveOrder, onSendKot, onSendReception, onCancelOrder, onCancelItem, kotPrinter, cloudStateReady = false }) {
+  const [inventoryProducts] = useBusinessState(`vestora-inventory-${storeId}`, () => loadStoredArray(`vestora-inventory-${storeId}`));
   const [floors, setFloors] = useBusinessState(`vestora-floors-${storeId}`, () => {
     const saved = loadStoredArray(`vestora-floors-${storeId}`);
     return saved.length ? saved : floorOptions;
@@ -4986,9 +5297,11 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
   const [showWaiterOrder, setShowWaiterOrder] = useState(false);
   const [guestCount, setGuestCount] = useState(1);
   const [editingId, setEditingId] = useState(null);
-  const [draft, setDraft] = useState({ name: "", floor: "Main", seats: 4, status: "Available" });
+  const [draft, setDraft] = useState({ name: "", floor: "Main", seats: "", status: "Available" });
   const [orderItems, setOrderItems] = useState([]);
   const [orderQuery, setOrderQuery] = useState("");
+  const [orderSearchOpen, setOrderSearchOpen] = useState(false);
+  const [activeOrderSuggestionIndex, setActiveOrderSuggestionIndex] = useState(0);
   const [orderCategory, setOrderCategory] = useState("All");
   const [workingOrder, setWorkingOrder] = useState(null);
   const [printSlip, setPrintSlip] = useState(null);
@@ -4999,9 +5312,11 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
   const [qrLoading, setQrLoading] = useState(false);
   const visibleTables = tables.filter((table) => table.floor === floor);
   const selectedTable = tables.find((table) => table.id === selected);
-  const catalogItems = (items?.length ? items : menuItems).filter((item) => item.status !== "Inactive");
+  const catalogItems = (items || []).filter((item) => item.status !== "Inactive");
+  const searchableOrderItems = buildProductSearchCatalog(catalogItems, inventoryProducts || []).filter((item) => item.productMasterItem);
   const orderCategories = ["All", ...Array.from(new Set(catalogItems.map((item) => item.category).filter(Boolean)))];
-  const filteredOrderItems = catalogItems.filter((item) => (orderCategory === "All" || item.category === orderCategory) && [item.name, item.category, item.barcode].join(" ").toLowerCase().includes(orderQuery.trim().toLowerCase()));
+  const filteredOrderItems = filterPosCatalog(catalogItems, [], "", orderCategory);
+  const orderSearchSuggestions = orderQuery.trim() ? filterPosCatalog([], searchableOrderItems, orderQuery).slice(0, 20) : [];
   const activeTableOrder = selectedTable ? tableOrders.find((order) => order.tableId === selectedTable.id && order.status !== "Paid" && order.status !== "Cancelled") : null;
   const addonTableOrder = activeTableOrder
     && ["Taking order", "KOT sent", "QR order received"].includes(activeTableOrder.status)
@@ -5013,6 +5328,10 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
   const canTakeTableOrder = Boolean(canStartTableOrder || addonTableOrder);
   const orderSubtotal = orderItems.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.qty || 0), 0);
   const orderItemCount = orderItems.reduce((sum, item) => sum + Number(item.qty || 0), 0);
+
+  useEffect(() => {
+    if (orderSearchOpen) document.getElementById(`table-product-option-${activeOrderSuggestionIndex}`)?.scrollIntoView({ block: "nearest" });
+  }, [orderSearchOpen, activeOrderSuggestionIndex]);
 
   useEffect(() => {
     const key = `vestora-tables-${storeId}`;
@@ -5171,6 +5490,8 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
     setWorkingOrder(existing);
     setOrderItems((existing.items || []).map((item) => ({ ...item, qty: Number(item.qty || 1) })));
     setOrderQuery("");
+    setOrderSearchOpen(false);
+    setActiveOrderSuggestionIndex(0);
     setOrderCategory("All");
     setShowWaiterOrder(true);
   }
@@ -5182,6 +5503,29 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
       return [...current, { ...item, qty: 1, notes: "" }];
     });
     notify(`${item.name} added to ${selectedTable?.name}`);
+  }
+
+  function selectOrderSearchItem(item) {
+    addOrderItem(item);
+    setOrderQuery("");
+    setOrderSearchOpen(false);
+    setActiveOrderSuggestionIndex(0);
+  }
+
+  function handleOrderSearchKeyDown(event) {
+    if (event.key === "Escape") { event.preventDefault(); setOrderSearchOpen(false); return; }
+    if (!orderQuery.trim()) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      setOrderSearchOpen(true);
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      setActiveOrderSuggestionIndex((current) => orderSearchOpen
+        ? Math.max(0, Math.min(orderSearchSuggestions.length - 1, current + direction)) : 0);
+    } else if (event.key === "Enter" && orderSearchOpen) {
+      event.preventDefault();
+      const item = orderSearchSuggestions[activeOrderSuggestionIndex];
+      if (item) selectOrderSearchItem(item);
+    }
   }
 
   function changeOrderQty(itemId, delta) {
@@ -5305,7 +5649,7 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
     setSelected(null);
     setGuestCount(1);
     setShowSetup(true);
-    setDraft({ name: `T${nextNumber}`, floor, seats: 4, status: "Available" });
+    setDraft({ name: `T${nextNumber}`, floor, seats: "", status: "Available" });
     notify("Add table details");
   }
 
@@ -5500,9 +5844,18 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
             </div>
             <div className="waiter-order-body">
               <div className="waiter-menu-panel">
-                <label className="search"><Search size={17} /><input value={orderQuery} onChange={(event) => setOrderQuery(event.target.value)} placeholder="Search menu items" /></label>
+                <div className="pos-search-autocomplete" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOrderSearchOpen(false); }}>
+                  <label className="search"><Search size={17} /><input value={orderQuery} role="combobox" aria-label="Search inventory products for table order" aria-expanded={orderSearchOpen && Boolean(orderQuery.trim())} aria-controls="table-product-suggestions" aria-autocomplete="list" aria-activedescendant={orderSearchOpen && orderSearchSuggestions[activeOrderSuggestionIndex] ? `table-product-option-${activeOrderSuggestionIndex}` : undefined} onFocus={() => setOrderSearchOpen(Boolean(orderQuery.trim()))} onChange={(event) => { setOrderQuery(event.target.value); setOrderSearchOpen(true); setActiveOrderSuggestionIndex(0); }} onKeyDown={handleOrderSearchKeyDown} placeholder="Search inventory product, SKU or barcode" /></label>
+                  {orderSearchOpen && orderQuery.trim() && <div className="pos-search-suggestions" id="table-product-suggestions" role="listbox" aria-label="Matching inventory products">
+                    {orderSearchSuggestions.map((item, index) => <button type="button" role="option" id={`table-product-option-${index}`} aria-selected={index === activeOrderSuggestionIndex} className={index === activeOrderSuggestionIndex ? "active" : ""} key={item.id} onMouseEnter={() => setActiveOrderSuggestionIndex(index)} onMouseDown={(event) => event.preventDefault()} onClick={() => selectOrderSearchItem(item)}>
+                      <span className="pos-search-suggestion-copy"><strong>{item.name}</strong><small>{[item.sku ? `SKU ${item.sku}` : "", item.barcode, item.category].filter(Boolean).join(" · ")}</small></span><strong className="pos-search-suggestion-price">{formatMoney(item.price)}</strong>
+                    </button>)}
+                    {!orderSearchSuggestions.length && <p className="pos-search-no-results">No matching inventory products found.</p>}
+                  </div>}
+                </div>
                 <div className="waiter-category-row">{orderCategories.map((name) => <button type="button" key={name} className={orderCategory === name ? "selected" : ""} onClick={() => setOrderCategory(name)}>{name}</button>)}</div>
                 <div className="waiter-menu-grid">{filteredOrderItems.map((item) => <button type="button" key={item.id} onClick={() => addOrderItem(item)}><img src={getMenuItemPhoto(item)} alt="" /><span><small>{item.category}</small><strong>{item.name}</strong><em>{formatMoney(item.price)}</em></span><Plus size={17} /></button>)}</div>
+                {!filteredOrderItems.length && <p role="status">No menu items in this category. Search above to add inventory products.</p>}
               </div>
               <div className="waiter-cart-panel">
                 <div className="waiter-cart-head"><div><span>Table order</span><strong>{orderItemCount} items</strong></div><span className={`table-order-status ${String(workingOrder?.status || "taking-order").toLowerCase().replaceAll(" ", "-")}`}>{workingOrder?.status || "Taking order"}</span></div>
@@ -5577,29 +5930,554 @@ function Tables({ notify, canManageAll, storeId, items, currentUser, tableOrders
   );
 }
 
-function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
+function InventoryCategorySetup({ profiles, setProfiles, departments, setDepartments, categories, setCategories, subcategories, setSubcategories, taxProfiles, setTaxProfiles, gstRates, brands, setBrands, manufacturers, setManufacturers, brandManufacturerProfiles, setBrandManufacturerProfiles, canSave, notify, initialSection = "category" }) {
+  const emptyDraft = { department: "", category: "", subcategory: "" };
+  const [draft, setDraft] = useState(emptyDraft);
+  const [editingId, setEditingId] = useState("");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [creatingSubcategory, setCreatingSubcategory] = useState(false);
+  const [activeSection, setActiveSection] = useState(initialSection);
+  useEffect(() => setActiveSection(initialSection), [initialSection]);
+  const subcategoryOptions = Array.from(new Set([
+    ...(inventorySubcategoriesByCategory[draft.category] || []),
+    ...(subcategories?.[draft.category] || []),
+    ...profiles.filter((profile) => String(profile.category || "").toLowerCase() === draft.category.trim().toLowerCase()).map((profile) => profile.subcategory),
+  ].filter(Boolean)));
+  const uniqueName = (values, value) => values.some((entry) => String(entry || "").trim().toLowerCase() === value.trim().toLowerCase()) ? values : [...values, value];
+  const openCreate = () => { setDraft(emptyDraft); setEditingId(""); setCreatingSubcategory(false); setDialogOpen(true); };
+  const openEdit = (profile) => {
+    setDraft({ department: profile.department || "", category: profile.category || "", subcategory: profile.subcategory || "" });
+    setEditingId(profile.id);
+    setCreatingSubcategory(false);
+    setDialogOpen(true);
+  };
+  const closeDialog = () => { setDialogOpen(false); setEditingId(""); setCreatingSubcategory(false); setDraft(emptyDraft); };
+  const saveProfile = (event) => {
+    event.preventDefault();
+    if (!canSave) return notify("Inventory is still synchronizing. Please wait before saving.");
+    const cleaned = Object.fromEntries(Object.entries(draft).map(([key, value]) => [key, typeof value === "string" ? value.trim().replace(/\s+/g, " ") : value]));
+    if (!cleaned.department || !cleaned.category || !cleaned.subcategory) return notify("Department, category, and sub-category are required");
+    const duplicate = profiles.find((profile) => profile.id !== editingId
+      && String(profile.department).toLowerCase() === cleaned.department.toLowerCase()
+      && String(profile.category).toLowerCase() === cleaned.category.toLowerCase()
+      && String(profile.subcategory).toLowerCase() === cleaned.subcategory.toLowerCase());
+    if (duplicate) return notify("This Department, Category, and Sub-category combination is already set up");
+    const profile = { ...cleaned, id: editingId || `CAT-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, updatedAt: new Date().toISOString() };
+    setProfiles((current) => editingId ? current.map((entry) => entry.id === editingId ? profile : entry) : [profile, ...current]);
+    setDepartments((current) => uniqueName(current, cleaned.department));
+    setCategories((current) => uniqueName(current, cleaned.category));
+    if (creatingSubcategory) {
+      setSubcategories?.((current) => ({
+        ...current,
+        [cleaned.category]: uniqueName(current?.[cleaned.category] || [], cleaned.subcategory),
+      }));
+    }
+    notify(editingId ? "Category setup updated" : "Category setup saved");
+    closeDialog();
+  };
+  const sectionDetails = {
+    category: { title: "Category setup", description: "Link departments, categories, and sub-categories." },
+    tax: { title: "HSN & GST setup", description: "Manage reusable tax profiles for product entry." },
+    identity: { title: "Brand & Manufacturer", description: "Manage linked identity profiles like your HSN/GST setup." },
+  }[activeSection];
+  return (
+    <section className="screen inventory-screen inventory-category-setup-screen">
+      <div className="inventory-page-head">
+        <div className="inventory-title-block"><span className="inventory-title-icon"><Boxes size={24} /></span><div><span>Inventory setup</span><h2>{sectionDetails.title}</h2><p>{sectionDetails.description}</p></div></div>
+        {activeSection === "category" && <div className="inventory-head-actions"><button className="primary" type="button" onClick={openCreate} disabled={!canSave}><Plus size={18} /> Add category setup</button></div>}
+      </div>
+      <div className="inventory-setup-tabs" role="tablist" aria-label="Inventory setup options">
+        <button type="button" role="tab" aria-selected={activeSection === "category"} className={activeSection === "category" ? "active" : ""} onClick={() => setActiveSection("category")}><Boxes size={16} /> Category paths</button>
+        <button type="button" role="tab" aria-selected={activeSection === "tax"} className={activeSection === "tax" ? "active" : ""} onClick={() => setActiveSection("tax")}><Percent size={16} /> HSN &amp; GST</button>
+        <button type="button" role="tab" aria-selected={activeSection === "identity"} className={activeSection === "identity" ? "active" : ""} onClick={() => setActiveSection("identity")}><Building2 size={16} /> Brand &amp; Manufacturer</button>
+      </div>
+      {activeSection === "category" && <>
+      <div className="category-setup-explainer"><Boxes size={20} /><div><strong>Product classification</strong><span>Select a sub-category in Product Master to fill its Department and Category. HSN/GST and Brand/Manufacturer use their own linked profiles.</span></div><span className="category-setup-count">{profiles.length} saved</span></div>
+      <div className="inventory-card category-setup-list">
+        <div className="purchase-history-head"><div><span>Classification paths</span><h3>Department → Category → Sub-category</h3></div><strong>{profiles.length} total</strong></div>
+        <div className="inventory-table-wrap"><table className="inventory-table"><thead><tr><th>Department</th><th>Category</th><th>Sub-category</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>
+          {profiles.map((profile) => <tr key={profile.id}><td>{profile.department}</td><td>{profile.category}</td><td><strong>{profile.subcategory}</strong></td><td><div className="inventory-row-actions"><button type="button" onClick={() => openEdit(profile)} aria-label={`Edit ${profile.subcategory}`} title="Edit category path"><Pencil size={16} /></button></div></td></tr>)}
+          {!profiles.length && <tr><td className="inventory-empty" colSpan="4"><Boxes size={30} /><strong>No category paths yet</strong><span>Add a linked Department, Category, and Sub-category.</span></td></tr>}
+        </tbody></table></div>
+      </div>
+      {dialogOpen && <div className="shift-modal-backdrop inventory-category-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDialog(); }}>
+        <form className="shift-modal inventory-category-dialog category-setup-dialog" role="dialog" aria-modal="true" aria-label={editingId ? "Edit category path" : "Add category setup"} onSubmit={saveProfile}>
+          <div className="shift-modal-head"><div><span>Inventory classification</span><h3>{editingId ? "Edit category setup" : "Add category setup"}</h3></div><button className="icon-button" type="button" onClick={closeDialog} aria-label="Close"> <X size={17} /></button></div>
+          <p className="inventory-category-dialog-copy">Create the linked Department, Category, and Sub-category path. Product tax and identity details are managed separately.</p>
+          <div className="category-setup-path"><label className="inventory-category-dialog-field"><span>Department *</span><input list="category-setup-departments" value={draft.department} onChange={(event) => setDraft((current) => ({ ...current, department: event.target.value }))} placeholder="e.g. Food & Beverage" required /><datalist id="category-setup-departments">{departments.map((value) => <option key={value} value={value} />)}</datalist></label><label className="inventory-category-dialog-field"><span>Category *</span><input list="category-setup-categories" value={draft.category} onChange={(event) => { setCreatingSubcategory(false); setDraft((current) => ({ ...current, category: event.target.value, subcategory: "" })); }} placeholder="e.g. Dry goods" required /><datalist id="category-setup-categories">{categories.map((value) => <option key={value} value={value} />)}</datalist></label><label className="inventory-category-dialog-field"><span>Sub-category *</span><select value={creatingSubcategory ? "__new__" : draft.subcategory} onChange={(event) => { const value = event.target.value; setCreatingSubcategory(value === "__new__"); setDraft((current) => ({ ...current, subcategory: value === "__new__" ? "" : value })); }} required={!creatingSubcategory}><option value="">{draft.category ? "Select sub-category" : "Choose category first"}</option>{subcategoryOptions.map((value) => <option key={value} value={value}>{value}</option>)}<option value="__new__">+ Add new sub-category</option></select>{creatingSubcategory && <input className="category-setup-new-subcategory" autoFocus value={draft.subcategory} onChange={(event) => setDraft((current) => ({ ...current, subcategory: event.target.value }))} placeholder="Enter new sub-category" required />}</label></div>
+          <div className="inventory-editor-actions inventory-category-dialog-actions"><button type="button" onClick={closeDialog}>Cancel</button><button className="primary" type="submit" disabled={!canSave}><Save size={16} /> {editingId ? "Save category path" : "Save category setup"}</button></div>
+        </form>
+      </div>}
+      </>}
+      {activeSection === "tax" && <InventoryTaxSetup taxProfiles={taxProfiles} setTaxProfiles={setTaxProfiles} gstRates={gstRates} canSave={canSave} notify={notify} embedded />}
+      {activeSection === "identity" && <InventoryBrandManufacturerSetup brands={brands} setBrands={setBrands} manufacturers={manufacturers} setManufacturers={setManufacturers} profiles={brandManufacturerProfiles} setProfiles={setBrandManufacturerProfiles} canSave={canSave} notify={notify} embedded />}
+    </section>
+  );
+}
+
+function InventoryTaxSetup({ taxProfiles, setTaxProfiles, gstRates, canSave, notify, embedded = false }) {
+  const emptyDraft = { hsnCode: "", gstRate: "5" };
+  const [draft, setDraft] = useState(emptyDraft);
+  const [editingId, setEditingId] = useState("");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const openCreate = () => { setDraft(emptyDraft); setEditingId(""); setDialogOpen(true); };
+  const openEdit = (profile) => { setDraft({ hsnCode: profile.hsnCode, gstRate: String(profile.gstRate) }); setEditingId(profile.id); setDialogOpen(true); };
+  const closeDialog = () => { setDialogOpen(false); setEditingId(""); setDraft(emptyDraft); };
+  const saveProfile = (event) => {
+    event.preventDefault();
+    if (!canSave) return notify("Inventory is still synchronizing. Please wait before saving.");
+    const hsnCode = draft.hsnCode.trim();
+    const gstRate = Number(draft.gstRate);
+    if (!/^(?:\d{4}|\d{6}|\d{8})$/.test(hsnCode)) return notify("HSN code must contain 4, 6, or 8 digits");
+    if (!gstRates.includes(gstRate)) return notify("Select a valid GST rate");
+    if (taxProfiles.some((entry) => entry.id !== editingId && entry.hsnCode === hsnCode && Number(entry.gstRate) === gstRate)) return notify("This HSN and GST combination already exists");
+    const profile = { id: editingId || `TAX-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, hsnCode, gstRate, updatedAt: new Date().toISOString() };
+    setTaxProfiles((current) => editingId ? current.map((entry) => entry.id === editingId ? profile : entry) : [profile, ...current]);
+    notify(editingId ? "HSN/GST setup updated" : "HSN/GST setup saved");
+    closeDialog();
+  };
+  return (
+    <section className={embedded ? "inventory-setup-embedded" : "screen inventory-screen inventory-category-setup-screen"}>
+      {!embedded && <div className="inventory-page-head"><div className="inventory-title-block"><span className="inventory-title-icon"><Percent size={24} /></span><div><span>Inventory setup</span><h2>HSN &amp; GST setup</h2><p>Maintain reusable HSN and GST combinations independently of category paths.</p></div></div><div className="inventory-head-actions"><button className="primary" type="button" onClick={openCreate} disabled={!canSave}><Plus size={18} /> Add HSN/GST</button></div></div>}
+      <div className="category-setup-explainer"><Percent size={20} /><div><strong>Tax profiles are managed separately</strong><span>Select a saved HSN/GST combination directly when creating or editing a product.</span></div><span className="category-setup-count">{taxProfiles.length} saved</span></div>
+      <div className="inventory-card category-setup-list"><div className="purchase-history-head"><div><span>Tax profiles</span><h3>HSN code → GST rate</h3></div><div className="inventory-setup-list-actions"><strong>{taxProfiles.length} total</strong><button className="primary" type="button" onClick={openCreate} disabled={!canSave}><Plus size={16} /> Add HSN/GST</button></div></div><div className="inventory-table-wrap"><table className="inventory-table"><thead><tr><th>HSN code</th><th>GST rate</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{taxProfiles.map((profile) => <tr key={profile.id}><td><strong>{profile.hsnCode}</strong></td><td>{profile.gstRate}%</td><td><div className="inventory-row-actions"><button type="button" onClick={() => openEdit(profile)} aria-label={`Edit HSN ${profile.hsnCode}`} title="Edit HSN/GST"><Pencil size={16} /></button></div></td></tr>)}{!taxProfiles.length && <tr><td className="inventory-empty" colSpan="3"><Percent size={30} /><strong>No HSN/GST profiles yet</strong><span>Add the tax combinations used by your products.</span></td></tr>}</tbody></table></div></div>
+      {dialogOpen && <div className="shift-modal-backdrop inventory-category-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDialog(); }}><form className="shift-modal inventory-category-dialog category-setup-dialog" role="dialog" aria-modal="true" aria-label={editingId ? "Edit HSN/GST" : "Add HSN/GST"} onSubmit={saveProfile}><div className="shift-modal-head"><div><span>Inventory tax master</span><h3>{editingId ? "Edit HSN/GST" : "Add HSN/GST"}</h3></div><button className="icon-button" type="button" onClick={closeDialog} aria-label="Close"><X size={17} /></button></div><p className="inventory-category-dialog-copy">Save an HSN code and its applicable GST rate as a reusable tax profile.</p><div className="category-setup-defaults"><label className="inventory-category-dialog-field"><span>HSN code *</span><input inputMode="numeric" maxLength="8" value={draft.hsnCode} onChange={(event) => setDraft((current) => ({ ...current, hsnCode: event.target.value.replace(/\D/g, "").slice(0, 8) }))} placeholder="4, 6, or 8 digits" required /></label><label className="inventory-category-dialog-field"><span>GST rate *</span><select value={draft.gstRate} onChange={(event) => setDraft((current) => ({ ...current, gstRate: event.target.value }))}>{gstRates.map((rate) => <option key={rate} value={rate}>{rate}%</option>)}</select></label></div><div className="inventory-editor-actions inventory-category-dialog-actions"><button type="button" onClick={closeDialog}>Cancel</button><button className="primary" type="submit" disabled={!canSave}><Save size={16} /> {editingId ? "Save HSN/GST" : "Add HSN/GST"}</button></div></form></div>}
+    </section>
+  );
+}
+
+function InventoryBrandManufacturerSetup({ brands, setBrands, manufacturers, setManufacturers, profiles, setProfiles, canSave, notify, embedded = false }) {
+  const emptyDraft = { brand: "", manufacturer: "" };
+  const [draft, setDraft] = useState(emptyDraft);
+  const [editingId, setEditingId] = useState("");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const uniqueName = (values, value) => values.some((entry) => String(entry || "").trim().toLowerCase() === value.toLowerCase()) ? values : [...values, value];
+  const openCreate = () => { setDraft(emptyDraft); setEditingId(""); setDialogOpen(true); };
+  const openEdit = (profile) => { setDraft({ brand: profile.brand, manufacturer: profile.manufacturer }); setEditingId(profile.id); setDialogOpen(true); };
+  const closeDialog = () => { setDialogOpen(false); setEditingId(""); setDraft(emptyDraft); };
+  const saveProfile = (event) => {
+    event.preventDefault();
+    if (!canSave) return notify("Inventory is still synchronizing. Please wait before saving.");
+    const brand = draft.brand.trim().replace(/\s+/g, " ");
+    const manufacturer = draft.manufacturer.trim().replace(/\s+/g, " ");
+    if (!brand || !manufacturer) return notify("Brand and manufacturer are required");
+    const duplicate = profiles.find((entry) => entry.id !== editingId
+      && String(entry.brand).trim().toLowerCase() === brand.toLowerCase()
+      && String(entry.manufacturer).trim().toLowerCase() === manufacturer.toLowerCase());
+    if (duplicate) return notify("This brand and manufacturer combination already exists");
+    const profile = { id: editingId || `ID-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, brand, manufacturer, updatedAt: new Date().toISOString() };
+    setProfiles((current) => editingId ? current.map((entry) => entry.id === editingId ? profile : entry) : [profile, ...current]);
+    setBrands((current) => uniqueName(current, brand));
+    setManufacturers((current) => uniqueName(current, manufacturer));
+    notify(editingId ? "Brand/manufacturer setup updated" : "Brand/manufacturer setup saved");
+    closeDialog();
+  };
+  return (
+    <section className={embedded ? "inventory-setup-embedded" : "screen inventory-screen inventory-category-setup-screen"}>
+      {!embedded && <div className="inventory-page-head"><div className="inventory-title-block"><span className="inventory-title-icon"><Boxes size={24} /></span><div><span>Inventory setup</span><h2>Brand &amp; Manufacturer setup</h2><p>Save linked brand and manufacturer profiles for Product Master.</p></div></div></div>}
+      <div className="category-setup-explainer"><Boxes size={20} /><div><strong>Linked product identity profiles</strong><span>Select a saved Brand/Manufacturer combination when creating or editing a product. Adding a profile also saves each name for reuse.</span></div><span className="category-setup-count">{profiles.length} saved</span></div>
+      <div className="inventory-card category-setup-list"><div className="purchase-history-head"><div><span>Identity profiles</span><h3>Brand → Manufacturer</h3></div><div className="inventory-setup-list-actions"><strong>{profiles.length} total</strong><button className="primary" type="button" onClick={openCreate} disabled={!canSave}><Plus size={16} /> Add brand/manufacturer</button></div></div><div className="inventory-table-wrap"><table className="inventory-table"><thead><tr><th>Brand</th><th>Manufacturer</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{profiles.map((profile) => <tr key={profile.id}><td><strong>{profile.brand}</strong></td><td>{profile.manufacturer}</td><td><div className="inventory-row-actions"><button type="button" onClick={() => openEdit(profile)} aria-label={`Edit ${profile.brand} / ${profile.manufacturer}`} title="Edit profile"><Pencil size={16} /></button></div></td></tr>)}{!profiles.length && <tr><td className="inventory-empty" colSpan="3"><Boxes size={30} /><strong>No brand/manufacturer profiles yet</strong><span>Add the linked identity combinations used by your products.</span></td></tr>}</tbody></table></div></div>
+      {dialogOpen && <div className="shift-modal-backdrop inventory-category-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDialog(); }}><form className="shift-modal inventory-category-dialog category-setup-dialog" role="dialog" aria-modal="true" aria-label={editingId ? "Edit brand and manufacturer" : "Add brand and manufacturer"} onSubmit={saveProfile}><div className="shift-modal-head"><div><span>Inventory identity master</span><h3>{editingId ? "Edit brand/manufacturer" : "Add brand/manufacturer"}</h3></div><button className="icon-button" type="button" onClick={closeDialog} aria-label="Close"><X size={17} /></button></div><p className="inventory-category-dialog-copy">Save a brand with its associated manufacturer as a reusable Product Master profile.</p><div className="category-setup-defaults"><label className="inventory-category-dialog-field"><span>Brand *</span><input list="inventory-identity-brands" value={draft.brand} onChange={(event) => setDraft((current) => ({ ...current, brand: event.target.value }))} placeholder="Select or enter a brand" required /><datalist id="inventory-identity-brands">{brands.map((value) => <option key={value} value={value} />)}</datalist></label><label className="inventory-category-dialog-field"><span>Manufacturer *</span><input list="inventory-identity-manufacturers" value={draft.manufacturer} onChange={(event) => setDraft((current) => ({ ...current, manufacturer: event.target.value }))} placeholder="Select or enter a manufacturer" required /><datalist id="inventory-identity-manufacturers">{manufacturers.map((value) => <option key={value} value={value} />)}</datalist></label></div><div className="inventory-editor-actions inventory-category-dialog-actions"><button type="button" onClick={closeDialog}>Cancel</button><button className="primary" type="submit" disabled={!canSave}><Save size={16} /> {editingId ? "Save profile" : "Add profile"}</button></div></form></div>}
+    </section>
+  );
+}
+
+function InventoryCombobox({ value = "", options = [], onChange, placeholder = "Select or type…", ariaLabel, allowCustom = true, required = false }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const rootRef = useRef(null);
+  const id = useId();
+  const normalizedOptions = options.map((option) => typeof option === "object"
+    ? { value: String(option.value ?? ""), label: String(option.label ?? option.value ?? "") }
+    : { value: String(option ?? ""), label: String(option ?? "") });
+  const selectedOption = normalizedOptions.find((option) => option.value === String(value ?? ""));
+  const displayValue = selectedOption?.label ?? String(value ?? "");
+  const filteredOptions = normalizedOptions.filter((option) => option.label.toLowerCase().includes(query.trim().toLowerCase()));
+  const exactMatch = normalizedOptions.some((option) => option.label.toLowerCase() === query.trim().toLowerCase());
+  const customOption = allowCustom && query.trim() && !exactMatch
+    ? { value: query.trim(), label: `Use “${query.trim()}”` }
+    : null;
+  const selectableOptions = customOption ? [...filteredOptions, customOption] : filteredOptions;
+  const selectedIndex = normalizedOptions.findIndex((option) => option.value === String(value ?? ""));
+  const initialActiveIndex = () => selectedIndex;
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeWhenOutside = (event) => {
+      if (!rootRef.current?.contains(event.target)) {
+        setOpen(false);
+        setQuery("");
+        setActiveIndex(-1);
+      }
+    };
+    document.addEventListener("mousedown", closeWhenOutside);
+    return () => document.removeEventListener("mousedown", closeWhenOutside);
+  }, [open]);
+  const choose = (nextValue) => {
+    onChange(nextValue);
+    setQuery("");
+    setOpen(false);
+    setActiveIndex(-1);
+  };
+  const handleKeyDown = (event) => {
+    if (event.key === "Escape") {
+      setOpen(false);
+      setQuery("");
+      setActiveIndex(-1);
+    } else if (event.key === "Enter" && open) {
+      event.preventDefault();
+      const activeOption = selectableOptions[activeIndex] || selectableOptions[0] || null;
+      if (activeOption) choose(activeOption.value);
+    } else if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!open) {
+        setQuery("");
+        setOpen(true);
+        setActiveIndex(selectedIndex >= 0 ? selectedIndex : (normalizedOptions.length ? 0 : -1));
+      } else if (selectableOptions.length) {
+        setActiveIndex((current) => current < 0 ? 0 : (current + 1) % selectableOptions.length);
+      }
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!open) {
+        setQuery("");
+        setOpen(true);
+        setActiveIndex(selectedIndex >= 0 ? selectedIndex : normalizedOptions.length - 1);
+      } else if (selectableOptions.length) {
+        setActiveIndex((current) => current < 0 ? selectableOptions.length - 1 : (current - 1 + selectableOptions.length) % selectableOptions.length);
+      }
+    }
+  };
+  return (
+    <div className={`inventory-combobox${open ? " is-open" : ""}`} ref={rootRef}>
+      <input
+        role="combobox"
+        aria-label={ariaLabel}
+        aria-autocomplete="list"
+        aria-expanded={open}
+        aria-controls={`${id}-listbox`}
+        aria-activedescendant={open && activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined}
+        value={open ? query : displayValue}
+        placeholder={placeholder}
+        required={required}
+        autoComplete="off"
+        onFocus={() => { setQuery(""); setActiveIndex(initialActiveIndex()); setOpen(true); }}
+        onChange={(event) => {
+          const nextQuery = event.target.value;
+          const nextFiltered = normalizedOptions.filter((option) => option.label.toLowerCase().includes(nextQuery.trim().toLowerCase()));
+          const nextExactMatch = normalizedOptions.some((option) => option.label.toLowerCase() === nextQuery.trim().toLowerCase());
+          setQuery(nextQuery);
+          setActiveIndex(nextFiltered.length || (allowCustom && nextQuery.trim() && !nextExactMatch) ? 0 : -1);
+          if (allowCustom) onChange(nextQuery);
+          setOpen(true);
+        }}
+        onKeyDown={handleKeyDown}
+      />
+      <button type="button" className="inventory-combobox-toggle" aria-label={`Show ${ariaLabel || "options"}`} aria-expanded={open} onMouseDown={(event) => event.preventDefault()} onClick={() => { const nextOpen = !open; setOpen(nextOpen); setQuery(""); setActiveIndex(nextOpen ? initialActiveIndex() : -1); }}><ChevronDown size={16} /></button>
+      {open && <div id={`${id}-listbox`} className="inventory-combobox-options" role="listbox" aria-label={`${ariaLabel || "Options"} suggestions`}>
+        {filteredOptions.map((option, index) => <button id={`${id}-option-${index}`} key={option.value} type="button" role="option" aria-selected={option.value === String(value ?? "")} data-active={index === activeIndex ? "true" : undefined} onMouseEnter={() => setActiveIndex(index)} onMouseDown={(event) => event.preventDefault()} onClick={() => choose(option.value)}>{option.label}</button>)}
+        {customOption && <button id={`${id}-option-${filteredOptions.length}`} type="button" className="inventory-combobox-custom" role="option" aria-selected={false} data-active={filteredOptions.length === activeIndex ? "true" : undefined} onMouseEnter={() => setActiveIndex(filteredOptions.length)} onMouseDown={(event) => event.preventDefault()} onClick={() => choose(customOption.value)}>{customOption.label}</button>}
+        {!filteredOptions.length && !(allowCustom && query.trim()) && <span className="inventory-combobox-empty">No matching options</span>}
+      </div>}
+    </div>
+  );
+}
+
+function Inventory({ notify, canManageAll, storeId, cloudStateReady = false, activeView = "stock", createProductRequest = 0, onViewChange }) {
   const storageKey = `vestora-inventory-${storeId}`;
   const categoryStorageKey = `vestora-inventory-categories-${storeId}`;
+  const categoryProfilesStorageKey = `vestora-inventory-category-profiles-${storeId}`;
+  const taxProfilesStorageKey = `vestora-inventory-tax-profiles-${storeId}`;
+  const brandManufacturerProfilesStorageKey = `vestora-inventory-brand-manufacturer-profiles-${storeId}`;
+  const departmentStorageKey = `vestora-inventory-departments-${storeId}`;
+  const subcategoryStorageKey = `vestora-inventory-subcategories-${storeId}`;
+  const brandStorageKey = `vestora-inventory-brands-${storeId}`;
+  const manufacturerStorageKey = `vestora-inventory-manufacturers-${storeId}`;
+  const vendorStorageKey = `vestora-inventory-vendors-${storeId}`;
+  const transactionStorageKey = `vestora-inventory-transactions-${storeId}`;
+  const purchaseOrdersStorageKey = `vestora-purchase-orders-${storeId}`;
+  const purchaseDraftsStorageKey = `vestora-purchase-drafts-${storeId}`;
+  const vendorPaymentsStorageKey = `vestora-finance-vendor-payments-${storeId}`;
   const defaultCategories = ["Dry goods", "Dairy", "Vegetables", "Beverages", "Operations", "Packaging", "Other"];
-  const blankDraft = { name: "", sku: "", category: "Dry goods", stock: "", unit: "kg", reorder: "", cost: "" };
+  const blankDraft = {
+    name: "",
+    sku: "",
+    barcode: "",
+    eanMrpOptions: [],
+    hsnCode: "",
+    gstRate: "5",
+    department: "Food & Beverage",
+    category: "Dry goods",
+    subcategory: defaultInventorySubcategory("Dry goods"),
+    classificationProfileId: "",
+    brand: "",
+    manufacturer: "",
+    brandManufacturerProfileId: "",
+    preferredVendor: "",
+    stock: "0",
+    unit: "kg",
+    reorder: "",
+    mrp: "",
+    price: "",
+    cost: "",
+    markupPercent: "",
+    sellingPrice: "",
+    wholesalePrice: "",
+    ecommercePrice: "",
+  };
   const savedItems = stripUntouchedDefaultRecords(loadStoredArray(storageKey), defaultInventoryItems, ["updatedAt"]);
   const savedCategories = loadStoredArray(categoryStorageKey);
+  const savedCategoryProfiles = loadStoredArray(categoryProfilesStorageKey);
+  const savedTaxProfiles = loadStoredArray(taxProfilesStorageKey);
+  const savedBrandManufacturerProfiles = loadStoredArray(brandManufacturerProfilesStorageKey);
+  const savedDepartments = loadStoredArray(departmentStorageKey);
+  const savedSubcategories = loadStoredObject(subcategoryStorageKey) || {};
+  const savedBrands = loadStoredArray(brandStorageKey);
+  const savedManufacturers = loadStoredArray(manufacturerStorageKey);
+  const savedVendors = loadStoredArray(vendorStorageKey);
+  const savedTransactions = loadStoredArray(transactionStorageKey);
   const [items, setItems] = useBusinessState(storageKey, () => savedItems);
   const [categories, setCategories] = useBusinessState(categoryStorageKey, () => Array.from(new Set([...defaultCategories, ...savedCategories, ...(savedItems.length ? savedItems : defaultInventoryItems).map((item) => item.category).filter(Boolean)])));
+  const [categoryProfiles, setCategoryProfiles] = useBusinessState(categoryProfilesStorageKey, () => savedCategoryProfiles);
+  const [taxProfiles, setTaxProfiles] = useBusinessState(taxProfilesStorageKey, () => {
+    const legacyProfiles = [...savedCategoryProfiles, ...savedItems]
+      .filter((entry) => String(entry.hsnCode || "").trim())
+      .map((entry) => ({ id: `TAX-LEGACY-${String(entry.hsnCode).trim()}-${Number(entry.gstRate || 0)}`, hsnCode: String(entry.hsnCode).trim(), gstRate: Number(entry.gstRate || 0) }));
+    const combined = [...savedTaxProfiles, ...legacyProfiles];
+    return combined.filter((entry, index) => combined.findIndex((other) => String(other.hsnCode) === String(entry.hsnCode) && Number(other.gstRate) === Number(entry.gstRate)) === index);
+  });
+  const [brandManufacturerProfiles, setBrandManufacturerProfiles] = useBusinessState(brandManufacturerProfilesStorageKey, () => {
+    const legacyProfiles = [...savedCategoryProfiles, ...savedItems]
+      .filter((entry) => String(entry.brand || "").trim() && String(entry.manufacturer || "").trim())
+      .map((entry) => ({
+        id: `ID-LEGACY-${encodeURIComponent(String(entry.brand).trim().toLowerCase())}-${encodeURIComponent(String(entry.manufacturer).trim().toLowerCase())}`,
+        brand: String(entry.brand).trim(),
+        manufacturer: String(entry.manufacturer).trim(),
+      }));
+    const combined = [...savedBrandManufacturerProfiles, ...legacyProfiles];
+    return combined.filter((entry, index) => combined.findIndex((other) => String(other.brand || "").trim().toLowerCase() === String(entry.brand || "").trim().toLowerCase()
+      && String(other.manufacturer || "").trim().toLowerCase() === String(entry.manufacturer || "").trim().toLowerCase()) === index);
+  });
+  const [departments, setDepartments] = useBusinessState(departmentStorageKey, () => Array.from(new Set([...inventoryDepartmentOptions, ...savedDepartments, ...(savedItems.length ? savedItems : defaultInventoryItems).map((item) => item.department).filter(Boolean)])));
+  const [subcategories, setSubcategories] = useBusinessState(subcategoryStorageKey, () => savedSubcategories);
+  const [brands, setBrands] = useBusinessState(brandStorageKey, () => Array.from(new Set([...savedBrands, ...savedCategoryProfiles.map((profile) => profile.brand).filter(Boolean), ...savedItems.map((item) => item.brand).filter(Boolean)])));
+  const [manufacturers, setManufacturers] = useBusinessState(manufacturerStorageKey, () => Array.from(new Set([...savedManufacturers, ...savedCategoryProfiles.map((profile) => profile.manufacturer).filter(Boolean), ...savedItems.map((item) => item.manufacturer).filter(Boolean)])));
+  const [vendors, setVendors] = useBusinessState(vendorStorageKey, () => {
+    const legacyVendors = Array.from(new Set(savedTransactions.map((entry) => String(entry.supplier || "").trim()).filter(Boolean)))
+      .map((name) => ({ id: `VEN-LEGACY-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, name, gstin: "", phone: "", email: "", address: "" }));
+    const allVendors = [...savedVendors, ...legacyVendors];
+    return allVendors.filter((vendor, index) => allVendors.findIndex((entry) => String(entry.name || "").toLowerCase() === String(vendor.name || "").toLowerCase()) === index);
+  });
+  const [transactions, setTransactions] = useBusinessState(transactionStorageKey, () => savedTransactions);
+  const [vendorPayments, setVendorPayments] = useBusinessState(vendorPaymentsStorageKey, () => loadStoredArray(vendorPaymentsStorageKey));
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
+  const [batchStockFilter, setBatchStockFilter] = useState("All batches");
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [productDetailsItem, setProductDetailsItem] = useState(null);
   const [draft, setDraft] = useState(blankDraft);
-  const [skuIsManual, setSkuIsManual] = useState(false);
-  const [categoryCreatorOpen, setCategoryCreatorOpen] = useState(false);
-  const [categoryDraft, setCategoryDraft] = useState("");
+  const [variantDraft, setVariantDraft] = useState({ parentProductId: "", label: "", sku: "", stock: "" });
+  const [variantEditorOpen, setVariantEditorOpen] = useState(false);
+  const [editingVariantId, setEditingVariantId] = useState("");
+  const [inventorySetupCreator, setInventorySetupCreator] = useState("");
+  const [inventorySetupDraft, setInventorySetupDraft] = useState("");
+  const [purchaseOpen, setPurchaseOpen] = useState(false);
+  const [purchaseDraft, setPurchaseDraft] = useState({ purchaseOrderId: "", purchaseOrderNumber: "", supplier: "", invoice: "", date: localDateKey(), notes: "", lines: [] });
+  const [purchaseOrders, setPurchaseOrders] = useBusinessState(purchaseOrdersStorageKey, []);
+  const [purchaseDraftRecords, setPurchaseDraftRecords] = useBusinessState(purchaseDraftsStorageKey, []);
+  const [activeBusinessSettings] = useBusinessState(`vestora-active-settings-${storeId}`, {});
+  const maximumPurchaseDraftDays = normalizePurchaseDraftDays(activeBusinessSettings?.["Purchase controls"]?.maximumDraftDays);
+  const [editingPurchaseDraftId, setEditingPurchaseDraftId] = useState("");
+  const [editingPostedPurchaseId, setEditingPostedPurchaseId] = useState("");
+  const [viewingPurchaseRow, setViewingPurchaseRow] = useState(null);
+  const submittedPurchaseDraftIds = useRef(new Set());
+  const pendingPurchaseOrderEntry = useRef(null);
+  const productPriceInputRef = useRef(null);
+  const savedPurchaseDraft = purchaseDraftRecords.find((record) => record.id === editingPurchaseDraftId);
+  const purchaseDraftIsSaved = purchaseDraftMatches(savedPurchaseDraft, purchaseDraft);
+  const [settlementPurchase, setSettlementPurchase] = useState(null);
+  const [settlementDraft, setSettlementDraft] = useState({ amount: "", method: "Bank", date: localDateKey(), reference: "", note: "" });
+  const [purchaseReturnOpen, setPurchaseReturnOpen] = useState(false);
+  const [purchaseReturnDraft, setPurchaseReturnDraft] = useState({ supplier: "", reference: "", date: localDateKey(), reason: "", lines: [] });
+  const [quickVendorFormOpen, setQuickVendorFormOpen] = useState(false);
+  const [vendorCreationFormOpen, setVendorCreationFormOpen] = useState(false);
+  const [editingVendorId, setEditingVendorId] = useState("");
+  const [vendorDraft, setVendorDraft] = useState({ name: "", gstin: "", phone: "", email: "", address: "" });
   const inventorySyncJob = useRef(null);
+  const purchaseLineItemRefs = useRef(new Map());
+  const createProductRequestSeen = useRef(createProductRequest);
+  const inventoryWritesReady = !cloudConfigured || cloudStateReady;
+  const requireInventoryWritesReady = () => {
+    if (inventoryWritesReady) return true;
+    notify("Cloud inventory is still loading. Wait for synchronization before saving.");
+    return false;
+  };
+  useEffect(() => {
+    const legacyPairs = items.filter((item) => String(item.brand || "").trim() && String(item.manufacturer || "").trim());
+    if (!legacyPairs.length) return;
+    setBrandManufacturerProfiles((current) => {
+      let next = current;
+      legacyPairs.forEach((item) => {
+        const brand = String(item.brand).trim();
+        const manufacturer = String(item.manufacturer).trim();
+        if (next.some((profile) => String(profile.brand || "").trim().toLowerCase() === brand.toLowerCase() && String(profile.manufacturer || "").trim().toLowerCase() === manufacturer.toLowerCase())) return;
+        if (next === current) next = [...current];
+        next.push({
+          id: `ID-LEGACY-${encodeURIComponent(brand.toLowerCase())}-${encodeURIComponent(manufacturer.toLowerCase())}`,
+          brand,
+          manufacturer,
+        });
+      });
+      return next;
+    });
+  }, [items]);
+  const departmentOptions = Array.from(new Set([...departments, ...items.map((item) => item.department).filter(Boolean)]));
+  const brandOptions = Array.from(new Set([...brands, ...items.map((item) => item.brand).filter(Boolean)]));
+  const manufacturerOptions = Array.from(new Set([...manufacturers, ...items.map((item) => item.manufacturer).filter(Boolean)]));
+  const brandManufacturerProfileOptions = [...brandManufacturerProfiles];
+  items.forEach((item) => {
+    const brand = String(item.brand || "").trim();
+    const manufacturer = String(item.manufacturer || "").trim();
+    if (!brand || !manufacturer || brandManufacturerProfileOptions.some((profile) => String(profile.brand || "").toLowerCase() === brand.toLowerCase() && String(profile.manufacturer || "").toLowerCase() === manufacturer.toLowerCase())) return;
+    brandManufacturerProfileOptions.push({ id: `ID-LEGACY-${encodeURIComponent(brand.toLowerCase())}-${encodeURIComponent(manufacturer.toLowerCase())}`, brand, manufacturer });
+  });
+  const selectedBrandManufacturerProfile = brandManufacturerProfileOptions.find((profile) => profile.id === draft.brandManufacturerProfileId)
+    || brandManufacturerProfileOptions.find((profile) => String(profile.brand || "").toLowerCase() === String(draft.brand || "").trim().toLowerCase() && String(profile.manufacturer || "").toLowerCase() === String(draft.manufacturer || "").trim().toLowerCase());
+  const variantParentProducts = items.filter((item) => !item.parentProductId);
+  const productVariants = items.filter((item) => item.parentProductId);
+  const selectedVariantParent = variantParentProducts.find((item) => item.id === variantDraft.parentProductId);
+  const productCost = calculateCostWithGst(draft.price, draft.gstRate);
+  const productMargin = calculateVariantMargin(productCost, draft.sellingPrice);
+  const productWholesalePriceError = wholesalePriceError(draft.wholesalePrice, draft.mrp);
+  const productEcommercePriceError = ecommercePriceError(draft.ecommercePrice, draft.mrp);
+  const numericProductMrp = Number(draft.mrp);
+  const numericProductSellingPrice = Number(draft.sellingPrice);
+  const productSellingPriceAboveMrp = draft.mrp !== "" && draft.sellingPrice !== "" && Number.isFinite(numericProductMrp) && Number.isFinite(numericProductSellingPrice) && numericProductSellingPrice > numericProductMrp;
+  const getMasterProductFields = (product) => {
+    const legacyBatch = productVariants.find((batch) => batch.parentProductId === product.id);
+    const value = (field, fallback = "") => {
+      const current = product[field];
+      if (field === "barcode") return String(current || legacyBatch?.[field] || "");
+      if (current !== "" && current !== null && current !== undefined && Number(current) > 0) return current;
+      const legacy = legacyBatch?.[field];
+      if (legacy !== "" && legacy !== null && legacy !== undefined) return legacy;
+      return current ?? fallback;
+    };
+    const cost = value("cost", 0);
+    const sellingPrice = value("sellingPrice");
+    const savedMarkup = product.markupPercent ?? legacyBatch?.markupPercent;
+    const calculatedMarkup = calculateMarkupPercentage(cost, sellingPrice);
+    return {
+      barcode: value("barcode"),
+      reorder: value("reorder", 0),
+      price: value("price", calculatePriceBeforeGst(product.cost, product.gstRate)),
+      mrp: value("mrp"),
+      cost,
+      sellingPrice,
+      wholesalePrice: product.wholesalePrice ?? "",
+      ecommercePrice: product.ecommercePrice ?? "",
+      markupPercent: savedMarkup === "" || savedMarkup === null || savedMarkup === undefined
+        ? (calculatedMarkup === null || calculatedMarkup < 0 ? "" : calculatedMarkup.toFixed(2))
+        : String(savedMarkup),
+    };
+  };
+  const getProductEanMrpCombinations = (product) => {
+    if (!product) return [];
+    const masterFields = getMasterProductFields(product);
+    return [
+      { barcode: masterFields.barcode, mrp: masterFields.mrp },
+      ...(product.eanMrpOptions || []),
+    ].filter((option) => String(option.barcode || "").trim() || String(option.mrp ?? "").trim());
+  };
+  const getProductEanMrpSummary = (product) => {
+    const combinations = getProductEanMrpCombinations(product);
+    return combinations.length
+      ? combinations.map((option) => {
+        const barcode = String(option.barcode || "").trim() || "EAN not set";
+        const mrp = option.mrp === "" || option.mrp === null || option.mrp === undefined
+          ? "MRP not set"
+          : `MRP ${formatMoney(Number(option.mrp))}`;
+        return `${barcode} · ${mrp}`;
+      }).join(" | ")
+      : "No EAN/MRP batches set";
+  };
+  const gstRateOptions = Array.from(new Set([
+    ...inventoryGstRateOptions,
+    ...items.map((item) => Number(item.gstRate)).filter(Number.isFinite),
+  ])).filter((rate) => rate !== 12 && rate !== 28).sort((first, second) => first - second);
+  const hsnRatesByCode = taxProfiles.reduce((options, profile) => {
+    const hsnCode = String(profile.hsnCode || "").trim();
+    if (!hsnCode) return options;
+    const rates = options.get(hsnCode) || new Set();
+    rates.add(Number(profile.gstRate));
+    options.set(hsnCode, rates);
+    return options;
+  }, new Map());
+  const hsnProfileOptions = Array.from(hsnRatesByCode.keys(), (hsnCode) => ({
+    value: hsnCode,
+    label: hsnCode,
+  }));
+  if (draft.hsnCode && !hsnRatesByCode.has(String(draft.hsnCode))) {
+    hsnProfileOptions.push({ value: String(draft.hsnCode), label: String(draft.hsnCode) });
+  }
+  const selectedHsnProfiles = taxProfiles.filter((profile) => String(profile.hsnCode) === String(draft.hsnCode));
+  const draftSubcategoryOptions = Array.from(new Set([...inventorySubcategorySuggestions(draft.category, items), ...(subcategories?.[draft.category] || [])]));
+  const legacyDraftSubcategoryOptions = draftSubcategoryOptions;
+  const draftSubcategorySelection = categoryProfiles.some((profile) => profile.id === draft.classificationProfileId)
+    ? `profile:${draft.classificationProfileId}`
+    : draft.subcategory ? `legacy:${draft.subcategory}` : "";
+  const subcategoryComboOptions = [
+    ...categoryProfiles.map((profile) => ({ value: `profile:${profile.id}`, label: profile.subcategory })),
+    ...legacyDraftSubcategoryOptions.map((subcategory) => ({ value: `legacy:${subcategory}`, label: subcategory })),
+  ];
+  if (draft.subcategory && !subcategoryComboOptions.some((option) => option.value === draftSubcategorySelection)) {
+    subcategoryComboOptions.push({ value: draftSubcategorySelection, label: draft.subcategory });
+  }
+  const linkedManufacturerOptions = Array.from(new Set([
+    ...brandManufacturerProfileOptions.filter((profile) => String(profile.brand).trim().toLowerCase() === String(draft.brand).trim().toLowerCase()).map((profile) => profile.manufacturer),
+    ...manufacturerOptions,
+  ].filter(Boolean)));
+  const linkedBrandOptions = Array.from(new Set([
+    ...brandManufacturerProfileOptions.filter((profile) => String(profile.manufacturer).trim().toLowerCase() === String(draft.manufacturer).trim().toLowerCase()).map((profile) => profile.brand),
+    ...brandOptions,
+  ].filter(Boolean)));
+  const updateProductBrand = (brand) => {
+    setDraft((current) => ({
+      ...current,
+      brand,
+      ...(() => {
+        const matches = brandManufacturerProfileOptions.filter((profile) => String(profile.brand).trim().toLowerCase() === String(brand).trim().toLowerCase());
+        const currentPair = matches.find((profile) => String(profile.manufacturer).trim().toLowerCase() === String(current.manufacturer).trim().toLowerCase());
+        const automaticPair = matches.length === 1 ? matches[0] : currentPair;
+        return {
+          brandManufacturerProfileId: automaticPair?.id || "",
+          manufacturer: automaticPair?.manufacturer || current.manufacturer,
+        };
+      })(),
+    }));
+  };
+  const updateProductManufacturer = (manufacturer) => {
+    setDraft((current) => ({
+      ...current,
+      manufacturer,
+      ...(() => {
+        const matches = brandManufacturerProfileOptions.filter((profile) => String(profile.manufacturer).trim().toLowerCase() === String(manufacturer).trim().toLowerCase());
+        const currentPair = matches.find((profile) => String(profile.brand).trim().toLowerCase() === String(current.brand).trim().toLowerCase());
+        const automaticPair = matches.length === 1 ? matches[0] : currentPair;
+        return {
+          brandManufacturerProfileId: automaticPair?.id || "",
+          brand: automaticPair?.brand || current.brand,
+        };
+      })(),
+    }));
+  };
+  const unitOptions = Array.from(new Set(["kg", "g", "ltr", "ml", "pcs", "cyl", "box", "pack", ...items.map((item) => item.unit).filter(Boolean)]));
 
   const refreshInventory = () => {
     if (inventorySyncJob.current) return inventorySyncJob.current;
     if (cloudConfigured && !cloudStateReady) return Promise.resolve();
-    const job = Promise.all([syncInventoryState(storageKey), syncInventoryState(categoryStorageKey)])
+    const job = Promise.all([syncInventoryState(storageKey), syncInventoryState(categoryStorageKey), syncInventoryState(categoryProfilesStorageKey), syncInventoryState(taxProfilesStorageKey), syncInventoryState(brandManufacturerProfilesStorageKey), syncInventoryState(departmentStorageKey), syncInventoryState(subcategoryStorageKey), syncInventoryState(brandStorageKey), syncInventoryState(manufacturerStorageKey), syncInventoryState(vendorStorageKey), syncLocalStateKeyToCloud(transactionStorageKey), syncLocalStateKeyToCloud(vendorPaymentsStorageKey)])
       .catch(() => {})
       .finally(() => { inventorySyncJob.current = null; });
     inventorySyncJob.current = job;
@@ -5619,10 +6497,80 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
   }, [categories, categoryStorageKey, cloudStateReady]);
 
   useEffect(() => {
+    localStorage.setItem(categoryProfilesStorageKey, JSON.stringify(categoryProfiles));
+    const timer = window.setTimeout(refreshInventory, 300);
+    return () => window.clearTimeout(timer);
+  }, [categoryProfiles, categoryProfilesStorageKey, cloudStateReady]);
+
+  useEffect(() => {
+    localStorage.setItem(taxProfilesStorageKey, JSON.stringify(taxProfiles));
+    const timer = window.setTimeout(refreshInventory, 300);
+    return () => window.clearTimeout(timer);
+  }, [taxProfiles, taxProfilesStorageKey, cloudStateReady]);
+
+  useEffect(() => {
+    localStorage.setItem(brandManufacturerProfilesStorageKey, JSON.stringify(brandManufacturerProfiles));
+    const timer = window.setTimeout(refreshInventory, 300);
+    return () => window.clearTimeout(timer);
+  }, [brandManufacturerProfiles, brandManufacturerProfilesStorageKey, cloudStateReady]);
+
+  useEffect(() => {
+    localStorage.setItem(departmentStorageKey, JSON.stringify(departments));
+    const timer = window.setTimeout(refreshInventory, 300);
+    return () => window.clearTimeout(timer);
+  }, [departments, departmentStorageKey, cloudStateReady]);
+
+  useEffect(() => {
+    localStorage.setItem(subcategoryStorageKey, JSON.stringify(subcategories));
+    const timer = window.setTimeout(refreshInventory, 300);
+    return () => window.clearTimeout(timer);
+  }, [subcategories, subcategoryStorageKey, cloudStateReady]);
+
+  useEffect(() => {
+    localStorage.setItem(brandStorageKey, JSON.stringify(brands));
+    const timer = window.setTimeout(refreshInventory, 300);
+    return () => window.clearTimeout(timer);
+  }, [brands, brandStorageKey, cloudStateReady]);
+
+  useEffect(() => {
+    localStorage.setItem(manufacturerStorageKey, JSON.stringify(manufacturers));
+    const timer = window.setTimeout(refreshInventory, 300);
+    return () => window.clearTimeout(timer);
+  }, [manufacturers, manufacturerStorageKey, cloudStateReady]);
+
+  useEffect(() => {
+    localStorage.setItem(vendorStorageKey, JSON.stringify(vendors));
+    const timer = window.setTimeout(refreshInventory, 300);
+    return () => window.clearTimeout(timer);
+  }, [vendors, vendorStorageKey, cloudStateReady]);
+
+  useEffect(() => {
+    const knownNames = new Set(vendors.map((vendor) => String(vendor.name || "").trim().toLowerCase()).filter(Boolean));
+    const historicalNames = Array.from(new Set(transactions.map((entry) => String(entry.supplier || "").trim()).filter(Boolean)));
+    const missingVendors = historicalNames.filter((name) => !knownNames.has(name.toLowerCase())).map((name) => ({
+      id: `VEN-LEGACY-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+      name,
+      gstin: "",
+      phone: "",
+      email: "",
+      address: "",
+    }));
+    if (missingVendors.length) setVendors((current) => [...missingVendors, ...current]);
+  }, [transactions]);
+
+  useEffect(() => {
     const receive = (event) => {
       const { key, value } = event.detail;
       if (key === storageKey) setItems((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
       if (key === categoryStorageKey) setCategories((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
+      if (key === categoryProfilesStorageKey) setCategoryProfiles((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
+      if (key === taxProfilesStorageKey) setTaxProfiles((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
+      if (key === brandManufacturerProfilesStorageKey) setBrandManufacturerProfiles((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
+      if (key === departmentStorageKey) setDepartments((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
+      if (key === subcategoryStorageKey) setSubcategories((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
+      if (key === brandStorageKey) setBrands((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
+      if (key === manufacturerStorageKey) setManufacturers((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
+      if (key === vendorStorageKey) setVendors((current) => JSON.stringify(current) === JSON.stringify(value) ? current : value);
     };
     window.addEventListener("vestora-inventory-synced", receive);
     window.addEventListener("online", refreshInventory);
@@ -5634,11 +6582,13 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
       window.removeEventListener("online", refreshInventory);
       window.removeEventListener("focus", refreshInventory);
     };
-  }, [cloudStateReady, storageKey, categoryStorageKey]);
+  }, [cloudStateReady, storageKey, categoryStorageKey, categoryProfilesStorageKey, taxProfilesStorageKey, brandManufacturerProfilesStorageKey, departmentStorageKey, subcategoryStorageKey, brandStorageKey, manufacturerStorageKey, vendorStorageKey, transactionStorageKey, vendorPaymentsStorageKey]);
 
   const getStatus = (item) => {
-    const stock = Number(item.stock || 0);
-    const reorder = Number(item.reorder || 0);
+    const parent = item.parentProductId ? items.find((entry) => entry.id === item.parentProductId) : item;
+    const linkedItems = parent ? items.filter((entry) => entry.id === parent.id || entry.parentProductId === parent.id) : [item];
+    const stock = linkedItems.reduce((total, entry) => total + Number(entry.stock || 0), 0);
+    const reorder = Number(parent ? getMasterProductFields(parent).reorder ?? 0 : item.reorder ?? 0);
     if (stock <= reorder) return "Low stock";
     if (reorder > 0 && stock <= reorder * 1.25) return "Watch";
     return "Healthy";
@@ -5649,10 +6599,94 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
   const inventoryValue = items.reduce((total, item) => total + Number(item.stock || 0) * Number(item.cost || 0), 0);
   const normalizedQuery = query.trim().toLowerCase();
   const visibleItems = items.filter((item) => {
-    const matchesSearch = !normalizedQuery || [item.name, item.sku, item.category].some((value) => String(value || "").toLowerCase().includes(normalizedQuery));
+    const parentName = items.find((entry) => entry.id === item.parentProductId)?.name || item.parentProductName || "";
+    const matchesSearch = !normalizedQuery || [item.name, item.variantLabel, parentName, item.sku, item.barcode, item.hsnCode, item.gstRate, item.department, item.category, item.subcategory, item.brand, item.manufacturer, item.preferredVendor]
+      .some((value) => String(value ?? "").toLowerCase().includes(normalizedQuery));
     const matchesFilter = filter === "All" || getStatus(item) === filter;
     return matchesSearch && matchesFilter;
   });
+  const visibleMasterProducts = variantParentProducts.filter((item) => {
+    const productFields = getMasterProductFields(item);
+      return !normalizedQuery || [item.name, item.sku, productFields.barcode, productFields.price, productFields.mrp, productFields.cost, productFields.sellingPrice, productFields.reorder, item.hsnCode, item.gstRate, item.department, item.category, item.subcategory, item.brand, item.manufacturer, item.preferredVendor, item.unit]
+      .some((value) => String(value ?? "").toLowerCase().includes(normalizedQuery));
+  });
+  const productDetailsFields = productDetailsItem ? getMasterProductFields(productDetailsItem) : null;
+  const productDetailsMargin = productDetailsItem ? calculateVariantMargin(productDetailsFields.cost, productDetailsFields.sellingPrice) : null;
+  const productDetailsMarkup = productDetailsFields?.markupPercent === "" ? calculateMarkupPercentage(productDetailsFields.cost, productDetailsFields.sellingPrice) : Number(productDetailsFields?.markupPercent);
+  const visibleProductVariants = productVariants.filter((item) => {
+    const parent = variantParentProducts.find((entry) => entry.id === item.parentProductId);
+    const parentName = parent?.name || item.parentProductName || "";
+    const productFields = parent ? getMasterProductFields(parent) : {};
+    const parentEans = getProductEanMrpCombinations(parent).map((option) => option.barcode);
+    const matchesSearch = !normalizedQuery || [parentName, item.name, item.variantLabel, item.sku, productFields.barcode, ...parentEans, item.hsnCode, item.gstRate, item.category, item.department, item.brand, item.manufacturer, item.preferredVendor]
+      .some((value) => String(value ?? "").toLowerCase().includes(normalizedQuery));
+    const inStock = Number(item.stock || 0) > 0;
+    return matchesSearch && (batchStockFilter === "All batches" || (batchStockFilter === "In stock" ? inStock : !inStock));
+  });
+  const productEanMrpBatches = variantParentProducts.flatMap((product) => getProductEanMrpCombinations(product).map((combination, index) => ({
+    id: `product-ean-mrp-${product.id}-${index}`,
+    parentProductId: product.id,
+    parentProductName: product.name,
+    productEanMrpBatch: true,
+    variantLabel: `Batch ${index + 1}`,
+    sku: product.sku,
+    barcode: combination.barcode,
+    batchMrp: combination.mrp,
+    unit: product.unit,
+    gstRate: product.gstRate,
+    category: product.category,
+    subcategory: product.subcategory,
+  })));
+  const allProductBatches = [...productVariants, ...productEanMrpBatches];
+  const visibleProductBatches = [
+    ...visibleProductVariants,
+    ...productEanMrpBatches.filter((item) => {
+      const parent = variantParentProducts.find((entry) => entry.id === item.parentProductId);
+      const matchesSearch = !normalizedQuery || [parent?.name, item.variantLabel, item.sku, item.barcode, item.batchMrp, item.gstRate, item.category, item.subcategory]
+        .some((value) => String(value ?? "").toLowerCase().includes(normalizedQuery));
+      return matchesSearch && batchStockFilter === "All batches";
+    }),
+  ];
+  const batchesInStock = productVariants.filter((item) => Number(item.stock || 0) > 0).length;
+  const batchProductCount = new Set(allProductBatches.map((item) => item.parentProductId)).size;
+  const batchStockValue = productVariants.reduce((total, item) => {
+    const parent = variantParentProducts.find((entry) => entry.id === item.parentProductId);
+    return total + Number(item.stock || 0) * Number(parent ? getMasterProductFields(parent).cost : item.cost || 0);
+  }, 0);
+  const purchaseHistory = buildPurchasePayables(transactions, vendorPayments);
+  const purchaseReturnHistory = Array.from(transactions.filter((entry) => entry.type === "Purchase Return" && entry.returnId).reduce((groups, entry) => {
+    const current = groups.get(entry.returnId) || { id: entry.returnId, date: entry.date, supplier: entry.supplier, reference: entry.reference, createdAt: entry.createdAt, itemCount: 0, quantity: 0, total: 0 };
+    current.itemCount += 1;
+    current.quantity += Number(entry.quantity || 0);
+    current.total += Number(entry.total || 0);
+    groups.set(entry.returnId, current);
+    return groups;
+  }, new Map()).values()).sort((first, second) => String(second.createdAt || second.date).localeCompare(String(first.createdAt || first.date)));
+  const viewedPurchaseLines = viewingPurchaseRow?.status === "Approved"
+    ? transactions.filter((transaction) => transaction.type === "Purchase" && transaction.purchaseId === viewingPurchaseRow.purchase?.id)
+    : viewingPurchaseRow?.record?.entry?.lines || [];
+  const currentPurchaseInvoice = calculatePurchaseInvoice(purchaseDraft.lines.map(purchaseLineAmounts), purchaseDraft);
+  const currentPurchaseTotals = currentPurchaseInvoice.totals;
+  const receivablePurchaseOrders = purchaseOrders.filter((order) => ["Approved", "Partially received"].includes(order.status) || order.id === purchaseDraft.purchaseOrderId);
+  const lastPurchaseCosts = transactions.reduce((latestByItem, entry) => {
+    if (entry.type !== "Purchase" || !entry.itemId || entry.unitCost === null || entry.unitCost === undefined || entry.unitCost === "") return latestByItem;
+    const timestamp = String(entry.createdAt || entry.date || "");
+    const previous = latestByItem.get(entry.itemId);
+    if (!previous || timestamp > previous.timestamp) latestByItem.set(entry.itemId, { timestamp, cost: Number(entry.netUnitCost ?? entry.unitCost) });
+    return latestByItem;
+  }, new Map());
+  const getLastPurchaseCost = (item) => {
+    if (!item) return null;
+    const recordedCost = lastPurchaseCosts.get(item.id)?.cost;
+    const savedCost = item.lastPurchaseCost;
+    const cost = recordedCost ?? savedCost;
+    return cost === null || cost === undefined || cost === "" || !Number.isFinite(Number(cost)) ? null : Number(cost);
+  };
+  const purchaseReturnTotals = purchaseTotals(purchaseReturnDraft.lines.map((line) => ({
+    quantity: line.quantity,
+    unitCost: items.find((item) => item.id === line.itemId)?.cost || 0,
+    taxRate: items.find((item) => item.id === line.itemId)?.gstRate || 0,
+  })));
 
   const formatQuantity = (value) => Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
   const generateSku = (excludedId = "") => {
@@ -5663,67 +6697,988 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
     while (existingNumbers.has(serial)) serial += 1;
     return String(serial).padStart(3, "0");
   };
+  const generateBatchLabel = (parentProductId, excludedId = "") => {
+    const siblingLabels = items
+      .filter((item) => item.parentProductId === parentProductId && item.id !== excludedId)
+      .map((item) => String(item.variantLabel || ""));
+    const highestSerial = siblingLabels.reduce((highest, label) => {
+      const match = label.match(/^Batch\s+(\d+)$/i);
+      return match ? Math.max(highest, Number(match[1])) : highest;
+    }, 0);
+    let serial = highestSerial + 1;
+    let label = `Batch ${String(serial).padStart(3, "0")}`;
+    while (siblingLabels.some((existing) => existing.toLowerCase() === label.toLowerCase())) {
+      serial += 1;
+      label = `Batch ${String(serial).padStart(3, "0")}`;
+    }
+    return label;
+  };
+  const openNewVariant = (parentProductId = variantDraft.parentProductId) => {
+    const parent = variantParentProducts.find((item) => item.id === parentProductId);
+    setEditingVariantId("");
+    setVariantDraft({
+      parentProductId: parent?.id || "",
+      label: "",
+      sku: "",
+      stock: "",
+    });
+    setVariantEditorOpen(true);
+  };
+  const closeVariantEditor = () => {
+    setVariantEditorOpen(false);
+    setEditingVariantId("");
+    setVariantDraft((current) => ({
+      parentProductId: current.parentProductId,
+      label: "",
+      sku: "",
+      stock: "",
+    }));
+  };
   const openCreate = () => {
+    setPurchaseOpen(false);
     setEditingId(null);
-    setDraft({ ...blankDraft, sku: generateSku() });
-    setSkuIsManual(false);
-    setCategoryCreatorOpen(false);
-    setCategoryDraft("");
+    const defaultRateProfiles = taxProfiles.filter((profile) => Number(profile.gstRate) === Number(blankDraft.gstRate));
+    const defaultHsnCodes = Array.from(new Set(defaultRateProfiles.map((profile) => String(profile.hsnCode || "").trim()).filter(Boolean)));
+    setDraft({ ...blankDraft, sku: generateSku(), hsnCode: defaultHsnCodes.length === 1 ? defaultHsnCodes[0] : "" });
+    setInventorySetupCreator("");
+    setInventorySetupDraft("");
     setEditorOpen(true);
   };
   const openEdit = (item) => {
+    setPurchaseOpen(false);
     setEditingId(item.id);
-    setDraft({ ...item, stock: String(item.stock), reorder: String(item.reorder), cost: String(item.cost) });
-    setSkuIsManual(true);
-    setCategoryCreatorOpen(false);
-    setCategoryDraft("");
+    const productFields = getMasterProductFields(item);
+    setDraft({
+      ...blankDraft,
+      ...item,
+      eanMrpOptions: (item.eanMrpOptions || []).map((option) => ({ ...option, id: option.id || crypto.randomUUID() })),
+      ...productFields,
+      price: productFields.price === "" ? calculatePriceBeforeGst(productFields.cost, item.gstRate) : String(productFields.price),
+      classificationProfileId: categoryProfiles.find((profile) => String(profile.category || "").toLowerCase() === String(item.category || "").toLowerCase() && String(profile.subcategory || "").toLowerCase() === String(item.subcategory || "").toLowerCase())?.id || "",
+      barcode: String(productFields.barcode || ""),
+      hsnCode: String(item.hsnCode || ""),
+      gstRate: item.gstRate === null || item.gstRate === undefined ? "" : String(item.gstRate),
+      department: item.department || "",
+      subcategory: item.subcategory || "",
+      brandManufacturerProfileId: brandManufacturerProfileOptions.find((profile) => String(profile.brand || "").toLowerCase() === String(item.brand || "").trim().toLowerCase() && String(profile.manufacturer || "").toLowerCase() === String(item.manufacturer || "").trim().toLowerCase())?.id || "",
+      stock: String(item.stock),
+      reorder: String(productFields.reorder ?? 0),
+      mrp: productFields.mrp === null || productFields.mrp === undefined ? "" : String(productFields.mrp),
+      cost: String(productFields.cost ?? 0),
+      markupPercent: String(productFields.markupPercent ?? ""),
+      sellingPrice: productFields.sellingPrice === null || productFields.sellingPrice === undefined ? "" : String(productFields.sellingPrice),
+      wholesalePrice: String(productFields.wholesalePrice ?? ""),
+      ecommercePrice: String(productFields.ecommercePrice ?? ""),
+    });
+    setInventorySetupCreator("");
+    setInventorySetupDraft("");
     setEditorOpen(true);
   };
   const closeEditor = () => {
     setEditorOpen(false);
     setEditingId(null);
     setDraft(blankDraft);
-    setSkuIsManual(false);
-    setCategoryCreatorOpen(false);
-    setCategoryDraft("");
+    setInventorySetupCreator("");
+    setInventorySetupDraft("");
   };
-  const updateDraft = (field, value) => {
-    const nextValue = field === "sku" && !editingId ? value.replace(/\D/g, "") : value;
-    if (field === "sku") setSkuIsManual(Boolean(nextValue.trim()));
-    setDraft((current) => {
-      if (field === "name" && !editingId && !skuIsManual) return { ...current, name: value, sku: value.trim() ? generateSku() : "" };
-      return { ...current, [field]: nextValue };
-    });
+  useEffect(() => {
+    if (createProductRequestSeen.current === createProductRequest) return;
+    createProductRequestSeen.current = createProductRequest;
+    if (canManageAll && activeView === "create" && !editorOpen) openCreate();
+  }, [createProductRequest, canManageAll, activeView, editorOpen]);
+  const newPurchaseLine = () => ({
+    id: crypto.randomUUID(),
+    itemId: "",
+    name: "",
+    sku: "",
+    hsnCode: "",
+    gstRate: "5",
+    department: "Food & Beverage",
+    category: categories[0] || "Other",
+    subcategory: defaultInventorySubcategory(categories[0] || "Other"),
+    unit: "kg",
+    reorder: "",
+    quantity: "",
+    unitCost: "",
+    discountPercent: "0",
+    sellingPrice: "",
+    taxRate: "5",
+  });
+  const addPurchaseLine = () => {
+    const line = newPurchaseLine();
+    setPurchaseDraft((current) => ({ ...current, lines: [...current.lines, line] }));
+    window.requestAnimationFrame(() => purchaseLineItemRefs.current.get(line.id)?.focus());
   };
-  const createCategory = () => {
-    const nextCategory = categoryDraft.trim().replace(/\s+/g, " ");
-    if (!nextCategory) {
-      notify("Enter a category name");
+  const handlePurchaseLineKeyDown = (event) => {
+    if (event.key !== "Enter") return;
+    if (event.target.closest(".purchase-gst-select")) {
+      event.preventDefault();
+      addPurchaseLine();
       return;
     }
-    const existingCategory = categories.find((categoryName) => categoryName.toLowerCase() === nextCategory.toLowerCase());
-    if (existingCategory) {
-      updateDraft("category", existingCategory);
-      notify(`${existingCategory} is already available`);
-    } else {
-      setCategories((current) => [...current, nextCategory]);
-      updateDraft("category", nextCategory);
-      notify(`${nextCategory} category created`);
+    if (event.target.tagName !== "INPUT") return;
+    const card = event.target.closest(".purchase-line-card");
+    if (!card) return;
+    const fields = Array.from(card.querySelectorAll("input:not(:disabled):not([readonly]), select:not(:disabled)"));
+    const currentIndex = fields.indexOf(event.target);
+    if (currentIndex < 0) return;
+    event.preventDefault();
+    const nextField = fields[currentIndex + 1];
+    if (nextField) nextField.focus();
+    else addPurchaseLine();
+  };
+  const handleProductFormArrowNavigation = (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || target.readOnly || target.disabled || target.type === "hidden" || target.getAttribute("role") === "option") return;
+    if (target.type !== "number") {
+      try {
+        const caretStart = target.selectionStart;
+        const caretEnd = target.selectionEnd;
+        if (event.key === "ArrowLeft" && caretStart !== null && caretStart > 0) return;
+        if (event.key === "ArrowRight" && caretEnd !== null && caretEnd < target.value.length) return;
+      } catch {
+        // Date and other specialized inputs do not expose text-caret positions.
+      }
     }
-    setCategoryDraft("");
-    setCategoryCreatorOpen(false);
+    const form = event.currentTarget;
+    const fields = Array.from(form.querySelectorAll("input:not(:disabled):not([readonly]):not([type=hidden]), select:not(:disabled), textarea:not(:disabled)"))
+      .filter((field) => field.getClientRects().length > 0);
+    const currentIndex = fields.indexOf(target);
+    const nextIndex = currentIndex + (event.key === "ArrowLeft" ? -1 : 1);
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= fields.length) return;
+    event.preventDefault();
+    fields[nextIndex].focus();
+  };
+  const openPurchase = () => {
+    setEditingPurchaseDraftId("");
+    setEditingPostedPurchaseId("");
+    closeEditor();
+    closePurchaseReturn();
+    const automaticOrder = automaticPurchaseOrderForEntry(purchaseOrders, purchaseDraftRecords);
+    setPurchaseDraft(automaticOrder
+      ? purchaseOrderToPurchaseDraft(automaticOrder, items, () => crypto.randomUUID(), localDateKey())
+      : { purchaseOrderId: "", purchaseOrderNumber: "", supplier: "", invoice: "", date: localDateKey(), notes: "", lines: [newPurchaseLine()] });
+    setPurchaseOpen(true);
+    if (automaticOrder) notify(`${automaticOrder.poNumber} linked automatically · all ordered products loaded`);
+    else if (purchaseOrders.filter((order) => ["Approved", "Partially received"].includes(order.status)).length > 1) notify("Select the purchase order for this bill");
+  };
+  const loadPurchaseOrderIntoEntry = (purchaseOrderId) => {
+    if (!purchaseOrderId) {
+      setPurchaseDraft((current) => ({ ...current, purchaseOrderId: "", purchaseOrderNumber: "" }));
+      return;
+    }
+    const order = purchaseOrders.find((entry) => entry.id === purchaseOrderId);
+    if (!order) return notify("Purchase order is no longer available");
+    const linkedDraft = purchaseOrderToPurchaseDraft(order, items, () => crypto.randomUUID(), localDateKey());
+    setPurchaseDraft((current) => ({
+      ...linkedDraft,
+      invoice: current.invoice || "",
+      date: current.date || linkedDraft.date,
+      billDiscountType: current.billDiscountType,
+      billDiscountValue: current.billDiscountValue,
+      freightCharge: current.freightCharge,
+      freightGstRate: current.freightGstRate,
+      otherCharges: current.otherCharges,
+      otherChargesGstRate: current.otherChargesGstRate,
+      roundOffMode: current.roundOffMode,
+      roundOffValue: current.roundOffValue,
+    }));
+    notify(`${order.poNumber} linked · ${linkedDraft.lines.length} product${linkedDraft.lines.length === 1 ? "" : "s"} loaded`);
+  };
+  const newPurchaseReturnLine = () => ({ id: crypto.randomUUID(), itemId: "", quantity: "" });
+  const openPurchaseReturn = () => {
+    closeEditor();
+    closePurchase();
+    setPurchaseReturnDraft({ supplier: "", reference: "", date: localDateKey(), reason: "", lines: [newPurchaseReturnLine()] });
+    setPurchaseReturnOpen(true);
+  };
+  const closePurchaseReturn = () => {
+    setPurchaseReturnOpen(false);
+    setPurchaseReturnDraft({ supplier: "", reference: "", date: localDateKey(), reason: "", lines: [] });
+  };
+  const closePurchase = () => {
+    setEditingPurchaseDraftId("");
+    setEditingPostedPurchaseId("");
+    setPurchaseOpen(false);
+    setPurchaseDraft({ purchaseOrderId: "", purchaseOrderNumber: "", supplier: "", invoice: "", date: localDateKey(), notes: "", lines: [] });
+  };
+  useEffect(() => {
+    if (activeView !== "variants") setVariantEditorOpen(false);
+    if (!canManageAll) {
+      setVariantEditorOpen(false);
+      closeEditor();
+      closePurchase();
+      closePurchaseReturn();
+      setQuickVendorFormOpen(false);
+      return;
+    }
+    if (activeView === "create") { setQuickVendorFormOpen(false); setQuery(""); closeEditor(); }
+    else if (activeView === "variants") {
+      setQuery("");
+      closeEditor();
+      closePurchase();
+      closePurchaseReturn();
+      setQuickVendorFormOpen(false);
+    }
+    else if (activeView === "vendors") {
+      closeEditor();
+      closePurchase();
+      closePurchaseReturn();
+      setQuickVendorFormOpen(false);
+    }
+    else if (activeView === "purchase") {
+      const purchaseOrder = pendingPurchaseOrderEntry.current;
+      pendingPurchaseOrderEntry.current = null;
+      setQuickVendorFormOpen(false);
+      closeEditor();
+      closePurchase();
+      closePurchaseReturn();
+      if (purchaseOrder) {
+        setPurchaseDraft(purchaseOrderToPurchaseDraft(purchaseOrder, items, () => crypto.randomUUID(), localDateKey()));
+        setPurchaseOpen(true);
+        notify(`${purchaseOrder.poNumber} loaded into Purchase Entry. Save it as a draft before submission.`);
+      }
+    }
+    else if (activeView === "purchase-return") { setQuickVendorFormOpen(false); openPurchaseReturn(); }
+    else {
+      setVariantEditorOpen(false);
+      closeEditor();
+      closePurchase();
+      closePurchaseReturn();
+    }
+  }, [activeView, canManageAll]);
+  const updatePurchaseLine = (lineId, patch) => {
+    setPurchaseDraft((current) => ({
+      ...current,
+      lines: current.lines.map((line) => line.id === lineId ? { ...line, ...patch } : line),
+    }));
+  };
+  const selectPurchaseItem = (lineId, itemId, batch) => {
+    if (itemId === "__new__") {
+      const category = categories[0] || "Other";
+      updatePurchaseLine(lineId, {
+        ...purchaseBatchFields(),
+        itemId,
+        name: "",
+        sku: "",
+        hsnCode: "",
+        gstRate: "5",
+        department: "Food & Beverage",
+        category,
+        subcategory: defaultInventorySubcategory(category),
+        unit: "kg",
+        reorder: "",
+        unitCost: "",
+        sellingPrice: "",
+        taxRate: "5",
+      });
+      return;
+    }
+    const item = items.find((entry) => entry.id === itemId);
+    updatePurchaseLine(lineId, item ? {
+      ...purchaseBatchFields(batch),
+      itemId: item.id,
+      name: item.name,
+      sku: item.sku,
+      hsnCode: item.hsnCode || "",
+      gstRate: String(item.gstRate ?? 0),
+      department: item.department || "",
+      category: item.category,
+      subcategory: item.subcategory || "",
+      unit: item.unit,
+      reorder: String(item.reorder ?? 0),
+      unitCost: String(item.price ?? calculatePriceBeforeGst(item.cost, item.gstRate) ?? 0),
+      sellingPrice: String(getMasterProductFields(items.find((entry) => entry.id === item.parentProductId) || item).sellingPrice ?? ""),
+      taxRate: String(item.gstRate ?? 0),
+    } : { ...purchaseBatchFields(), itemId: "", name: "", sku: "", unitCost: "", sellingPrice: "" });
+  };
+  const savePurchaseDraft = (event) => {
+    event?.preventDefault();
+    if (!requireInventoryWritesReady()) return;
+    const id = editingPurchaseDraftId || `PUR-DRAFT-${crypto.randomUUID()}`;
+    try {
+      setPurchaseDraftRecords((current) => savePurchaseDraftRecord(current, purchaseDraft, id));
+      closePurchase();
+      notify("Purchase draft saved. Stock is unchanged.");
+      window.requestAnimationFrame(() => document.querySelector("#saved-purchase-drafts")?.scrollIntoView({ block: "start", behavior: "smooth" }));
+    } catch (error) { notify(error.message); }
+  };
+  const editSavedPurchaseDraft = (record) => {
+    if (record.status !== "Draft") return;
+    setEditingPurchaseDraftId(record.id);
+    setPurchaseDraft(JSON.parse(JSON.stringify(record.entry)));
+    setPurchaseOpen(true);
+  };
+  const updateSavedPurchaseDraft = (record) => {
+    if (record.status !== "Draft") return;
+    if (editingPurchaseDraftId === record.id && purchaseOpen) {
+      savePurchaseDraft();
+      return;
+    }
+    editSavedPurchaseDraft(record);
+  };
+  const deleteSavedPurchaseDraft = (record) => {
+    if (!["Draft", "PendingApproval"].includes(record.status) || !window.confirm(`Delete purchase ${record.entry.invoice || record.id}?`)) return;
+    setPurchaseDraftRecords((current) => deletePurchaseDraftRecord(current, record.id));
+    if (editingPurchaseDraftId === record.id) closePurchase();
+    notify("Purchase entry deleted. Stock was unchanged.");
+  };
+  const submitPurchaseForApproval = (record) => {
+    if (!requireInventoryWritesReady()) return;
+    if (!record || record.status !== "Draft") return notify("Save this purchase as a draft first.");
+    const entry = record.entry;
+    if (!entry.supplier?.trim() || !entry.invoice?.trim() || !entry.date) return notify("Vendor, invoice number, and purchase date are required.");
+    if (!entry.lines?.length || entry.lines.some((line) => !line.itemId || !Number.isFinite(Number(line.quantity)) || Number(line.quantity) <= 0 || String(line.unitCost ?? "").trim() === "")) return notify("Select each item and enter a valid quantity and rate.");
+    if (transactions.some((transaction) => transaction.type === "Purchase" && String(transaction.supplier || "").toLowerCase() === entry.supplier.trim().toLowerCase() && String(transaction.invoice || "").toLowerCase() === entry.invoice.trim().toLowerCase())) return notify("This supplier invoice has already been approved.");
+    try {
+      calculatePurchaseInvoice(entry.lines.map(purchaseLineAmounts), entry, { strict: true });
+      setPurchaseDraftRecords((current) => requestPurchaseApprovalRecord(current, record.id));
+      if (editingPurchaseDraftId === record.id) closePurchase();
+      notify("Purchase submitted for approval. Stock is unchanged.");
+    } catch (error) { notify(error.message); }
+  };
+  const returnSubmittedPurchaseToDraft = (record) => {
+    if (!requireInventoryWritesReady()) return;
+    try {
+      setPurchaseDraftRecords((current) => returnPurchaseToDraft(current, record.id));
+      notify("Purchase returned to draft for editing.");
+    } catch (error) { notify(error.message); }
+  };
+  const postPurchase = (event, draftRecord = null) => {
+    event?.preventDefault();
+    if (!requireInventoryWritesReady()) return;
+    const draftId = draftRecord?.id || editingPurchaseDraftId;
+    const entry = draftRecord?.entry || purchaseDraft;
+    const isPendingApproval = draftRecord?.status === "PendingApproval";
+    if (!draftId || !isPendingApproval) return notify("Submit this purchase for approval first.");
+    if (submittedPurchaseDraftIds.current.has(draftId) || transactions.some((transaction) => transaction.sourceDraftId === draftId)) return notify("This draft has already been submitted.");
+    const supplier = entry.supplier.trim().replace(/\s+/g, " ");
+    const invoice = entry.invoice.trim().replace(/\s+/g, " ");
+    if (!supplier || !invoice || !entry.date) {
+      notify("Supplier, invoice number, and purchase date are required");
+      return;
+    }
+    if (!entry.lines.length) {
+      notify("Add at least one purchase item");
+      return;
+    }
+    if (transactions.some((entry) => entry.type === "Purchase" && String(entry.supplier || "").toLowerCase() === supplier.toLowerCase() && String(entry.invoice || "").toLowerCase() === invoice.toLowerCase())) {
+      notify("This supplier invoice has already been posted");
+      return;
+    }
+    try {
+      const usedSkus = new Set(items.map((item) => String(item.sku || "").trim()).filter(Boolean));
+      const usedNumericSkus = new Set([...usedSkus].filter((sku) => /^\d+$/.test(sku)).map(Number));
+      const usedNames = new Set(items.map((item) => String(item.name || "").trim().toLowerCase()).filter(Boolean));
+      let nextSku = 1;
+      const resolvedLines = entry.lines.map((line) => {
+        if (!line.itemId) throw new Error("Select an inventory item or choose Create new item");
+        if (line.itemId !== "__new__") return line;
+        const nameKey = String(line.name || "").trim().toLowerCase();
+        if (!nameKey) throw new Error("Enter the new item name");
+        if (usedNames.has(nameKey)) throw new Error(`${line.name.trim()} already exists; select it from inventory`);
+        usedNames.add(nameKey);
+        let sku = String(line.sku || "").trim();
+        if (sku && !/^\d+$/.test(sku)) throw new Error(`SKU for ${line.name.trim()} must contain digits only`);
+        if (!sku) {
+          while (usedNumericSkus.has(nextSku)) nextSku += 1;
+          sku = String(nextSku).padStart(3, "0");
+        }
+        if (usedSkus.has(sku) || usedNumericSkus.has(Number(sku))) throw new Error(`SKU ${sku} is already in use`);
+        usedSkus.add(sku);
+        usedNumericSkus.add(Number(sku));
+        return { ...line, sku };
+      });
+      const now = new Date().toISOString();
+      const purchaseId = draftRecord.purchaseNumber || purchaseDraftNumber(draftRecord);
+      const result = applyPurchaseToInventory(items, resolvedLines, { timestamp: now, invoiceAdjustments: entry });
+      const submittedDraftRecords = submitPurchaseDraftRecord(purchaseDraftRecords, draftId, purchaseId, now);
+      const affectedProductIds = new Set(result.receivedLines.map((line) => {
+        const receivedItem = result.inventory.find((item) => item.id === line.itemId);
+        if (!receivedItem) return "";
+        return receivedItem.parentProductId || (result.inventory.some((item) => item.parentProductId === receivedItem.id) ? receivedItem.id : "");
+      }).filter(Boolean));
+      const synchronizedInventory = result.inventory.map((item) => ({ ...item }));
+      for (const productId of affectedProductIds) {
+        const parentIndex = synchronizedInventory.findIndex((item) => item.id === productId);
+        if (parentIndex < 0) continue;
+        const parent = synchronizedInventory[parentIndex];
+        const productFields = getMasterProductFields(parent);
+        const group = synchronizedInventory.filter((item) => item.id === productId || item.parentProductId === productId);
+        const totalStock = group.reduce((total, item) => total + Number(item.stock || 0), 0);
+        const weightedPrice = totalStock > 0
+          ? group.reduce((total, item) => total + Number(item.stock || 0) * Number((item.price ?? calculatePriceBeforeGst(item.cost, item.gstRate)) || 0), 0) / totalStock
+          : Number(parent.price || 0);
+        const weightedCost = totalStock > 0
+          ? group.reduce((total, item) => total + Number(item.stock || 0) * Number(item.cost || 0), 0) / totalStock
+          : Number(parent.cost || 0);
+        for (const item of synchronizedInventory) {
+          if (item.id !== productId && item.parentProductId !== productId) continue;
+          Object.assign(item, {
+            barcode: productFields.barcode,
+            reorder: Number(productFields.reorder || 0),
+            price: Number(weightedPrice.toFixed(4)),
+            mrp: productFields.mrp === "" ? "" : Number(productFields.mrp || 0),
+            cost: Number(weightedCost.toFixed(4)),
+            sellingPrice: productFields.sellingPrice === "" ? "" : Number(productFields.sellingPrice || 0),
+          });
+        }
+      }
+      const pricedInventory = applyPurchaseSellingPrices(synchronizedInventory, result.receivedLines);
+      const receiptTransactions = result.receivedLines.map((line, index) => ({
+        id: `TRN-PUR-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${index}`,
+        type: "Purchase",
+        sourceDraftId: draftId,
+        purchaseId,
+        purchaseOrderId: entry.purchaseOrderId || "",
+        purchaseOrderNumber: entry.purchaseOrderNumber || "",
+        reference: invoice,
+        supplier,
+        vendorId: vendors.find((vendor) => vendor.name.toLowerCase() === supplier.toLowerCase())?.id || "",
+        invoice,
+        item: line.batchLabel && !line.name.endsWith(line.batchLabel) ? `${line.name} - ${line.batchLabel}` : line.name,
+        batchKey: line.batchKey || "",
+        batchLabel: line.batchLabel || "",
+        barcode: line.batchBarcode || "",
+        mrp: line.batchMrp ?? "",
+        itemId: line.itemId,
+        sku: line.sku,
+        hsnCode: line.hsnCode || "",
+        gstRate: Number(line.gstRate ?? line.taxRate ?? 0),
+        department: line.department || "",
+        category: line.category || "",
+        subcategory: line.subcategory || "",
+        qty: `${line.quantity} ${line.unit}`,
+        quantity: Number(line.quantity),
+        unit: line.unit,
+        unitCost: Number(line.unitCost),
+        discountPercent: Number(line.discountPercent || 0),
+        discount: line.discount,
+        netUnitCost: line.netUnitCost,
+        billDiscount: line.billDiscount,
+        freightCharge: line.freightCharge,
+        freightTax: line.freightTax,
+        otherCharges: line.otherCharges,
+        otherChargesTax: line.otherChargesTax,
+        itemTax: line.itemTax,
+        roundOff: line.roundOff,
+        invoiceSummary: index === 0 ? result.invoiceTotals : undefined,
+        sellingPrice: pricedInventory.find((item) => item.id === line.itemId)?.sellingPrice ?? "",
+        taxRate: Number(line.taxRate || 0),
+        subtotal: line.subtotal,
+        tax: line.tax,
+        total: line.total,
+        date: entry.date,
+        notes: entry.notes.trim(),
+        createdAt: now,
+      }));
+      submittedPurchaseDraftIds.current.add(draftId);
+      setItems(pricedInventory);
+      setTransactions((current) => [...receiptTransactions, ...current]);
+      setPurchaseDraftRecords(submittedDraftRecords);
+      closePurchase();
+      // Approval changes the row from "Submitted" to "Approved". Keep the
+      // operator anchored on Purchase entry instead of letting browser scroll
+      // anchoring move the viewport down to the settlement/payment area.
+      const purchasePageScrollTop = window.scrollY;
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => window.scrollTo({ top: purchasePageScrollTop, behavior: "auto" })));
+      notify(`${purchaseId} approved · ${result.receivedLines.length} item${result.receivedLines.length === 1 ? "" : "s"} added to inventory${inventoryWritesReady ? "" : " · saved on this device; sync pending"}`);
+    } catch (error) {
+      notify(error.message || "Could not post the purchase entry");
+    }
+  };
+  const postedPurchaseTransactions = (purchaseId) => transactions.filter((transaction) => transaction.type === "Purchase" && transaction.purchaseId === purchaseId);
+  const purchaseHasReturns = (purchase) => transactions.some((transaction) => transaction.type === "Purchase Return"
+    && String(transaction.supplier || "").toLowerCase() === String(purchase.supplier || "").toLowerCase()
+    && String(transaction.reference || "").toLowerCase() === String(purchase.invoice || "").toLowerCase());
+  const editPostedPurchase = (purchase) => {
+    const receipts = postedPurchaseTransactions(purchase.id);
+    if (!receipts.length) return notify("Purchase bill is no longer available.");
+    const savedEntry = purchaseDraftRecords.find((record) => record.purchaseId === purchase.id)?.entry;
+    const lines = receipts.map((receipt, index) => ({
+      ...newPurchaseLine(), ...(savedEntry?.lines?.[index] || {}), id: crypto.randomUUID(),
+      itemId: receipt.itemId, name: receipt.item, sku: receipt.sku, unit: receipt.unit,
+      quantity: String(receipt.quantity), unitCost: String(receipt.unitCost),
+      discountPercent: String(receipt.discountPercent ?? 0), sellingPrice: String(receipt.sellingPrice ?? ""),
+      taxRate: String(receipt.taxRate ?? receipt.gstRate ?? 0),
+      batchKey: receipt.batchKey || "", batchLabel: receipt.batchLabel || "", batchBarcode: receipt.barcode || "", batchMrp: receipt.mrp ?? "",
+    }));
+    const summary = receipts[0]?.invoiceSummary || {};
+    setPurchaseDraft({
+      purchaseOrderId: savedEntry?.purchaseOrderId || "", purchaseOrderNumber: savedEntry?.purchaseOrderNumber || "",
+      supplier: purchase.supplier, invoice: purchase.invoice, date: purchase.date, notes: receipts[0]?.notes || "",
+      billDiscountType: savedEntry?.billDiscountType || "amount", billDiscountValue: savedEntry?.billDiscountValue ?? String(summary.billDiscount || 0),
+      freightCharge: savedEntry?.freightCharge ?? String(summary.freight || 0), freightGstRate: savedEntry?.freightGstRate ?? "0",
+      otherCharges: savedEntry?.otherCharges ?? String(summary.otherCharges || 0), otherChargesGstRate: savedEntry?.otherChargesGstRate ?? "0",
+      roundOffMode: savedEntry?.roundOffMode || (summary.roundOff ? "manual" : "none"), roundOffValue: savedEntry?.roundOffValue ?? String(summary.roundOff || 0), lines,
+    });
+    setEditingPurchaseDraftId("");
+    setEditingPostedPurchaseId(purchase.id);
+    setPurchaseOpen(true);
+  };
+  const savePostedPurchase = (event) => {
+    event?.preventDefault();
+    if (!requireInventoryWritesReady()) return;
+    const purchase = purchaseHistory.find((entry) => entry.id === editingPostedPurchaseId);
+    if (!purchase) return notify("Purchase bill is no longer available.");
+    if (purchaseHasReturns(purchase)) return notify("This bill has a purchase return and cannot be edited.");
+    const entry = purchaseDraft;
+    if (!entry.supplier.trim() || !entry.invoice.trim() || !entry.date) return notify("Vendor, invoice number, and purchase date are required.");
+    if (!entry.lines.length || entry.lines.some((line) => !line.itemId || line.itemId === "__new__")) return notify("Select an existing inventory item for every line.");
+    if (transactions.some((transaction) => transaction.type === "Purchase" && transaction.purchaseId !== purchase.id
+      && String(transaction.supplier || "").toLowerCase() === entry.supplier.trim().toLowerCase()
+      && String(transaction.invoice || "").toLowerCase() === entry.invoice.trim().toLowerCase())) return notify("This supplier invoice already exists.");
+    try {
+      const now = new Date().toISOString();
+      const original = postedPurchaseTransactions(purchase.id);
+      const baseInventory = reversePurchaseInventory(items, original, now);
+      const result = applyPurchaseToInventory(baseInventory, entry.lines, { timestamp: now, invoiceAdjustments: entry });
+      if (result.invoiceTotals.total + 0.005 < purchase.paid) throw new Error("Bill total cannot be less than payments already recorded.");
+      const pricedInventory = applyPurchaseSellingPrices(result.inventory, result.receivedLines);
+      const revised = result.receivedLines.map((line, index) => ({
+        ...(original[index] || {}), id: original[index]?.id || `TRN-PUR-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${index}`,
+        type: "Purchase", purchaseId: purchase.id, sourceDraftId: original[0]?.sourceDraftId || "",
+        reference: entry.invoice.trim(), supplier: entry.supplier.trim(), invoice: entry.invoice.trim(),
+        vendorId: vendors.find((vendor) => vendor.name.toLowerCase() === entry.supplier.trim().toLowerCase())?.id || "",
+        item: line.batchLabel && !line.name.endsWith(line.batchLabel) ? `${line.name} - ${line.batchLabel}` : line.name,
+        batchKey: line.batchKey || "", batchLabel: line.batchLabel || "", barcode: line.batchBarcode || "", mrp: line.batchMrp ?? "",
+        itemId: line.itemId, sku: line.sku, hsnCode: line.hsnCode || "", gstRate: Number(line.gstRate ?? line.taxRate ?? 0),
+        department: line.department || "", category: line.category || "", subcategory: line.subcategory || "",
+        qty: `${line.quantity} ${line.unit}`, quantity: Number(line.quantity), unit: line.unit,
+        unitCost: Number(line.unitCost), discountPercent: Number(line.discountPercent || 0), discount: line.discount,
+        netUnitCost: line.netUnitCost, billDiscount: line.billDiscount, freightCharge: line.freightCharge,
+        freightTax: line.freightTax, otherCharges: line.otherCharges, otherChargesTax: line.otherChargesTax,
+        itemTax: line.itemTax, roundOff: line.roundOff, invoiceSummary: index === 0 ? result.invoiceTotals : undefined,
+        sellingPrice: pricedInventory.find((item) => item.id === line.itemId)?.sellingPrice ?? "",
+        taxRate: Number(line.taxRate || 0), subtotal: line.subtotal, tax: line.tax, total: line.total,
+        date: entry.date, notes: entry.notes.trim(), createdAt: original[0]?.createdAt || now, updatedAt: now,
+      }));
+      setItems(pricedInventory);
+      setTransactions((current) => [...revised, ...current.filter((transaction) => !(transaction.type === "Purchase" && transaction.purchaseId === purchase.id))]);
+      setPurchaseDraftRecords((current) => current.map((record) => record.purchaseId === purchase.id
+        ? { ...record, entry: JSON.parse(JSON.stringify(entry)), updatedAt: now } : record));
+      setVendorPayments((current) => current.map((payment) => {
+        const linked = payment.purchaseId === purchase.id || (!payment.purchaseId
+          && String(payment.vendor || "").toLowerCase() === String(purchase.supplier || "").toLowerCase()
+          && String(payment.invoice || "").toLowerCase() === String(purchase.invoice || "").toLowerCase());
+        return linked ? { ...payment, vendor: entry.supplier.trim(), invoice: entry.invoice.trim(), updatedAt: now } : payment;
+      }));
+      closePurchase();
+      notify(`${purchase.id} updated. Inventory quantities and bill total were recalculated.`);
+    } catch (error) { notify(error.message || "Could not update purchase bill."); }
+  };
+  const deletePostedPurchase = (purchase) => {
+    if (!requireInventoryWritesReady()) return;
+    if (purchase.paid > 0.005) return notify("This bill has recorded payments. Reverse its settlements before deleting the bill.");
+    if (purchaseHasReturns(purchase)) return notify("This bill has a purchase return and cannot be deleted.");
+    if (!window.confirm(`Delete approved purchase ${purchase.id}? Its received stock will be removed.`)) return;
+    try {
+      const now = new Date().toISOString();
+      const inventory = reversePurchaseInventory(items, postedPurchaseTransactions(purchase.id), now);
+      setItems(inventory);
+      setTransactions((current) => current.filter((transaction) => !(transaction.type === "Purchase" && transaction.purchaseId === purchase.id)));
+      setPurchaseDraftRecords((current) => current.map((record) => record.purchaseId === purchase.id
+        ? { ...record, status: "Deleted", deletedAt: now, updatedAt: now } : record));
+      notify(`${purchase.id} deleted. Received stock was removed.`);
+    } catch (error) { notify(error.message || "Could not delete purchase bill."); }
+  };
+  const postVendorSettlement = (event) => {
+    event.preventDefault();
+    if (!requireInventoryWritesReady()) return;
+    const purchase = purchaseHistory.find((entry) => entry.id === settlementPurchase?.id);
+    if (!purchase) return notify("Purchase invoice is no longer available");
+    const amount = Number(settlementDraft.amount);
+    if (!Number.isFinite(amount) || amount <= 0 || amount > purchase.balance + 0.005) {
+      return notify(`Enter a settlement amount up to ${formatMoney(purchase.balance)}`);
+    }
+    if (!settlementDraft.date || !settlementDraft.method.trim()) return notify("Select a payment method and date");
+    const now = new Date().toISOString();
+    const payment = {
+      id: `VND-PUR-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+      purchaseId: purchase.id,
+      vendor: purchase.supplier,
+      purpose: "Purchase settlement",
+      invoice: purchase.invoice,
+      dueAmount: amount,
+      amount,
+      debitAccount: "Accounts payable",
+      creditAccount: settlementDraft.method,
+      method: settlementDraft.method,
+      status: "Paid",
+      date: settlementDraft.date,
+      reference: settlementDraft.reference.trim() || purchase.invoice,
+      note: settlementDraft.note.trim() || `Settlement against ${purchase.id}`,
+      createdAt: now,
+      updatedAt: now,
+    };
+    setVendorPayments((current) => [payment, ...current]);
+    syncLocalStateKeyToCloud(vendorPaymentsStorageKey).catch(() => {});
+    const remaining = Math.max(0, purchase.balance - amount);
+    setSettlementPurchase(null);
+    setSettlementDraft({ amount: "", method: "Bank", date: localDateKey(), reference: "", note: "" });
+    notify(`${formatMoney(amount)} settlement recorded${remaining > 0.005 ? ` · ${formatMoney(remaining)} remains due` : " · invoice fully settled"}`);
+  };
+  const postPurchaseReturn = (event) => {
+    event.preventDefault();
+    if (!requireInventoryWritesReady()) return;
+    const supplier = purchaseReturnDraft.supplier.trim().replace(/\s+/g, " ");
+    const reference = purchaseReturnDraft.reference.trim().replace(/\s+/g, " ");
+    if (!supplier || !reference || !purchaseReturnDraft.date) {
+      notify("Supplier, original purchase invoice, and return date are required");
+      return;
+    }
+    if (!purchaseReturnDraft.lines.length || purchaseReturnDraft.lines.some((line) => !line.itemId || !String(line.quantity).trim())) {
+      notify("Select an item and enter a return quantity for every line");
+      return;
+    }
+    try {
+      const requestedByItem = new Map();
+      for (const line of purchaseReturnDraft.lines) {
+        const quantity = Number(line.quantity);
+        if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("Every return quantity must be greater than zero");
+        requestedByItem.set(line.itemId, (requestedByItem.get(line.itemId) || 0) + quantity);
+      }
+      for (const [itemId, quantity] of requestedByItem) {
+        const item = items.find((entry) => entry.id === itemId);
+        if (!item) throw new Error("A selected inventory item is no longer available");
+        if (quantity > Number(item.stock || 0)) throw new Error(`Cannot return ${formatQuantity(quantity)} ${item.unit} of ${item.name}; only ${formatQuantity(item.stock)} ${item.unit} is currently in stock`);
+      }
+      const now = new Date().toISOString();
+      const returnId = `RET-${purchaseReturnDraft.date.replaceAll("-", "")}-${Date.now().toString().slice(-6)}`;
+      const returnLines = purchaseReturnDraft.lines.map((line) => {
+        const item = items.find((entry) => entry.id === line.itemId);
+        const amounts = purchaseLineAmounts({ quantity: line.quantity, unitCost: item.price ?? calculatePriceBeforeGst(item.cost, item.gstRate), taxRate: item.gstRate || 0 });
+        return { item, ...amounts };
+      });
+      const returnTransactions = returnLines.map(({ item, ...amounts }, index) => ({
+        id: `TRN-RET-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${index}`,
+        type: "Purchase Return",
+        returnId,
+        reference,
+        supplier,
+        vendorId: vendors.find((vendor) => vendor.name.toLowerCase() === supplier.toLowerCase())?.id || "",
+        invoice: reference,
+        item: item.name,
+        itemId: item.id,
+        sku: item.sku,
+        hsnCode: item.hsnCode || "",
+        gstRate: Number(item.gstRate || 0),
+        department: item.department || "",
+        category: item.category || "",
+        subcategory: item.subcategory || "",
+        qty: `${amounts.quantity} ${item.unit}`,
+        quantity: amounts.quantity,
+        unit: item.unit,
+        unitCost: amounts.unitCost,
+        taxRate: amounts.taxRate,
+        subtotal: amounts.subtotal,
+        tax: amounts.tax,
+        total: amounts.total,
+        date: purchaseReturnDraft.date,
+        notes: purchaseReturnDraft.reason.trim(),
+        createdAt: now,
+      }));
+      const returnedByItem = new Map();
+      returnLines.forEach(({ item, quantity }) => returnedByItem.set(item.id, (returnedByItem.get(item.id) || 0) + quantity));
+      setItems((current) => current.map((item) => returnedByItem.has(item.id)
+        ? { ...item, stock: Math.max(0, Number(item.stock || 0) - returnedByItem.get(item.id)), updatedAt: now }
+        : item));
+      setTransactions((current) => [...returnTransactions, ...current]);
+      closePurchaseReturn();
+      notify(`${returnId} posted · ${returnLines.length} item${returnLines.length === 1 ? "" : "s"} returned to supplier${inventoryWritesReady ? "" : " · saved on this device; sync pending"}`);
+    } catch (error) {
+      notify(error.message || "Could not post the purchase return");
+    }
+  };
+  const updateDraft = (field, value) => {
+    const nextValue = field === "hsnCode" ? value.replace(/\D/g, "").slice(0, 8) : value;
+    setDraft((current) => {
+      if (field === "category") {
+        const suggestions = Array.from(new Set([...inventorySubcategorySuggestions(nextValue, items), ...(subcategories?.[nextValue] || []), ...categoryProfiles.filter((profile) => profile.category === nextValue).map((profile) => profile.subcategory)]));
+        return {
+          ...current,
+          category: nextValue,
+          subcategory: suggestions.includes(current.subcategory) ? current.subcategory : (suggestions[0] || ""),
+          classificationProfileId: "",
+        };
+      }
+      if (field === "price") {
+        const next = { ...current, price: nextValue };
+        const nextCost = calculateCostWithGst(nextValue, current.gstRate);
+        const sellingPrice = calculateSellingPriceFromMarkup(nextCost, current.markupPercent);
+        if (sellingPrice !== null) next.sellingPrice = sellingPrice.toFixed(2);
+        else if (nextValue === "" && current.markupPercent !== "") next.sellingPrice = "";
+        return next;
+      }
+      if (field === "sellingPrice") {
+        const nextCost = calculateCostWithGst(current.price, current.gstRate);
+        const markup = nextValue === "" ? null : calculateMarkupPercentage(nextCost, nextValue);
+        return { ...current, sellingPrice: nextValue, markupPercent: markup === null || markup < 0 ? "" : markup.toFixed(2) };
+      }
+      if (field === "markupPercent") {
+        const nextCost = calculateCostWithGst(current.price, current.gstRate);
+        const sellingPrice = calculateSellingPriceFromMarkup(nextCost, nextValue);
+        return {
+          ...current,
+          markupPercent: nextValue,
+          sellingPrice: sellingPrice === null ? (nextValue === "" ? current.sellingPrice : "") : sellingPrice.toFixed(2),
+        };
+      }
+      return {
+        ...current,
+        [field]: nextValue,
+        ...(["department", "subcategory"].includes(field) ? { classificationProfileId: "" } : {}),
+        ...(["brand", "manufacturer"].includes(field) ? { brandManufacturerProfileId: "" } : {}),
+      };
+    });
+  };
+  const updateProductGstRate = (value) => {
+    const matchingProfiles = taxProfiles.filter((profile) => Number(profile.gstRate) === Number(value));
+    const matchingHsnCodes = Array.from(new Set(matchingProfiles.map((profile) => String(profile.hsnCode || "").trim()).filter(Boolean)));
+    setDraft((current) => {
+      const next = {
+        ...current,
+        gstRate: value,
+        hsnCode: matchingHsnCodes.length === 1
+          ? matchingHsnCodes[0]
+          : matchingHsnCodes.includes(String(current.hsnCode || "")) ? current.hsnCode : "",
+      };
+      const sellingPrice = calculateSellingPriceFromMarkup(calculateCostWithGst(current.price, value), current.markupPercent);
+      if (sellingPrice !== null) next.sellingPrice = sellingPrice.toFixed(2);
+      return next;
+    });
+  };
+  const updateProductHsnCode = (value) => {
+    setDraft((current) => {
+      const matchingProfiles = taxProfiles.filter((profile) => String(profile.hsnCode) === String(value));
+      const selectedProfile = matchingProfiles.find((profile) => Number(profile.gstRate) === Number(current.gstRate))
+        || (matchingProfiles.length === 1 ? matchingProfiles[0] : null);
+      const gstRate = selectedProfile ? String(selectedProfile.gstRate) : current.gstRate;
+      const next = { ...current, hsnCode: value, gstRate };
+      const sellingPrice = calculateSellingPriceFromMarkup(calculateCostWithGst(current.price, gstRate), current.markupPercent);
+      if (sellingPrice !== null) next.sellingPrice = sellingPrice.toFixed(2);
+      return next;
+    });
+  };
+  const selectCategoryProfile = (selection) => {
+    const profileId = selection.startsWith("profile:") ? selection.slice("profile:".length) : "";
+    const profile = categoryProfiles.find((entry) => entry.id === profileId);
+    if (profile) {
+      setDraft((current) => ({
+        ...current,
+        classificationProfileId: profile.id,
+        department: profile.department,
+        category: profile.category,
+        subcategory: profile.subcategory,
+      }));
+      return;
+    }
+    const legacySubcategory = selection.startsWith("legacy:") ? selection.slice("legacy:".length) : "";
+    setDraft((current) => ({ ...current, classificationProfileId: "", subcategory: legacySubcategory }));
+  };
+  const uniqueClassificationValues = (profiles, field) => Array.from(new Map(
+    profiles.map((profile) => [String(profile[field] || "").trim().toLowerCase(), String(profile[field] || "").trim()]).filter(([key, value]) => key && value),
+  ).values());
+  const updateProductDepartment = (department) => {
+    const matches = categoryProfiles.filter((profile) => String(profile.department || "").trim().toLowerCase() === String(department || "").trim().toLowerCase());
+    setDraft((current) => {
+      if (!matches.length) return { ...current, department, classificationProfileId: "" };
+      const categoriesForDepartment = uniqueClassificationValues(matches, "category");
+      const category = categoriesForDepartment.length === 1
+        ? categoriesForDepartment[0]
+        : categoriesForDepartment.find((value) => value.toLowerCase() === String(current.category || "").trim().toLowerCase()) || "";
+      const matchingCategoryProfiles = matches.filter((profile) => String(profile.category || "").trim().toLowerCase() === category.toLowerCase());
+      const subcategoriesForPath = uniqueClassificationValues(matchingCategoryProfiles, "subcategory");
+      const subcategory = subcategoriesForPath.length === 1
+        ? subcategoriesForPath[0]
+        : subcategoriesForPath.find((value) => value.toLowerCase() === String(current.subcategory || "").trim().toLowerCase()) || "";
+      const exactProfile = matchingCategoryProfiles.find((profile) => String(profile.subcategory || "").trim().toLowerCase() === subcategory.toLowerCase());
+      return { ...current, department, category, subcategory, classificationProfileId: exactProfile?.id || "" };
+    });
+  };
+  const updateProductCategory = (category) => {
+    const categoryMatches = categoryProfiles.filter((profile) => String(profile.category || "").trim().toLowerCase() === String(category || "").trim().toLowerCase());
+    const currentDepartmentMatches = categoryMatches.filter((profile) => String(profile.department || "").trim().toLowerCase() === String(draft.department || "").trim().toLowerCase());
+    const matches = currentDepartmentMatches.length ? currentDepartmentMatches : categoryMatches;
+    const departmentsForCategory = uniqueClassificationValues(categoryMatches, "department");
+    const department = departmentsForCategory.length === 1
+      ? departmentsForCategory[0]
+      : departmentsForCategory.find((value) => value.toLowerCase() === String(draft.department || "").trim().toLowerCase()) || draft.department;
+    const subcategoriesForPath = uniqueClassificationValues(matches, "subcategory");
+    const legacySubcategories = Array.from(new Set([...inventorySubcategorySuggestions(category, items), ...(subcategories?.[category] || [])]));
+    const availableSubcategories = subcategoriesForPath.length ? subcategoriesForPath : legacySubcategories;
+    const subcategory = availableSubcategories.length === 1
+      ? availableSubcategories[0]
+      : availableSubcategories.find((value) => value.toLowerCase() === String(draft.subcategory || "").trim().toLowerCase()) || "";
+    const exactProfile = matches.find((profile) => String(profile.department || "").trim().toLowerCase() === String(department || "").trim().toLowerCase()
+      && String(profile.subcategory || "").trim().toLowerCase() === subcategory.toLowerCase());
+    setDraft((current) => ({ ...current, department, category, subcategory, classificationProfileId: exactProfile?.id || "" }));
+  };
+  const inventorySetupTypes = {
+    department: { title: "Department", field: "department", noun: "department", options: departmentOptions },
+    category: { title: "Main Category", field: "category", noun: "category", options: categories },
+    subcategory: { title: "Sub-category", field: "subcategory", noun: "sub-category", options: draftSubcategoryOptions },
+    brand: { title: "Brand", field: "brand", noun: "brand", options: brandOptions },
+    manufacturer: { title: "Manufacturer", field: "manufacturer", noun: "manufacturer", options: manufacturerOptions },
+  };
+  const openInventorySetupCreator = (type) => {
+    setInventorySetupDraft("");
+    setInventorySetupCreator(type);
+  };
+  const closeInventorySetupCreator = () => {
+    setInventorySetupCreator("");
+    setInventorySetupDraft("");
+  };
+  const createInventorySetupValue = () => {
+    if (!requireInventoryWritesReady()) return;
+    const config = inventorySetupTypes[inventorySetupCreator];
+    if (!config) return;
+    const value = inventorySetupDraft.trim().replace(/\s+/g, " ");
+    if (!value) return notify(`Enter a ${config.title.toLowerCase()} name`);
+    const existing = config.options.find((option) => String(option).toLowerCase() === value.toLowerCase());
+    const selectedValue = existing || value;
+    if (!existing) {
+      if (inventorySetupCreator === "department") setDepartments((current) => [...current, value]);
+      if (inventorySetupCreator === "category") setCategories((current) => [...current, value]);
+      if (inventorySetupCreator === "subcategory") setSubcategories((current) => ({
+        ...current,
+        [draft.category]: [...(current?.[draft.category] || []), value],
+      }));
+      if (inventorySetupCreator === "brand") setBrands((current) => [...current, value]);
+      if (inventorySetupCreator === "manufacturer") setManufacturers((current) => [...current, value]);
+    }
+    updateDraft(config.field, selectedValue);
+    notify(existing ? `${existing} is already available` : `${value} ${config.noun} created`);
+    closeInventorySetupCreator();
+  };
+  const resetVendorEditor = () => {
+    setEditingVendorId("");
+    setVendorDraft({ name: "", gstin: "", phone: "", email: "", address: "" });
+    setQuickVendorFormOpen(false);
+    setVendorCreationFormOpen(false);
+  };
+  const editVendor = (vendor) => {
+    if (!canManageAll) return notify("Only an administrator can edit vendors");
+    setEditingVendorId(vendor.id);
+    setVendorDraft({
+      name: vendor.name || "",
+      gstin: vendor.gstin || "",
+      phone: vendor.phone || "",
+      email: vendor.email || "",
+      address: vendor.address || "",
+    });
+    setQuickVendorFormOpen(false);
+    setVendorCreationFormOpen(true);
+  };
+  const createVendor = (event) => {
+    event.preventDefault();
+    if (!requireInventoryWritesReady()) return;
+    const name = vendorDraft.name.trim().replace(/\s+/g, " ");
+    const gstin = vendorDraft.gstin.trim().replace(/\s+/g, "").toUpperCase();
+    if (!name) return notify("Enter a vendor name");
+    if (gstin && !/^[0-9A-Z]{15}$/.test(gstin)) return notify("GSTIN must contain 15 letters and numbers");
+    const duplicate = vendors.find((vendor) => vendor.id !== editingVendorId && vendor.name.toLowerCase() === name.toLowerCase());
+    if (duplicate) return notify(`${duplicate.name} is already in the vendor list`);
+    const existing = editingVendorId ? vendors.find((vendor) => vendor.id === editingVendorId) : null;
+    if (editingVendorId && !existing) return notify("This vendor is no longer available. Refresh and try again.");
+    const vendor = existing ? {
+      ...existing,
+      name,
+      gstin,
+      phone: vendorDraft.phone.trim(),
+      email: vendorDraft.email.trim(),
+      address: vendorDraft.address.trim(),
+      updatedAt: new Date().toISOString(),
+    } : {
+      id: `VEN-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+      name,
+      gstin,
+      phone: vendorDraft.phone.trim(),
+      email: vendorDraft.email.trim(),
+      address: vendorDraft.address.trim(),
+      createdAt: new Date().toISOString(),
+    };
+    setVendors((current) => existing
+      ? current.map((entry) => entry.id === existing.id ? vendor : entry)
+      : [vendor, ...current]);
+    if (purchaseOpen) setPurchaseDraft((current) => ({ ...current, supplier: !existing || current.supplier === existing.name ? vendor.name : current.supplier }));
+    if (purchaseReturnOpen) setPurchaseReturnDraft((current) => ({ ...current, supplier: !existing || current.supplier === existing.name ? vendor.name : current.supplier }));
+    resetVendorEditor();
+    notify(existing ? `${vendor.name} vendor updated` : `${vendor.name} vendor created and queued for cloud sync`);
   };
   const saveItem = (event) => {
     event.preventDefault();
+    if (!requireInventoryWritesReady()) return;
     if (!draft.name.trim()) {
       notify("Enter the item name");
       return;
     }
-    if ([draft.stock, draft.reorder, draft.cost].some((value) => value === "" || Number(value) < 0)) {
-      notify("Stock, reorder level, and unit cost must be valid values");
+    const hsnCode = String(draft.hsnCode || "").trim();
+    if (hsnCode && !/^(?:\d{4}|\d{6}|\d{8})$/.test(hsnCode)) {
+      notify("HSN code must contain 4, 6, or 8 digits");
       return;
     }
-    const resolvedSku = (draft.sku.trim() || generateSku(editingId)).toUpperCase();
+    const existingItem = editingId ? items.find((item) => item.id === editingId) : null;
+    const preserveUnclassifiedGst = Boolean(existingItem && draft.gstRate === "" && (existingItem.gstRate === "" || existingItem.gstRate === null || existingItem.gstRate === undefined));
+    const gstRate = preserveUnclassifiedGst ? "" : Number(draft.gstRate);
+    const preserveExistingGst = Boolean(existingItem && [12, 28].includes(gstRate) && Number(existingItem.gstRate) === gstRate);
+    if (!preserveUnclassifiedGst && !preserveExistingGst && (draft.gstRate === "" || draft.gstRate === null || draft.gstRate === undefined || !gstRateOptions.includes(gstRate))) {
+      notify("Select a valid GST rate");
+      return;
+    }
+    const preserveUnassignedDepartment = Boolean(existingItem && !String(draft.department || "").trim() && !String(existingItem.department || "").trim());
+    if ((!String(draft.department || "").trim() && !preserveUnassignedDepartment) || !String(draft.category || "").trim()) {
+      notify("Select the department and category");
+      return;
+    }
+    const barcode = String(draft.barcode || "").trim();
+    const mrp = Number(draft.mrp);
+    const price = Number(draft.price);
+    const calculatedCost = calculateCostWithGst(draft.price, gstRate);
+    const cost = calculatedCost === null && existingItem ? Number(existingItem.cost || 0) : Number(calculatedCost);
+    const markupPercent = String(draft.markupPercent ?? "").trim() === "" ? "" : Number(draft.markupPercent);
+    if (markupPercent !== "" && (!Number.isFinite(markupPercent) || markupPercent < 0)) {
+      notify("Markup must be a valid percentage of zero or more");
+      return;
+    }
+    const sellingPrice = Number(draft.sellingPrice);
+    const wholesaleError = wholesalePriceError(draft.wholesalePrice, draft.mrp);
+    if (wholesaleError) { notify(wholesaleError); return; }
+    const wholesalePrice = String(draft.wholesalePrice ?? "").trim() === "" ? "" : Number(draft.wholesalePrice);
+    const ecommerceError = ecommercePriceError(draft.ecommercePrice, draft.mrp);
+    if (ecommerceError) { notify(ecommerceError); return; }
+    const ecommercePrice = String(draft.ecommercePrice ?? "").trim() === "" ? "" : Number(draft.ecommercePrice);
+    const reorder = Number(draft.reorder);
+    if ((!preserveUnclassifiedGst && (!Number.isFinite(price) || draft.price === "" || price < 0)) || ![mrp, cost, sellingPrice, reorder].every(Number.isFinite) || mrp < 0 || cost < 0 || sellingPrice < 0 || reorder < 0) {
+      notify("Price, MRP, selling price, and reorder level must be zero or more");
+      return;
+    }
+    if (sellingPrice > mrp) {
+      notify("Selling price cannot be greater than MRP");
+      return;
+    }
+    const eanMrpOptions = [];
+    for (const option of draft.eanMrpOptions || []) {
+      const optionBarcode = String(option.barcode || "").trim();
+      const optionMrp = String(option.mrp ?? "").trim();
+      if (!optionBarcode && !optionMrp) continue;
+      if (!optionBarcode || optionMrp === "") {
+        notify("Enter both an EAN code and MRP for every additional batch");
+        return;
+      }
+      const numericMrp = Number(optionMrp);
+      if (!Number.isFinite(numericMrp) || numericMrp < 0) {
+        notify("Additional MRP values must be zero or more");
+        return;
+      }
+      eanMrpOptions.push({ id: option.id || crypto.randomUUID(), barcode: optionBarcode, mrp: numericMrp });
+    }
+    if (barcode && items.some((item) => item.id !== editingId && !item.parentProductId && String(item.barcode || "").trim().toLowerCase() === barcode.toLowerCase())) {
+      notify(`EAN ${barcode} belongs to another product. Edit that product and add this as an EAN/MRP batch if it is the same item.`);
+      return;
+    }
+    const resolvedSku = editingId ? String(existingItem?.sku || draft.sku || generateSku(editingId)).trim().toUpperCase() : generateSku();
     if (!editingId && !/^\d+$/.test(resolvedSku)) {
       notify("SKU number must contain digits only");
       return;
@@ -5739,28 +7694,160 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
     }
     const nextItem = {
       ...draft,
+      classificationProfileId: undefined,
       id: editingId || `INV-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
       name: draft.name.trim(),
       sku: resolvedSku,
-      stock: Number(draft.stock),
-      reorder: Number(draft.reorder),
-      cost: Number(draft.cost),
+      barcode,
+      eanMrpOptions,
+      hsnCode,
+      gstRate,
+      department: String(draft.department || "").trim(),
+      category: String(draft.category || "").trim(),
+      subcategory: String(draft.subcategory || "").trim(),
+      brand: String(draft.brand || "").trim(),
+      manufacturer: String(draft.manufacturer || "").trim(),
+      brandManufacturerProfileId: selectedBrandManufacturerProfile?.id || "",
+      preferredVendor: String(draft.preferredVendor || "").trim(),
+      stock: Number(existingItem?.stock ?? 0),
+      reorder,
+      price: preserveUnclassifiedGst ? "" : price,
+      mrp,
+      cost,
+      markupPercent,
+      sellingPrice,
+      wholesalePrice,
+      ecommercePrice,
       updatedAt: new Date().toISOString(),
     };
-    setItems((current) => editingId ? current.map((item) => item.id === editingId ? nextItem : item) : [nextItem, ...current]);
+    setItems((current) => editingId
+      ? current.map((item) => {
+        if (item.id === editingId) return nextItem;
+        if (item.parentProductId === editingId && !nextItem.parentProductId) {
+          return { ...item, parentProductName: nextItem.name, name: `${nextItem.name} - ${item.variantLabel}`, barcode: nextItem.barcode, reorder: nextItem.reorder, price: nextItem.price, mrp: nextItem.mrp, cost: nextItem.cost, markupPercent: nextItem.markupPercent, sellingPrice: nextItem.sellingPrice, wholesalePrice: nextItem.wholesalePrice, ecommercePrice: nextItem.ecommercePrice, updatedAt: nextItem.updatedAt };
+        }
+        return item;
+      })
+      : [nextItem, ...current]);
+    const addMasterOption = (setter, value) => {
+      if (!value) return;
+      setter((current) => current.some((entry) => String(entry).toLowerCase() === value.toLowerCase()) ? current : [...current, value]);
+    };
+    addMasterOption(setDepartments, nextItem.department);
+    addMasterOption(setCategories, nextItem.category);
+    addMasterOption(setBrands, nextItem.brand);
+    addMasterOption(setManufacturers, nextItem.manufacturer);
+    if (nextItem.subcategory) setSubcategories((current) => ({
+      ...current,
+      [nextItem.category]: (current?.[nextItem.category] || []).some((entry) => String(entry).toLowerCase() === nextItem.subcategory.toLowerCase())
+        ? current[nextItem.category]
+        : [...(current?.[nextItem.category] || []), nextItem.subcategory],
+    }));
     closeEditor();
+    if (!editingId && canManageAll) {
+      setEditingVariantId("");
+      setVariantDraft({ parentProductId: nextItem.id, label: "", sku: "", stock: "" });
+      notify("Product created. Cost includes GST. Add batches from Product batch when needed.");
+      return;
+    }
+    notify("Product changes saved and queued for cloud sync");
+  };
+  const saveVariant = (event) => {
+    event.preventDefault();
+    if (!requireInventoryWritesReady()) return;
+    if (!canManageAll) return notify("You do not have permission to manage product batches");
+    const parent = variantParentProducts.find((item) => item.id === variantDraft.parentProductId);
+    if (!parent) return notify("Select a parent product");
+    const existingVariant = editingVariantId ? items.find((item) => item.id === editingVariantId) : null;
+    const label = existingVariant?.parentProductId === parent.id && existingVariant.variantLabel
+      ? existingVariant.variantLabel
+      : generateBatchLabel(parent.id, editingVariantId);
+    const stock = Number(variantDraft.stock);
+    if (!Number.isFinite(stock) || stock < 0) return notify("Stock must be zero or more");
+    const name = `${parent.name} - ${label}`;
+    let sku = variantDraft.sku.trim();
+    if (!sku) sku = generateSku();
+    if (!/^\d+$/.test(sku)) return notify("Batch SKU must contain digits only");
+    if (items.some((item) => item.id !== editingVariantId && (item.sku === sku || (/^\d+$/.test(String(item.sku || "")) && Number(item.sku) === Number(sku))))) return notify(`SKU ${sku} is already in use`);
+    const productFields = getMasterProductFields(parent);
+    const now = new Date().toISOString();
+    const variant = {
+      ...existingVariant,
+      id: editingVariantId || `INV-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+      name,
+      sku,
+      barcode: productFields.barcode,
+      hsnCode: parent.hsnCode || "",
+      gstRate: parent.gstRate ?? "",
+      department: parent.department || "",
+      category: parent.category || "",
+      subcategory: parent.subcategory || "",
+      brand: parent.brand || "",
+      manufacturer: parent.manufacturer || "",
+      preferredVendor: parent.preferredVendor || "",
+      stock,
+      unit: parent.unit || "pcs",
+      reorder: Number(productFields.reorder || 0),
+      price: productFields.price === "" ? "" : Number(productFields.price || 0),
+      mrp: productFields.mrp === "" ? "" : Number(productFields.mrp || 0),
+      cost: Number(productFields.cost || 0),
+      sellingPrice: productFields.sellingPrice === "" ? "" : Number(productFields.sellingPrice || 0),
+      parentProductId: parent.id,
+      parentProductName: parent.name,
+      variantLabel: label,
+      updatedAt: now,
+    };
+    setItems((current) => editingVariantId ? current.map((item) => item.id === editingVariantId ? variant : item) : [variant, ...current]);
+    setQuery("");
+    setBatchStockFilter("All batches");
+    setVariantEditorOpen(false);
+    setEditingVariantId("");
+    setVariantDraft({ parentProductId: parent.id, label: "", sku: "", stock: "" });
+    notify(`${label} ${editingVariantId ? "updated" : "created"} for ${parent.name} and is now visible in Batches`);
+  };
+  const openVariantEdit = (item) => {
+    setEditingVariantId(item.id);
+    setVariantDraft({
+      parentProductId: item.parentProductId || "",
+      label: item.variantLabel || "",
+      sku: String(item.sku || ""),
+      stock: String(item.stock ?? 0),
+    });
+    setVariantEditorOpen(true);
+    closeEditor();
+    onViewChange?.("variants");
   };
   const deleteItem = (item) => {
+    if (!requireInventoryWritesReady()) return;
+    if (items.some((entry) => entry.parentProductId === item.id)) {
+      notify(`Remove the product batches linked to ${item.name} before deleting the parent product`);
+      return;
+    }
     if (!window.confirm(`Delete ${item.name} from inventory?`)) return;
     setItems((current) => current.filter((entry) => entry.id !== item.id));
     if (editingId === item.id) closeEditor();
-    notify(`${item.name} deleted`);
+    if (editingVariantId === item.id) setEditingVariantId("");
+    notify(`${item.name} deleted${inventoryWritesReady ? "" : " · saved on this device; sync pending"}`);
   };
   const exportCsv = () => {
+    if (activeView === "variants") {
+      const columns = ["Product", "Batch", "SKU", "EAN / MRP batches", "Current stock", "Unit", "GST rate", "Status"];
+      downloadCsv(`uvpro-product-batches-${new Date().toISOString().slice(0, 10)}.csv`, columns, visibleProductVariants.map((item) => {
+        const parent = variantParentProducts.find((entry) => entry.id === item.parentProductId);
+        return { Product: parent?.name || item.parentProductName || "Parent product removed", Batch: item.variantLabel || item.name, SKU: item.sku, "EAN / MRP batches": getProductEanMrpSummary(parent || item), "Current stock": item.stock, Unit: item.unit, "GST rate": parent?.gstRate ?? item.gstRate ?? "", Status: Number(item.stock || 0) > 0 ? "In stock" : "Out of stock" };
+      }));
+      notify("Product batches exported as CSV");
+      return;
+    }
     const escapeCell = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
     const rows = [
-      ["Item", "SKU", "Category", "Stock", "Unit", "Reorder level", "Unit cost", "Status"],
-      ...items.map((item) => [item.name, item.sku, item.category, item.stock, item.unit, item.reorder, item.cost, getStatus(item)]),
+      ["Item", "Parent product", "Batch", "SKU", "Barcode", "Additional EAN/MRP batches", "HSN code", "GST rate", "Department", "Category", "Sub-category", "Stock", "Unit", "Reorder level", "Price", "Cost including GST", "MRP", "Selling price", "Wholesale price", "E-commerce price", "Margin amount", "Margin %", "Markup %", "Status"],
+      ...items.map((item) => {
+        const margin = calculateVariantMargin(item.cost, item.sellingPrice);
+        const productFields = item.parentProductId ? getMasterProductFields(items.find((entry) => entry.id === item.parentProductId) || item) : getMasterProductFields(item);
+        const markup = productFields.markupPercent === "" ? calculateMarkupPercentage(productFields.cost, productFields.sellingPrice) : Number(productFields.markupPercent);
+        return [item.name, item.parentProductId ? items.find((entry) => entry.id === item.parentProductId)?.name || item.parentProductName || "" : "", item.variantLabel || "", item.sku, productFields.barcode || "", (item.eanMrpOptions || []).map((option) => `${option.barcode} / ₹${option.mrp}`).join("; "), item.hsnCode || "", item.gstRate ?? "", item.department || "", item.category, item.subcategory || "", item.stock, item.unit, productFields.reorder, productFields.price ?? "", productFields.cost, productFields.mrp ?? "", productFields.sellingPrice ?? "", productFields.wholesalePrice ?? "", productFields.ecommercePrice ?? "", margin.amount ?? "", margin.percentage === null ? "" : margin.percentage.toFixed(2), markup === null ? "" : markup.toFixed(2), getStatus(item)];
+      }),
     ];
     const blob = new Blob([rows.map((row) => row.map(escapeCell).join(",")).join("\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -5772,48 +7859,418 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
     notify("Inventory exported as CSV");
   };
 
+  const openPurchaseEntryFromOrder = (order) => {
+    pendingPurchaseOrderEntry.current = order;
+    onViewChange?.("purchase");
+  };
+
+  if (activeView === "purchase-order") return <PurchaseOrdersWorkspace
+    orders={purchaseOrders}
+    setOrders={setPurchaseOrders}
+    vendors={vendors}
+    items={items}
+    canManage={canManageAll && inventoryWritesReady}
+    notify={notify}
+    formatMoney={formatPreciseMoney}
+    today={localDateKey()}
+    onCreatePurchase={openPurchaseEntryFromOrder}
+    getLastPurchaseCost={getLastPurchaseCost}
+  />;
+
+  if (activeView === "vendor-settlements") return <VendorSettlementsView purchases={purchaseHistory} payments={vendorPayments} formatMoney={formatPreciseMoney} onOpenPurchase={() => onViewChange?.("purchase")} />;
+
+  if (["category-setup", "tax-setup", "brand-setup"].includes(activeView)) return <InventoryCategorySetup
+    profiles={categoryProfiles}
+    setProfiles={setCategoryProfiles}
+    departments={departmentOptions}
+    setDepartments={setDepartments}
+    categories={categories}
+    setCategories={setCategories}
+    subcategories={subcategories}
+    setSubcategories={setSubcategories}
+    taxProfiles={taxProfiles}
+    setTaxProfiles={setTaxProfiles}
+    gstRates={gstRateOptions}
+    brands={brandOptions}
+    setBrands={setBrands}
+    manufacturers={manufacturerOptions}
+    setManufacturers={setManufacturers}
+    brandManufacturerProfiles={brandManufacturerProfiles}
+    setBrandManufacturerProfiles={setBrandManufacturerProfiles}
+    canSave={canManageAll && inventoryWritesReady}
+    notify={notify}
+    initialSection={activeView === "tax-setup" ? "tax" : activeView === "brand-setup" ? "identity" : "category"}
+  />;
+
   return (
-    <section className="screen inventory-screen">
+    <section className={`screen inventory-screen${activeView === "variants" ? " inventory-batch-screen" : ""}`}>
       <div className="inventory-page-head">
         <div className="inventory-title-block">
           <span className="inventory-title-icon"><Boxes size={24} /></span>
-          <div><span>Stock control</span><h2>Inventory management</h2><p>Monitor stock levels, reorder points, and inventory value for this branch.</p></div>
+          <div><span>{activeView === "vendors" ? "Purchase setup" : activeView === "variants" ? "Inventory / Stock management" : activeView === "create" ? "Inventory setup" : "Stock control"}</span><h2>{activeView === "vendors" ? "Vendor management" : activeView === "variants" ? "Product batches" : activeView === "create" ? "Product Master" : "Inventory management"}</h2><p>{activeView === "vendors" ? "Create and maintain supplier details for purchase entries and returns." : activeView === "variants" ? "Every batch, its product, and available stock — in one place." : activeView === "create" ? "Create parent products and review every product already created." : "Monitor stock levels, reorder points, and inventory value for this branch."}</p></div>
         </div>
-        <div className="inventory-head-actions">
+        {activeView === "vendors" ? <div className="inventory-head-actions">
+          <button className={vendorCreationFormOpen ? "" : "primary"} type="button" onClick={() => { if (vendorCreationFormOpen) resetVendorEditor(); else { setEditingVendorId(""); setVendorDraft({ name: "", gstin: "", phone: "", email: "", address: "" }); setVendorCreationFormOpen(true); } }}>{vendorCreationFormOpen ? "Back to vendors" : <><Plus size={18} /> Add vendor</>}</button>
+        </div> : <div className="inventory-head-actions">
           <button type="button" onClick={exportCsv}><Download size={17} /> Export CSV</button>
-          {canManageAll && <button className="primary" type="button" onClick={openCreate}><Plus size={18} /> Add inventory item</button>}
-        </div>
+          {canManageAll && (activeView === "variants" ? <button className="primary" type="button" onClick={() => openNewVariant()}><Plus size={18} /> Add product batch</button> : activeView === "purchase" ? <button className="primary" type="button" onClick={openPurchase}><Plus size={18} /> Add purchase entry</button> : <button type="button" onClick={() => activeView === "create" ? openCreate() : onViewChange ? onViewChange("create", true) : openCreate()} disabled={activeView === "create" && editorOpen}><Plus size={18} /> {activeView === "create" ? "New product" : "Product Master"}</button>)}
+        </div>}
       </div>
 
-      <div className="inventory-metrics">
+      {activeView === "variants" ? <div className="inventory-metrics batch-metrics">
+        <article><span className="inventory-metric-icon"><Boxes size={21} /></span><div><small>Total batches</small><strong>{allProductBatches.length}</strong><em>{batchesInStock} stock-tracked with available stock</em></div></article>
+        <article><span className="inventory-metric-icon"><PackageSearch size={21} /></span><div><small>Linked products</small><strong>{batchProductCount}</strong><em>Products with batches</em></div></article>
+        <article className={productVariants.length > batchesInStock ? "watch" : ""}><span className="inventory-metric-icon"><AlertTriangle size={21} /></span><div><small>Out of stock</small><strong>{productVariants.length - batchesInStock}</strong><em>Stock-tracked batches with no stock</em></div></article>
+        <article className="batch-value-metric"><span className="inventory-metric-icon"><BadgeIndianRupee size={21} /></span><div><small>Batch stock value</small><strong>{formatMoney(batchStockValue)}</strong><em>At Product Master cost</em></div></article>
+      </div> : activeView !== "vendors" && <div className="inventory-metrics">
         <article><span className="inventory-metric-icon"><PackageSearch size={21} /></span><div><small>Total items</small><strong>{items.length}</strong><em>Tracked materials</em></div></article>
         <article className="danger"><span className="inventory-metric-icon"><AlertTriangle size={21} /></span><div><small>Low stock</small><strong>{lowCount}</strong><em>Requires attention</em></div></article>
         <article className="watch"><span className="inventory-metric-icon"><Gauge size={21} /></span><div><small>Watch list</small><strong>{watchCount}</strong><em>Near reorder level</em></div></article>
         <article><span className="inventory-metric-icon"><BadgeIndianRupee size={21} /></span><div><small>Stock value</small><strong>{formatMoney(inventoryValue)}</strong><em>{healthyCount} healthy items</em></div></article>
-      </div>
+      </div>}
 
       <div className="panel inventory-workspace">
-        {editorOpen && (
-          <form className="inventory-editor" onSubmit={saveItem}>
+        {activeView === "variants" && <>
+          <div className="batch-list-heading">
+            <div><h3>Created product batches <span className="batch-count">{allProductBatches.length}</span></h3><p>EAN/MRP batches and stock-tracked batches linked to Product Master.</p></div>
+            <span className="batch-list-note"><Boxes size={16} /> Linked to Product Master</span>
+          </div>
+          <div className="inventory-toolbar batch-toolbar">
+            <div className="inventory-search"><Search size={18} /><input aria-label="Search product batches" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search product, batch, SKU or barcode…" />{query && <button type="button" className="batch-clear-search" aria-label="Clear batch search" onClick={() => setQuery("")}><X size={15} /></button>}</div>
+            <div className="inventory-filter batch-stock-filter" role="group" aria-label="Filter batches by stock">{["All batches", "In stock", "Out of stock"].map((value) => <button type="button" key={value} className={batchStockFilter === value ? "active" : ""} aria-pressed={batchStockFilter === value} onClick={() => setBatchStockFilter(value)}>{value}</button>)}</div>
+          </div>
+          <div className="inventory-table-wrap variant-list-wrap">
+            <table className="inventory-table variant-list-table" aria-label="Created product batches">
+              <thead><tr><th scope="col">Product</th><th scope="col">Batch details</th><th scope="col">Current stock</th><th scope="col">GST</th><th scope="col">Availability</th><th scope="col">Actions</th></tr></thead>
+              <tbody>
+                {visibleProductBatches.map((item) => {
+                  const parent = items.find((entry) => entry.id === item.parentProductId);
+                  const productName = parent?.name || item.parentProductName || "Parent product removed";
+                  const inStock = Number(item.stock || 0) > 0;
+                  const gstRate = parent?.gstRate ?? item.gstRate;
+                  const eanMrpSummary = item.productEanMrpBatch
+                    ? `${item.barcode || "EAN not set"} · ${item.batchMrp === "" || item.batchMrp === null || item.batchMrp === undefined ? "MRP not set" : `MRP ${formatMoney(Number(item.batchMrp))}`}`
+                    : getProductEanMrpSummary(parent || item);
+                  return <tr key={item.id}>
+                    <td data-label="Product"><div className="inventory-item-cell batch-product-cell"><span aria-hidden="true">{productName.charAt(0).toUpperCase()}</span><div><strong>{productName}</strong><small>{[parent?.category || item.category, parent?.subcategory || item.subcategory].filter(Boolean).join(" / ") || "Uncategorized"}</small></div></div></td>
+                    <td data-label="Batch details"><div className="batch-identity"><strong>{item.variantLabel || item.name}</strong><small>SKU {item.sku || "—"}</small><small className="batch-ean-mrp-summary">{eanMrpSummary}</small></div></td>
+                    <td data-label="Current stock">{item.productEanMrpBatch ? <span className="batch-tax">Not tracked</span> : <div className="batch-quantity"><strong>{formatQuantity(item.stock)}</strong><span>{item.unit}</span></div>}</td>
+                    <td data-label="GST"><span className="batch-tax">{gstRate === "" || gstRate === null || gstRate === undefined ? "—" : `${Number(gstRate)}%`}</span></td>
+                    <td data-label="Availability"><span className={`batch-availability${inStock || item.productEanMrpBatch ? "" : " is-empty"}`}><span aria-hidden="true" />{item.productEanMrpBatch ? "Configured" : inStock ? "In stock" : "Out of stock"}</span></td>
+                    <td data-label="Actions"><div className="inventory-row-actions">{item.productEanMrpBatch ? <button type="button" onClick={() => parent && openEdit(parent)} title={`Edit ${productName} in Product Master`} aria-label={`Edit ${productName} in Product Master`}><Pencil size={16} /></button> : <><button type="button" onClick={() => openVariantEdit(item)} title={`Edit ${item.name}`} aria-label={`Edit ${item.name}`}><Pencil size={16} /></button><button className="delete" type="button" onClick={() => deleteItem(item)} title={`Remove ${item.name}`} aria-label={`Remove ${item.name}`}><Trash2 size={16} /></button></>}</div></td>
+                  </tr>;
+                })}
+                {!visibleProductBatches.length && <tr><td className="inventory-empty" colSpan="6"><PackageSearch size={30} /><strong>{allProductBatches.length ? "No matching batches" : "Your batches will appear here"}</strong><span>{allProductBatches.length ? "Try another search or choose a different stock filter." : "Add an EAN/MRP batch in Product Master or add a stock-tracked batch here."}</span>{allProductBatches.length > 0 && <button type="button" className="batch-reset-filters" onClick={() => { setQuery(""); setBatchStockFilter("All batches"); }}>Clear filters</button>}</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          <div className="batch-list-footer"><span role="status">Showing <strong>{visibleProductBatches.length}</strong> of <strong>{allProductBatches.length}</strong> batches</span><span>EAN/MRP values are managed in Product Master; stock filters apply to stock-tracked batches.</span></div>
+          {variantEditorOpen && <div className="shift-modal-backdrop inventory-product-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeVariantEditor(); }}>
+            <form className="shift-modal inventory-editor inventory-product-modal variant-product-modal" onSubmit={saveVariant} role="dialog" aria-modal="true" aria-label={editingVariantId ? "Edit product batch" : "Add product batch"} onKeyDown={(event) => { if (event.key === "Escape") closeVariantEditor(); }}>
+              <div className="inventory-editor-head inventory-product-header">
+                <div className="inventory-product-heading"><div className="inventory-product-heading-icon" aria-hidden="true"><Boxes size={23} /></div><div><span>Inventory / Product batches</span><h3>{editingVariantId ? "Edit product batch" : "Add product batch"}</h3><p className="inventory-product-description">Choose a product and record its batch stock.</p></div></div>
+                <button type="button" className="icon-button" onClick={closeVariantEditor} title="Close product batch form" aria-label="Close product batch form"><X size={18} /></button>
+              </div>
+              <div className="inventory-product-body">
+              <div className="inventory-form-grid variant-form-grid">
+                <label className="batch-parent-field"><span>Parent product</span><select autoFocus value={variantDraft.parentProductId} onChange={(event) => setVariantDraft((current) => ({ ...current, parentProductId: event.target.value, sku: "" }))} required><option value="">Select parent product</option>{variantParentProducts.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.sku}</option>)}</select><small>Choose an existing product from Product Master.</small></label>
+                <label><span>Batch SKU</span><input value={variantDraft.sku} inputMode="numeric" pattern="[0-9]*" maxLength="6" onChange={(event) => setVariantDraft((current) => ({ ...current, sku: event.target.value.replace(/\D/g, "") }))} placeholder="Auto-generated if blank" /></label>
+                <label><span>Unit</span><input value={selectedVariantParent?.unit || "Select a parent product"} readOnly /></label>
+                <label><span>Current stock</span><input type="number" min="0" step="0.001" value={variantDraft.stock} onChange={(event) => setVariantDraft((current) => ({ ...current, stock: event.target.value }))} required /></label>
+              </div>
+              <p className="batch-inheritance-note"><Boxes size={18} /><span><strong>EAN / MRP batches:</strong> {selectedVariantParent ? getProductEanMrpSummary(selectedVariantParent) : "Select a product to view its saved batches."}<br />EANs, MRPs, prices, and reorder level are inherited from Product Master. Only stock is recorded here.</span></p>
+              {!inventoryWritesReady && <p className="inventory-local-save-note">Cloud inventory is loading. Saving is enabled after synchronization completes.</p>}
+              </div>
+              <div className="inventory-product-footer"><div className="inventory-editor-actions"><button type="button" onClick={closeVariantEditor}>Cancel</button><button className="primary" type="submit" disabled={!inventoryWritesReady}>{editingVariantId ? <Save size={17} /> : <Plus size={17} />} {inventoryWritesReady ? (editingVariantId ? "Save changes" : "Add batch") : "Waiting for cloud sync"}</button></div></div>
+            </form>
+          </div>}
+        </>}
+        {((activeView === "vendors" && vendorCreationFormOpen) || quickVendorFormOpen) && (
+          <VendorFormSurface modal={quickVendorFormOpen} onClose={resetVendorEditor}>
+          <form className={activeView === "vendors" ? "inventory-editor vendor-editor" : "inventory-editor vendor-editor vendor-editor-quick"} onSubmit={createVendor}>
             <div className="inventory-editor-head">
-              <div><span>{editingId ? "Update stock record" : "New stock record"}</span><h3>{editingId ? `Edit ${draft.name}` : "Add inventory item"}</h3></div>
-              <button type="button" className="icon-button" onClick={closeEditor} title="Close editor" aria-label="Close editor"><X size={18} /></button>
+              <div><span>{editingVendorId ? "Vendor master" : activeView === "vendors" ? "Purchase setup" : "Quick add"}</span><h3>{editingVendorId ? "Edit vendor" : activeView === "vendors" ? "Vendor creation" : "Create vendor"}</h3><p>{editingVendorId ? "Update the supplier details used in new purchase entries and returns." : "Save supplier details once, then select the vendor in purchase entries and returns."}</p></div>
+              {activeView !== "vendors" && <button type="button" className="icon-button" onClick={resetVendorEditor} title="Close vendor form" aria-label="Close vendor form"><X size={18} /></button>}
             </div>
-            <div className="inventory-form-grid">
-              <label><span>Item name</span><input value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} placeholder="e.g. Basmati Rice" autoFocus /></label>
-               <label><span>SKU number</span><input value={draft.sku} onChange={(event) => updateDraft("sku", event.target.value)} inputMode="numeric" pattern="[0-9]*" maxLength="6" placeholder="Auto-generated number" /></label>
-              <div className="inventory-category-field"><div className="inventory-category-head"><span>Category</span><button className="inventory-add-category" type="button" onClick={() => setCategoryCreatorOpen((open) => !open)} aria-expanded={categoryCreatorOpen}><Plus size={14} /> New category</button></div><select value={draft.category} onChange={(event) => updateDraft("category", event.target.value)}>{categories.map((categoryName) => <option key={categoryName}>{categoryName}</option>)}</select>{categoryCreatorOpen && <div className="inventory-inline-category"><input value={categoryDraft} onChange={(event) => setCategoryDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); createCategory(); } }} placeholder="New category name" autoFocus /><button type="button" onClick={createCategory}><Save size={15} /> Add</button><button type="button" className="cancel" onClick={() => { setCategoryCreatorOpen(false); setCategoryDraft(""); }} title="Cancel category" aria-label="Cancel category"><X size={15} /></button></div>}</div>
-              <label><span>Unit</span><select value={draft.unit} onChange={(event) => updateDraft("unit", event.target.value)}><option>kg</option><option>g</option><option>ltr</option><option>ml</option><option>pcs</option><option>cyl</option><option>box</option><option>pack</option></select></label>
-              <label><span>Current stock</span><input type="number" min="0" step="0.01" value={draft.stock} onChange={(event) => updateDraft("stock", event.target.value)} placeholder="0" /></label>
-              <label><span>Reorder level</span><input type="number" min="0" step="0.01" value={draft.reorder} onChange={(event) => updateDraft("reorder", event.target.value)} placeholder="0" /></label>
-              <label><span>Unit cost</span><div className="inventory-money-input"><span>₹</span><input type="number" min="0" step="0.01" value={draft.cost} onChange={(event) => updateDraft("cost", event.target.value)} placeholder="0.00" /></div></label>
+            <div className="purchase-meta-grid">
+              <label><span>Vendor name</span><input autoFocus={activeView === "vendors" || quickVendorFormOpen} value={vendorDraft.name} onChange={(event) => setVendorDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Vendor or supplier name" required /></label>
+              <label><span>GSTIN (optional)</span><input value={vendorDraft.gstin} onChange={(event) => setVendorDraft((current) => ({ ...current, gstin: event.target.value.replace(/\s+/g, "").toUpperCase().slice(0, 15) }))} placeholder="15-character GSTIN" maxLength="15" /></label>
+              <label><span>Phone</span><input type="tel" value={vendorDraft.phone} onChange={(event) => setVendorDraft((current) => ({ ...current, phone: event.target.value }))} placeholder="Contact number" /></label>
+              <label><span>Email</span><input type="email" value={vendorDraft.email} onChange={(event) => setVendorDraft((current) => ({ ...current, email: event.target.value }))} placeholder="vendor@example.com" /></label>
+              <label><span>Address</span><input value={vendorDraft.address} onChange={(event) => setVendorDraft((current) => ({ ...current, address: event.target.value }))} placeholder="Business address" /></label>
             </div>
-            <div className="inventory-editor-actions"><button type="button" onClick={closeEditor}>Cancel</button><button className="primary" type="submit"><Save size={17} /> {editingId ? "Save changes" : "Save item"}</button></div>
+            {!inventoryWritesReady && <p className="inventory-local-save-note">Cloud inventory is loading. Saving is enabled after synchronization completes.</p>}
+            <div className="inventory-editor-actions">{(activeView !== "vendors" || vendorCreationFormOpen) && <button type="button" onClick={resetVendorEditor}>Cancel</button>}<button className="primary" type="submit" disabled={!inventoryWritesReady}><Save size={17} /> {inventoryWritesReady ? (editingVendorId ? "Save changes" : "Save vendor") : "Waiting for cloud sync"}</button></div>
+          </form>
+          </VendorFormSurface>
+        )}
+        {activeView === "vendors" && !vendorCreationFormOpen && <div className="inventory-table-wrap vendor-list-wrap">
+          <table className="inventory-table vendor-list-table">
+            <thead><tr><th>Vendor</th><th>GSTIN</th><th>Phone</th><th>Email</th><th>Address</th><th>Actions</th></tr></thead>
+            <tbody>
+              {vendors.map((vendor) => <tr key={vendor.id}><td><strong>{vendor.name}</strong></td><td>{vendor.gstin || "-"}</td><td>{vendor.phone || "-"}</td><td>{vendor.email || "-"}</td><td>{vendor.address || "-"}</td><td><div className="inventory-row-actions"><button type="button" onClick={() => editVendor(vendor)} title={`Edit ${vendor.name}`} aria-label={`Edit ${vendor.name}`}><Pencil size={16} /></button></div></td></tr>)}
+              {!vendors.length && <tr><td className="purchase-history-empty" colSpan="6">No vendors yet. Add a vendor above before posting a purchase.</td></tr>}
+            </tbody>
+          </table>
+        </div>}
+        {purchaseOpen && <div className="purchase-entry-modal-backdrop" role="presentation">
+          <form className="inventory-editor purchase-editor purchase-entry-modal" role="dialog" aria-modal="true" aria-labelledby="purchase-entry-dialog-title" onSubmit={editingPostedPurchaseId ? savePostedPurchase : savePurchaseDraft} onKeyDown={handlePurchaseArrowNavigation}>
+            <div className="inventory-editor-head">
+              <div><span>{editingPostedPurchaseId ? "Approved purchase" : editingPurchaseDraftId ? "Purchase draft" : "Goods receipt"}</span><h3 id="purchase-entry-dialog-title">{editingPostedPurchaseId ? `Edit ${editingPostedPurchaseId}` : editingPurchaseDraftId ? "Review purchase draft" : "New purchase entry"}</h3><p>Drafts and submissions do not change stock. Approval posts the purchase to inventory.</p></div>
+              <button type="button" className="icon-button" onClick={closePurchase} title="Close purchase entry" aria-label="Close purchase entry"><X size={18} /></button>
+            </div>
+            {!inventoryWritesReady && <p className="inventory-local-save-note">Cloud inventory is loading. Saving and submission are enabled after synchronization completes.</p>}
+            <div className="purchase-meta-grid">
+              <label className="purchase-order-link-field"><span>Purchase order</span><select aria-label="Purchase order" value={purchaseDraft.purchaseOrderId || ""} onChange={(event) => loadPurchaseOrderIntoEntry(event.target.value)} disabled={Boolean(editingPostedPurchaseId)}><option value="">Without purchase order</option>{receivablePurchaseOrders.map((order) => <option key={order.id} value={order.id}>{order.poNumber} · {order.vendor} · {order.itemCount || order.lines?.length || 0} items</option>)}</select><small>{purchaseDraft.purchaseOrderNumber ? `${purchaseDraft.purchaseOrderNumber} linked; all PO products are loaded below.` : "Select an open PO to load all its products."}</small></label>
+              <label><div className="inventory-category-head"><span>Vendor</span><button className="inventory-add-category" type="button" onClick={() => { setEditingVendorId(""); setVendorDraft({ name: "", gstin: "", phone: "", email: "", address: "" }); setQuickVendorFormOpen(true); }}><Plus size={13} /> New vendor</button></div><select autoFocus value={purchaseDraft.supplier} onChange={(event) => setPurchaseDraft((current) => ({ ...current, supplier: event.target.value }))} required><option value="">Select a vendor</option>{vendors.map((vendor) => <option key={vendor.id} value={vendor.name}>{vendor.name}</option>)}</select></label>
+              <label><span>Supplier invoice number *</span><input aria-label="Supplier invoice number" value={purchaseDraft.invoice} onChange={(event) => setPurchaseDraft((current) => ({ ...current, invoice: event.target.value }))} placeholder="e.g. INV-1042" required /></label>
+              <label><span>Purchase date</span><input type="date" value={purchaseDraft.date} onChange={(event) => setPurchaseDraft((current) => ({ ...current, date: event.target.value }))} /></label>
+              <label><span>Notes</span><input value={purchaseDraft.notes} onChange={(event) => setPurchaseDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Optional delivery note" /></label>
+            </div>
+            <div className="purchase-lines-head">
+              <div><strong>Purchased items</strong><span>Select an existing material or create it directly from this invoice.</span></div>
+              <button type="button" onClick={addPurchaseLine}><Plus size={16} /> Add line</button>
+            </div>
+            <div className="purchase-lines" onKeyDown={handlePurchaseLineKeyDown}>
+              {purchaseDraft.lines.map((line, index) => {
+                const selectedItem = items.find((item) => item.id === line.itemId);
+                const amounts = purchaseLineAmounts(line);
+                const lastPurchaseCost = getLastPurchaseCost(selectedItem);
+                const lineSubcategoryOptions = inventorySubcategorySuggestions(line.category, items);
+                return <article className="purchase-line-card" data-purchase-line-id={line.id} key={line.id}>
+                  <div className="purchase-line-number">{index + 1}</div>
+                  <div className="purchase-line-grid">
+                    <div className="purchase-item-picker"><PurchaseItemPicker items={items} value={line.itemId} batchKey={line.batchKey} lineNumber={index + 1} inputRef={(element) => { if (element) purchaseLineItemRefs.current.set(line.id, element); else purchaseLineItemRefs.current.delete(line.id); }} onSelect={(itemId, batch) => selectPurchaseItem(line.id, itemId, batch)} />{selectedItem && <small>SKU {selectedItem.sku} · On hand {formatQuantity(selectedItem.stock)} {selectedItem.unit}{line.batchLabel ? ` · ${line.batchLabel}` : ""}{line.batchBarcode ? ` · EAN ${line.batchBarcode}` : ""}{line.batchMrp !== "" && line.batchMrp != null ? ` · MRP ${formatMoney(Number(line.batchMrp))}` : ""}</small>}</div>
+                    <label><span>Quantity</span><input type="number" min="0.001" step="0.001" value={line.quantity} onChange={(event) => updatePurchaseLine(line.id, { quantity: event.target.value })} required /></label>
+                    <label><span>Unit</span><input value={line.unit} disabled /></label>
+                    <label><span>Rate / unit</span><div className="inventory-money-input"><span>₹</span><input type="number" min="0" step="0.01" value={line.unitCost} onChange={(event) => updatePurchaseLine(line.id, { unitCost: event.target.value })} required /></div></label>
+                    <label><span>Discount %</span><input type="number" min="0" max="100" step="0.01" value={line.discountPercent ?? "0"} onChange={(event) => updatePurchaseLine(line.id, { discountPercent: event.target.value })} /></label>
+                    <label className="purchase-selling-price"><span>Selling price</span><div className="inventory-money-input"><span>₹</span><input type="number" min="0" step="0.01" value={line.sellingPrice ?? ""} onChange={(event) => updatePurchaseLine(line.id, { sellingPrice: event.target.value })} placeholder="Selling price" /></div></label>
+                    <PurchaseGstSelect rates={gstRateOptions} value={line.itemId === "__new__" ? line.gstRate ?? line.taxRate : line.taxRate} onChange={(rate) => updatePurchaseLine(line.id, line.itemId === "__new__" ? { gstRate: rate, taxRate: rate } : { taxRate: rate })} />
+                    <div className="purchase-line-total"><span>Line total</span><strong>{formatMoney(amounts.total)}</strong><small>{lastPurchaseCost === null ? "LPC · Last purchase cost: —" : `LPC · Last purchase cost: ${formatMoney(lastPurchaseCost)} / ${selectedItem.unit || "unit"}`}</small></div>
+                    <button className="purchase-remove-line" type="button" onClick={() => setPurchaseDraft((current) => ({ ...current, lines: current.lines.filter((entry) => entry.id !== line.id) }))} title="Remove line" aria-label={`Remove purchase line ${index + 1}`}><Trash2 size={17} /></button>
+                  </div>
+                  {line.itemId === "__new__" && <div className="purchase-new-item-fields">
+                    <label><span>New item name</span><input value={line.name} onChange={(event) => updatePurchaseLine(line.id, { name: event.target.value })} placeholder="e.g. Wheat Flour" /></label>
+                    <label><span>SKU number</span><input value={line.sku} inputMode="numeric" pattern="[0-9]*" onChange={(event) => updatePurchaseLine(line.id, { sku: event.target.value.replace(/\D/g, "") })} placeholder="Auto-generated" /></label>
+                    <label><span>HSN code</span><input value={line.hsnCode || ""} inputMode="numeric" pattern="[0-9]*" maxLength="8" onChange={(event) => updatePurchaseLine(line.id, { hsnCode: event.target.value.replace(/\D/g, "").slice(0, 8) })} placeholder="4, 6, or 8 digits" /></label>
+                    <label><span>Department</span><select value={line.department || "Food & Beverage"} onChange={(event) => updatePurchaseLine(line.id, { department: event.target.value })}>{departmentOptions.map((department) => <option key={department}>{department}</option>)}</select></label>
+                    <label><span>Category</span><select value={line.category} onChange={(event) => { const category = event.target.value; const suggestions = inventorySubcategorySuggestions(category, items); updatePurchaseLine(line.id, { category, subcategory: suggestions[0] || "" }); }}>{categories.map((category) => <option key={category}>{category}</option>)}</select></label>
+                    <label><span>Sub-category</span><input list={`purchase-subcategories-${line.id}`} value={line.subcategory || ""} onChange={(event) => updatePurchaseLine(line.id, { subcategory: event.target.value })} placeholder="Select or enter" /><datalist id={`purchase-subcategories-${line.id}`}>{lineSubcategoryOptions.map((subcategory) => <option key={subcategory} value={subcategory} />)}</datalist></label>
+                    <label><span>Unit</span><select value={line.unit} onChange={(event) => updatePurchaseLine(line.id, { unit: event.target.value })}><option>kg</option><option>g</option><option>ltr</option><option>ml</option><option>pcs</option><option>cyl</option><option>box</option><option>pack</option></select></label>
+                    <label><span>Reorder level</span><input type="number" min="0" step="0.001" value={line.reorder} onChange={(event) => updatePurchaseLine(line.id, { reorder: event.target.value })} /></label>
+                  </div>}
+                </article>;
+              })}
+              {!purchaseDraft.lines.length && <div className="purchase-lines-empty"><ReceiptText size={24} /><span>Add a line to record purchased stock.</span></div>}
+            </div>
+            <PurchaseInvoiceAdjustments value={purchaseDraft} onChange={(patch) => setPurchaseDraft((current) => ({ ...current, ...patch }))} gstRates={gstRateOptions} errors={currentPurchaseInvoice.errors} totals={currentPurchaseTotals} />
+            <div className="purchase-footer">
+              <div className="purchase-totals"><span>Subtotal <strong>{formatPreciseMoney(currentPurchaseTotals.subtotal)}</strong></span><span>Item discount <strong>{formatPreciseMoney(currentPurchaseTotals.discount)}</strong></span><span className="purchase-bill-discount-total">Bill discount <strong>{formatPreciseMoney(currentPurchaseTotals.billDiscount)}</strong></span><span>Freight <strong>{formatPreciseMoney(currentPurchaseTotals.freight)}</strong></span><span>Other charges <strong>{formatPreciseMoney(currentPurchaseTotals.otherCharges)}</strong></span><span>GST total <strong>{formatPreciseMoney(currentPurchaseTotals.tax)}</strong></span><span>Round off <strong>{formatPreciseMoney(currentPurchaseTotals.roundOff)}</strong></span><span className="grand-total">Invoice total <strong>{formatPreciseMoney(currentPurchaseTotals.total)}</strong></span></div>
+              <div className="inventory-editor-actions"><button type="button" onClick={closePurchase}>Cancel</button><button className={editingPurchaseDraftId ? "" : "primary"} type="submit" formNoValidate={!editingPostedPurchaseId} disabled={!inventoryWritesReady}><Save size={17} /> {editingPostedPurchaseId ? "Save bill changes" : editingPurchaseDraftId ? "Update draft" : "Save draft"}</button>{editingPurchaseDraftId && <button className="primary" type="button" disabled={!inventoryWritesReady || !purchaseDraftIsSaved} onClick={(event) => { if (event.currentTarget.form.reportValidity()) submitPurchaseForApproval(savedPurchaseDraft); }}>Submit for approval</button>}</div>
+              {editingPurchaseDraftId && <p role="status" className="inventory-local-save-note">{purchaseDraftIsSaved ? "Draft saved. Submit it for approval; stock updates after approval." : "Unsaved changes. Update the draft before submitting."}</p>}
+            </div>
+          </form>
+        </div>}
+        {purchaseReturnOpen && (
+          <form className="inventory-editor purchase-editor" onSubmit={postPurchaseReturn}>
+            <div className="inventory-editor-head">
+              <div><span>Supplier return</span><h3>New purchase return</h3><p>Returned quantities are deducted from current inventory stock.</p></div>
+              <button type="button" className="icon-button" onClick={() => { closePurchaseReturn(); onViewChange?.("stock"); }} title="Close purchase return" aria-label="Close purchase return"><X size={18} /></button>
+            </div>
+            {!inventoryWritesReady && <p className="inventory-local-save-note">Cloud inventory is loading. Posting is enabled after synchronization completes.</p>}
+            <div className="purchase-meta-grid">
+              <label><div className="inventory-category-head"><span>Vendor</span><button className="inventory-add-category" type="button" onClick={() => { setEditingVendorId(""); setVendorDraft({ name: "", gstin: "", phone: "", email: "", address: "" }); setQuickVendorFormOpen(true); }}><Plus size={13} /> New vendor</button></div><select autoFocus value={purchaseReturnDraft.supplier} onChange={(event) => setPurchaseReturnDraft((current) => ({ ...current, supplier: event.target.value }))} required><option value="">Select a vendor</option>{vendors.map((vendor) => <option key={vendor.id} value={vendor.name}>{vendor.name}</option>)}</select></label>
+              <label><span>Original purchase invoice</span><input value={purchaseReturnDraft.reference} onChange={(event) => setPurchaseReturnDraft((current) => ({ ...current, reference: event.target.value }))} placeholder="Supplier invoice number" required /></label>
+              <label><span>Return date</span><input type="date" value={purchaseReturnDraft.date} onChange={(event) => setPurchaseReturnDraft((current) => ({ ...current, date: event.target.value }))} required /></label>
+              <label><span>Reason / notes</span><input value={purchaseReturnDraft.reason} onChange={(event) => setPurchaseReturnDraft((current) => ({ ...current, reason: event.target.value }))} placeholder="Damaged, expired, excess stock…" /></label>
+            </div>
+            <div className="purchase-lines-head">
+              <div><strong>Items to return</strong><span>Return quantities cannot exceed the current stock on hand.</span></div>
+              <button type="button" onClick={() => setPurchaseReturnDraft((current) => ({ ...current, lines: [...current.lines, newPurchaseReturnLine()] }))}><Plus size={16} /> Add item</button>
+            </div>
+            <div className="purchase-lines">
+              {purchaseReturnDraft.lines.map((line, index) => {
+                const selectedItem = items.find((item) => item.id === line.itemId);
+                const lineAmounts = selectedItem ? purchaseLineAmounts({ quantity: line.quantity, unitCost: selectedItem.price ?? calculatePriceBeforeGst(selectedItem.cost, selectedItem.gstRate), taxRate: selectedItem.gstRate || 0 }) : { total: 0 };
+                return <article className="purchase-line-card" key={line.id}>
+                  <div className="purchase-line-number">{index + 1}</div>
+                  <div className="purchase-line-grid purchase-return-line-grid">
+                    <label className="purchase-item-picker"><span>Inventory item</span><select value={line.itemId} onChange={(event) => setPurchaseReturnDraft((current) => ({ ...current, lines: current.lines.map((entry) => entry.id === line.id ? { ...entry, itemId: event.target.value } : entry) }))} required><option value="">Select an item</option>{items.map((item) => <option key={item.id} value={item.id}>{item.name} · {formatQuantity(item.stock)} {item.unit}</option>)}</select>{selectedItem && <small>SKU {selectedItem.sku} · On hand {formatQuantity(selectedItem.stock)} {selectedItem.unit} · Unit cost {formatMoney(selectedItem.cost)}</small>}</label>
+                    <label><span>Return quantity</span><input type="number" min="0.001" step="0.001" max={selectedItem?.stock ?? undefined} value={line.quantity} onChange={(event) => setPurchaseReturnDraft((current) => ({ ...current, lines: current.lines.map((entry) => entry.id === line.id ? { ...entry, quantity: event.target.value } : entry) }))} required /></label>
+                    <div className="purchase-line-total"><span>Estimated credit</span><strong>{formatMoney(lineAmounts.total)}</strong></div>
+                    <button className="purchase-remove-line" type="button" onClick={() => setPurchaseReturnDraft((current) => ({ ...current, lines: current.lines.filter((entry) => entry.id !== line.id) }))} title="Remove item" aria-label={`Remove return item ${index + 1}`}><Trash2 size={17} /></button>
+                  </div>
+                </article>;
+              })}
+              {!purchaseReturnDraft.lines.length && <div className="purchase-lines-empty"><Undo2 size={24} /><span>Add an item to return stock to the supplier.</span></div>}
+            </div>
+            <div className="purchase-footer">
+              <div className="purchase-totals"><span>Credit before tax <strong>{formatMoney(purchaseReturnTotals.subtotal)}</strong></span><span>Tax credit <strong>{formatMoney(purchaseReturnTotals.tax)}</strong></span><span className="grand-total">Estimated credit <strong>{formatMoney(purchaseReturnTotals.total)}</strong></span></div>
+              <div className="inventory-editor-actions"><button type="button" onClick={() => { closePurchaseReturn(); onViewChange?.("stock"); }}>Cancel</button><button className="primary" type="submit" disabled={!inventoryWritesReady}><Undo2 size={17} /> {inventoryWritesReady ? "Post return & update stock" : "Waiting for cloud sync"}</button></div>
+            </div>
           </form>
         )}
+        {editorOpen && (
+          <div className="shift-modal-backdrop inventory-product-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeEditor(); }}>
+          <form className="shift-modal inventory-editor inventory-product-modal" onSubmit={saveItem} role="dialog" aria-modal="true" aria-label={editingId ? `Edit ${draft.name}` : "Create product"} onKeyDown={(event) => { if (event.key === "Escape") closeEditor(); else handleProductFormArrowNavigation(event); }}>
+            <div className="inventory-editor-head inventory-product-header">
+              <div className="inventory-product-heading">
+                <div className="inventory-product-heading-icon" aria-hidden="true"><Boxes size={23} /></div>
+                <div>
+                  <span>Inventory / Product Master</span>
+                  <h3>{editingId ? `Edit ${draft.name}` : "New product"}</h3>
+                  <p className="inventory-product-description">Organize your product, set its prices, and keep every batch consistent.</p>
+                </div>
+              </div>
+              <button type="button" className="icon-button" onClick={() => { closeEditor(); if (activeView !== "create") onViewChange?.("stock"); }} title="Close editor" aria-label="Close editor"><X size={18} /></button>
+            </div>
+            <div className="inventory-product-body">
+            {!inventoryWritesReady && <p className="inventory-local-save-note" role="status">Cloud inventory is loading. Saving is enabled after synchronization completes.</p>}
+            <section className="inventory-product-form-section">
+              <div className="inventory-product-section-head"><div><span className="inventory-section-number">01</span><strong>Product details</strong></div><span>Name, identification &amp; tax</span></div>
+              <div className="inventory-form-grid inventory-product-details-grid">
+                <label className="inventory-product-auto-sku"><span>SKU number</span><input value={draft.sku} readOnly aria-describedby="inventory-auto-sku-help" /><small id="inventory-auto-sku-help">Auto-generated</small></label>
+                <label><span>Product name</span><input value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} placeholder="e.g. Basmati Rice" autoFocus /></label>
+                <label><span>EAN code</span><input value={draft.barcode || ""} maxLength="32" onChange={(event) => updateDraft("barcode", event.target.value.replace(/\s/g, ""))} placeholder="Scan or enter EAN code" /></label>
+                <label><span>HSN code</span><InventoryCombobox ariaLabel="HSN code" value={draft.hsnCode || ""} options={hsnProfileOptions} placeholder="Select or enter HSN code" onChange={updateProductHsnCode} /><small className="inventory-product-tax-help">{selectedHsnProfiles.length === 1 ? `Setup linked to GST ${selectedHsnProfiles[0].gstRate}%. You can change either field.` : selectedHsnProfiles.length > 1 ? "This HSN has multiple saved GST options; choose the applicable GST rate." : "Saved HSN values are suggested, or enter a different valid code."}</small></label>
+                <label><span>GST rate</span><select aria-label="GST rate" value={String(draft.gstRate ?? "")} onChange={(event) => updateProductGstRate(event.target.value)} onKeyDown={(event) => { if (event.key !== "Enter") return; event.preventDefault(); productPriceInputRef.current?.focus(); }}>{gstRateOptions.map((rate) => <option key={rate} value={rate}>{rate}%</option>)}</select></label>
+              </div>
+            </section>
+            <section className="inventory-product-form-section">
+              <div className="inventory-product-section-head"><div><span className="inventory-section-number">02</span><strong>Pricing &amp; stock control</strong></div><span>Cost = Price + GST · Markup sets the selling price</span></div>
+              <div className="inventory-form-grid inventory-product-prices-grid">
+                <label><span>Price (before GST)</span><div className="inventory-money-input"><span>₹</span><input ref={productPriceInputRef} aria-label="Price before GST" type="number" min="0" step="0.01" value={draft.price} onChange={(event) => updateDraft("price", event.target.value)} required={!editingId} /></div></label>
+                <label><span>Cost (price + GST)</span><div className="inventory-money-input"><span>₹</span><input type="text" value={productCost === null ? "" : productCost.toFixed(2)} readOnly aria-label="Cost including GST" /></div></label>
+                <label><span>Markup %</span><div className="inventory-money-input"><input type="number" min="0" step="0.01" value={draft.markupPercent} onChange={(event) => updateDraft("markupPercent", event.target.value)} placeholder="Enter %" aria-label="Markup percentage to calculate selling price" /><span>%</span></div></label>
+                <label><span>MRP</span><div className="inventory-money-input"><span>₹</span><input type="number" min="0" step="0.01" value={draft.mrp} onChange={(event) => updateDraft("mrp", event.target.value)} required /></div></label>
+                <label><span>Selling price</span><div className={`inventory-money-input${productSellingPriceAboveMrp ? " is-invalid" : ""}`}><span>₹</span><input type="number" min="0" max={draft.mrp === "" || !Number.isFinite(numericProductMrp) ? undefined : numericProductMrp} step="0.01" value={draft.sellingPrice} onChange={(event) => updateDraft("sellingPrice", event.target.value)} aria-invalid={productSellingPriceAboveMrp} aria-describedby={productSellingPriceAboveMrp ? "inventory-selling-price-error" : undefined} required /></div></label>
+                <label><span>Wholesale price (optional)</span><div className={`inventory-money-input${productWholesalePriceError ? " is-invalid" : ""}`}><span>₹</span><input aria-label="Wholesale price" type="number" min="0" max={draft.mrp === "" || !Number.isFinite(numericProductMrp) ? undefined : numericProductMrp} step="0.01" value={draft.wholesalePrice ?? ""} onChange={(event) => updateDraft("wholesalePrice", event.target.value)} placeholder="Use retail price if blank" aria-invalid={Boolean(productWholesalePriceError)} aria-describedby={productWholesalePriceError ? "inventory-wholesale-price-error" : undefined} /></div></label>
+                <label><span>E-commerce price (optional)</span><div className={`inventory-money-input${productEcommercePriceError ? " is-invalid" : ""}`}><span>₹</span><input aria-label="E-commerce price" type="number" min="0" max={draft.mrp === "" || !Number.isFinite(numericProductMrp) ? undefined : numericProductMrp} step="0.01" value={draft.ecommercePrice ?? ""} onChange={(event) => updateDraft("ecommercePrice", event.target.value)} placeholder="Enter e-commerce price" aria-invalid={Boolean(productEcommercePriceError)} aria-describedby={productEcommercePriceError ? "inventory-ecommerce-price-error" : undefined} /></div></label>
+              </div>
+              {productWholesalePriceError && <p className="inventory-product-price-error" id="inventory-wholesale-price-error" role="alert">{productWholesalePriceError}</p>}
+              {productEcommercePriceError && <p className="inventory-product-price-error" id="inventory-ecommerce-price-error" role="alert">{productEcommercePriceError}</p>}
+              {productSellingPriceAboveMrp && <p className="inventory-product-price-error" id="inventory-selling-price-error" role="alert">Selling price cannot be greater than MRP.</p>}
+              <div className="inventory-product-pricing-summary">
+                <label className="inventory-product-reorder"><span>Reorder level ({draft.unit})</span><input type="number" min="0" step="0.001" value={draft.reorder} onChange={(event) => updateDraft("reorder", event.target.value)} required /></label>
+                <label className="inventory-product-unit"><span>Unit</span><InventoryCombobox ariaLabel="Unit" value={draft.unit} options={unitOptions} placeholder="Select or type a unit" onChange={(value) => updateDraft("unit", value)} /></label>
+                <div className={`inventory-product-margin${productMargin.amount !== null && productMargin.amount < 0 ? " is-negative" : ""}`}>
+                  <div className="inventory-product-margin-caption"><Percent size={17} aria-hidden="true" /><div><strong>Profit margin</strong><small>Calculated from cost &amp; selling price</small></div></div>
+                  <label><span>Margin amount</span><div><span>₹</span><input type="text" value={productMargin.amount === null ? "" : productMargin.amount.toFixed(2)} placeholder="—" readOnly aria-label="Calculated margin amount" /></div></label>
+                  <label><span>Margin %</span><div><input type="text" value={productMargin.percentage === null ? "" : productMargin.percentage.toFixed(2)} placeholder="—" readOnly aria-label="Calculated margin percentage" /><span>%</span></div></label>
+                </div>
+              </div>
+              <div className="inventory-ean-mrp-options">
+                <div className="inventory-ean-mrp-heading"><div><strong>Additional EAN / MRP batches</strong><span>Use when this product has another EAN and MRP batch.</span></div><button type="button" onClick={() => setDraft((current) => ({ ...current, eanMrpOptions: [...(current.eanMrpOptions || []), { id: crypto.randomUUID(), barcode: "", mrp: "" }] }))}><Plus size={15} /> Add batch</button></div>
+                {(draft.eanMrpOptions || []).map((option, index) => <div className="inventory-ean-mrp-row" key={option.id || index}><label><span>Batch EAN code</span><input value={option.barcode || ""} maxLength="32" onChange={(event) => setDraft((current) => ({ ...current, eanMrpOptions: current.eanMrpOptions.map((entry) => entry.id === option.id ? { ...entry, barcode: event.target.value.replace(/\s/g, "") } : entry) }))} placeholder="Scan or enter EAN code" /></label><label><span>Batch MRP</span><div className="inventory-money-input"><span>₹</span><input type="number" min="0" step="0.01" value={option.mrp ?? ""} onChange={(event) => setDraft((current) => ({ ...current, eanMrpOptions: current.eanMrpOptions.map((entry) => entry.id === option.id ? { ...entry, mrp: event.target.value } : entry) }))} placeholder="Enter MRP" /></div></label><button className="inventory-ean-mrp-remove" type="button" onClick={() => setDraft((current) => ({ ...current, eanMrpOptions: current.eanMrpOptions.filter((entry) => entry.id !== option.id) }))} aria-label={`Remove EAN and MRP batch ${index + 1}`} title="Remove batch"><Trash2 size={16} /></button></div>)}
+                {!(draft.eanMrpOptions || []).length && <p className="inventory-ean-mrp-empty">The main EAN and MRP above are your first batch. Add another batch only when needed.</p>}
+              </div>
+            </section>
+            <section className="inventory-product-form-section">
+              <div className="inventory-product-section-head"><div><span className="inventory-section-number">03</span><strong>Classification &amp; sourcing</strong></div><span>Group product categories &amp; supplier</span></div>
+              <div className="inventory-form-grid">
+                <div className="inventory-category-field">
+                  <div className="inventory-category-head"><span>Department</span><button className="inventory-add-category" type="button" onClick={() => openInventorySetupCreator("department")} aria-expanded={inventorySetupCreator === "department"}><Plus size={14} /> Add</button></div>
+                  <InventoryCombobox ariaLabel="Department" value={draft.department || ""} options={departmentOptions} placeholder="Select or type department" onChange={updateProductDepartment} />
+                </div>
+                <div className="inventory-category-field">
+                  <div className="inventory-category-head"><span>Main category</span><button className="inventory-add-category" type="button" onClick={() => openInventorySetupCreator("category")} aria-expanded={inventorySetupCreator === "category"}><Plus size={14} /> Add</button></div>
+                  <InventoryCombobox ariaLabel="Main category" value={draft.category} options={categories} placeholder="Select or type category" onChange={updateProductCategory} />
+                </div>
+                <div className="inventory-category-field">
+                  <div className="inventory-category-head"><span>Sub-category</span><button className="inventory-add-category" type="button" onClick={() => openInventorySetupCreator("subcategory")} aria-expanded={inventorySetupCreator === "subcategory"}><Plus size={14} /> Add</button></div>
+                  <InventoryCombobox ariaLabel="Sub-category" value={draftSubcategorySelection} options={subcategoryComboOptions} placeholder="Select or type sub-category" onChange={(value) => value.startsWith("profile:") || value.startsWith("legacy:") ? selectCategoryProfile(value) : updateDraft("subcategory", value)} />
+                </div>
+                <div className="inventory-category-field">
+                  <div className="inventory-category-head"><span>Brand</span><button className="inventory-add-category" type="button" onClick={() => openInventorySetupCreator("brand")} aria-expanded={inventorySetupCreator === "brand"}><Plus size={14} /> Add</button></div>
+                  <InventoryCombobox ariaLabel="Brand" value={draft.brand || ""} options={linkedBrandOptions} placeholder="Select or enter brand" onChange={updateProductBrand} />
+                  <small className="inventory-product-tax-help">Selecting a linked setup brand auto-fills its manufacturer.</small>
+                </div>
+                <div className="inventory-category-field">
+                  <div className="inventory-category-head"><span>Manufacturer</span><button className="inventory-add-category" type="button" onClick={() => openInventorySetupCreator("manufacturer")} aria-expanded={inventorySetupCreator === "manufacturer"}><Plus size={14} /> Add</button></div>
+                  <InventoryCombobox ariaLabel="Manufacturer" value={draft.manufacturer || ""} options={linkedManufacturerOptions} placeholder="Select or enter manufacturer" onChange={updateProductManufacturer} />
+                  <small className="inventory-product-tax-help">Auto-filled setup values remain editable.</small>
+                </div>
+                <label><span>Preferred vendor</span><InventoryCombobox ariaLabel="Preferred vendor" value={draft.preferredVendor || ""} options={vendors.map((vendor) => ({ value: vendor.name, label: vendor.name }))} allowCustom={false} placeholder="Search vendors" onChange={(value) => updateDraft("preferredVendor", value)} />{!vendors.length && <small>Create vendors under Purchase → Vendor management.</small>}</label>
+              </div>
+            </section>
+            </div>
+            <div className="inventory-product-footer">
+              <p><Boxes size={16} aria-hidden="true" /> Add stock later through batches or purchases.</p>
+              <div className="inventory-editor-actions"><button type="button" onClick={() => { closeEditor(); if (activeView !== "create") onViewChange?.("stock"); }}>Cancel</button><button className="primary" type="submit" disabled={!inventoryWritesReady}><Save size={17} /> {inventoryWritesReady ? (editingId ? "Save changes" : "Create product") : "Waiting for cloud sync"}</button></div>
+            </div>
+          </form>
+          {inventorySetupCreator && <div className="shift-modal-backdrop inventory-category-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeInventorySetupCreator(); }}>
+            <div className="shift-modal inventory-category-dialog" role="dialog" aria-modal="true" aria-label={`Add ${inventorySetupTypes[inventorySetupCreator]?.title || "product option"}`} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); closeInventorySetupCreator(); } }}>
+              <div className="shift-modal-head">
+                <h3>Create New {inventorySetupTypes[inventorySetupCreator]?.title}</h3>
+              </div>
+              <p className="inventory-category-dialog-copy">Create a {inventorySetupTypes[inventorySetupCreator]?.title.toLowerCase()} and it will be selected for this product.</p>
+              <label className="inventory-category-dialog-field"><span>Name *</span><input value={inventorySetupDraft} onChange={(event) => setInventorySetupDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); createInventorySetupValue(); } }} placeholder={`Enter ${inventorySetupTypes[inventorySetupCreator]?.title.toLowerCase()} name`} autoFocus required /></label>
+              <div className="inventory-editor-actions inventory-category-dialog-actions">
+                <button type="button" onClick={closeInventorySetupCreator}>Cancel</button>
+                <button className="primary" type="button" onClick={createInventorySetupValue} disabled={!inventoryWritesReady}><Save size={16} /> Create</button>
+              </div>
+            </div>
+          </div>}
+          </div>
+        )}
 
+        {activeView === "create" ? <>
+          <div className="purchase-history-head">
+            <div><span>Product Master</span><h3>Created products</h3></div>
+            <strong>{variantParentProducts.length} total</strong>
+          </div>
+          <div className="inventory-toolbar">
+            <div className="inventory-search"><Search size={19} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search products by name, SKU, HSN, or category" /></div>
+            <span className="inventory-result-count">{visibleMasterProducts.length} of {variantParentProducts.length} products</span>
+          </div>
+          <div className="inventory-table-wrap">
+            <table className="inventory-table">
+              <thead><tr><th>Product</th><th>SKU</th><th>EAN code</th><th>HSN</th><th>GST</th><th>Price</th><th>Cost (incl. GST)</th><th>MRP</th><th>Selling price</th><th>Wholesale price</th><th>E-commerce price</th><th>Margin</th><th>Margin %</th><th>Markup %</th><th>Reorder at</th><th>Department</th><th>Category</th><th>Sub-category</th><th>Brand</th><th>Manufacturer</th><th>Unit</th><th>Batches</th>{canManageAll && <th><span className="sr-only">Actions</span></th>}</tr></thead>
+              <tbody>
+                {visibleMasterProducts.map((item) => {
+                  const batchCount = productVariants.filter((batch) => batch.parentProductId === item.id).length + getProductEanMrpCombinations(item).length;
+                  const productFields = getMasterProductFields(item);
+                  const margin = calculateVariantMargin(productFields.cost, productFields.sellingPrice);
+                  const markup = productFields.markupPercent === "" ? calculateMarkupPercentage(productFields.cost, productFields.sellingPrice) : Number(productFields.markupPercent);
+                  return <tr key={item.id}>
+                    <td><div className="inventory-item-cell"><span>{String(item.name || "P").slice(0, 1).toUpperCase()}</span><div><button type="button" className="product-details-trigger" onClick={() => setProductDetailsItem(item)} aria-label={`View details for ${item.name}`}>{item.name}</button><small>{item.subcategory || "Product Master"}</small></div></div></td>
+                    <td>{item.sku}</td>
+                    <td>{productFields.barcode || "-"}</td>
+                    <td>{item.hsnCode || "-"}</td>
+                    <td>{item.gstRate === null || item.gstRate === undefined || item.gstRate === "" ? "-" : `${Number(item.gstRate)}%`}</td>
+                    <td>{productFields.price === "" || productFields.price === null || productFields.price === undefined ? "-" : formatPreciseMoney(productFields.price)}</td>
+                    <td>{formatPreciseMoney(productFields.cost)}</td>
+                    <td>{productFields.mrp === "" || productFields.mrp === null || productFields.mrp === undefined ? "-" : formatPreciseMoney(productFields.mrp)}</td>
+                    <td>{productFields.sellingPrice === "" || productFields.sellingPrice === null || productFields.sellingPrice === undefined ? "-" : formatPreciseMoney(productFields.sellingPrice)}</td>
+                    <td>{productFields.wholesalePrice === "" ? "—" : formatPreciseMoney(productFields.wholesalePrice)}</td>
+                    <td>{productFields.ecommercePrice === "" ? "—" : formatPreciseMoney(productFields.ecommercePrice)}</td>
+                    <td>{margin.amount === null ? "-" : formatPreciseMoney(margin.amount)}</td>
+                    <td>{margin.percentage === null ? "-" : `${margin.percentage.toFixed(2)}%`}</td>
+                    <td>{markup === null ? "-" : `${markup.toFixed(2)}%`}</td>
+                    <td>{formatQuantity(productFields.reorder)} {item.unit}</td>
+                    <td>{item.department || "-"}</td>
+                    <td>{item.category || "-"}</td>
+                    <td>{item.subcategory || "-"}</td>
+                    <td>{item.brand || "-"}</td>
+                    <td>{item.manufacturer || "-"}</td>
+                    <td>{item.unit || "-"}</td>
+                    <td>{batchCount}</td>
+                    {canManageAll && <td><div className="inventory-row-actions">
+                      <button type="button" onClick={() => openEdit(item)} title={`Edit ${item.name}`} aria-label={`Edit ${item.name}`}><Pencil size={16} /></button>
+                      <button type="button" onClick={() => { onViewChange?.("variants"); openNewVariant(item.id); }} title={`Add a batch for ${item.name}`} aria-label={`Add a batch for ${item.name}`}><Plus size={16} /></button>
+                      <button className="delete" type="button" onClick={() => deleteItem(item)} title={`Delete ${item.name}`} aria-label={`Delete ${item.name}`}><Trash2 size={16} /></button>
+                    </div></td>}
+                  </tr>;
+                })}
+                {!visibleMasterProducts.length && <tr><td className="inventory-empty" colSpan={canManageAll ? 21 : 20}><PackageSearch size={30} /><strong>{variantParentProducts.length ? "No products match your search" : "No products created yet"}</strong><span>{variantParentProducts.length ? "Try a different product name, SKU, HSN, or category." : "Click New product to add the first Product Master entry."}</span></td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </> : !["vendors", "variants", "purchase"].includes(activeView) && <>
         <div className="inventory-toolbar">
-          <div className="inventory-search"><Search size={19} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search item, SKU, or category" /></div>
+          <div className="inventory-search"><Search size={19} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search item, SKU, HSN, department, or category" /></div>
           <div className="inventory-filter" aria-label="Inventory status filter">
             {["All", "Low stock", "Watch", "Healthy"].map((value) => <button key={value} type="button" className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{value}</button>)}
           </div>
@@ -5822,33 +8279,108 @@ function Inventory({ notify, canManageAll, storeId, cloudStateReady = false }) {
 
         <div className="inventory-table-wrap">
           <table className="inventory-table">
-            <thead><tr><th>Item</th><th>Category</th><th>On hand</th><th>Reorder at</th><th>Unit cost</th><th>Status</th>{canManageAll && <th><span className="sr-only">Actions</span></th>}</tr></thead>
+            <thead><tr><th>Item</th><th>Classification</th><th>On hand</th><th>Reorder at</th><th>Unit cost</th><th>GST</th><th>Status</th>{canManageAll && <th><span className="sr-only">Actions</span></th>}</tr></thead>
             <tbody>
               {visibleItems.map((item) => {
                 const status = getStatus(item);
                 const stockRatio = Math.min(100, Number(item.reorder || 0) ? (Number(item.stock || 0) / Number(item.reorder)) * 70 : 100);
                 return <tr key={item.id}>
-                  <td><div className="inventory-item-cell"><span>{String(item.name || "I").slice(0, 1).toUpperCase()}</span><div><strong>{item.name}</strong><small>{item.sku}</small></div></div></td>
-                  <td><span className="inventory-category">{item.category}</span></td>
+                  <td><div className="inventory-item-cell"><span>{String(item.name || "I").slice(0, 1).toUpperCase()}</span><div><strong>{item.name}</strong><small>SKU {item.sku}{item.variantLabel ? ` · Batch ${item.variantLabel}` : ""}{item.barcode ? ` · Barcode ${item.barcode}` : ""}{item.hsnCode ? ` · HSN ${item.hsnCode}` : ""}</small></div></div></td>
+                  <td><div className="inventory-classification-cell"><small>{item.department || "Unassigned department"}</small><span className="inventory-category">{item.category}</span>{item.subcategory && <em>{item.subcategory}</em>}</div></td>
                   <td><div className="inventory-stock-cell"><strong>{formatQuantity(item.stock)} {item.unit}</strong><span><i style={{ width: `${stockRatio}%` }} className={status === "Low stock" ? "low" : status === "Watch" ? "watch" : ""} /></span></div></td>
                   <td>{formatQuantity(item.reorder)} {item.unit}</td>
                   <td>{formatMoney(item.cost)}</td>
+                  <td><strong>{item.gstRate === null || item.gstRate === undefined || item.gstRate === "" ? "-" : `${Number(item.gstRate)}%`}</strong></td>
                   <td><span className={`inventory-status ${status.toLowerCase().replace(" ", "-")}`}>{status === "Healthy" && <CircleCheck size={14} />}{status !== "Healthy" && <AlertTriangle size={14} />}{status}</span></td>
-                  {canManageAll && <td><div className="inventory-row-actions"><button type="button" onClick={() => openEdit(item)} title={`Edit ${item.name}`} aria-label={`Edit ${item.name}`}><Pencil size={16} /></button><button className="delete" type="button" onClick={() => deleteItem(item)} title={`Delete ${item.name}`} aria-label={`Delete ${item.name}`}><Trash2 size={16} /></button></div></td>}
+                  {canManageAll && <td><div className="inventory-row-actions"><button type="button" onClick={() => item.parentProductId ? openVariantEdit(item) : openEdit(item)} title={`Edit ${item.name}`} aria-label={`Edit ${item.name}`}><Pencil size={16} /></button><button className="delete" type="button" onClick={() => deleteItem(item)} title={`Delete ${item.name}`} aria-label={`Delete ${item.name}`}><Trash2 size={16} /></button></div></td>}
                 </tr>;
               })}
-              {!visibleItems.length && <tr><td className="inventory-empty" colSpan={canManageAll ? 7 : 6}><PackageSearch size={30} /><strong>No inventory items found</strong><span>Try another search or status filter.</span></td></tr>}
+              {!visibleItems.length && <tr><td className="inventory-empty" colSpan={canManageAll ? 8 : 7}><PackageSearch size={30} /><strong>No inventory items found</strong><span>Try another search or status filter.</span></td></tr>}
+            </tbody>
+          </table>
+        </div>
+        </>}
+      </div>
+      {activeView === "create" && productDetailsItem && <div className="shift-modal-backdrop inventory-category-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setProductDetailsItem(null); }}>
+        <section className="shift-modal product-details-dialog" role="dialog" aria-modal="true" aria-label={`${productDetailsItem.name} product details`} onKeyDown={(event) => { if (event.key === "Escape") setProductDetailsItem(null); }}>
+          <div className="shift-modal-head"><div><span>Product Master</span><h3>{productDetailsItem.name}</h3></div><button className="icon-button" type="button" onClick={() => setProductDetailsItem(null)} aria-label="Close product details"><X size={17} /></button></div>
+          <div className="product-details-grid">
+            <div><span>SKU</span><strong>{productDetailsItem.sku || "—"}</strong></div>
+            <div><span>EAN code</span><strong>{productDetailsFields.barcode || "—"}</strong></div>
+            <div><span>HSN</span><strong>{productDetailsItem.hsnCode || "—"}</strong></div>
+            <div><span>GST</span><strong>{productDetailsItem.gstRate === "" || productDetailsItem.gstRate === null || productDetailsItem.gstRate === undefined ? "—" : `${Number(productDetailsItem.gstRate)}%`}</strong></div>
+            <div><span>Price</span><strong>{productDetailsFields.price === "" ? "—" : formatPreciseMoney(productDetailsFields.price)}</strong></div>
+            <div><span>Cost (incl. GST)</span><strong>{formatPreciseMoney(productDetailsFields.cost)}</strong></div>
+            <div><span>MRP</span><strong>{productDetailsFields.mrp === "" ? "—" : formatPreciseMoney(productDetailsFields.mrp)}</strong></div>
+            <div><span>Selling price</span><strong>{productDetailsFields.sellingPrice === "" ? "—" : formatPreciseMoney(productDetailsFields.sellingPrice)}</strong></div>
+            <div><span>Wholesale price</span><strong>{productDetailsFields.wholesalePrice === "" ? "Not set — uses retail price" : formatPreciseMoney(productDetailsFields.wholesalePrice)}</strong></div>
+            <div><span>E-commerce price</span><strong>{productDetailsFields.ecommercePrice === "" ? "Not set" : formatPreciseMoney(productDetailsFields.ecommercePrice)}</strong></div>
+            <div><span>Margin</span><strong>{productDetailsMargin.amount === null ? "—" : formatPreciseMoney(productDetailsMargin.amount)}</strong></div>
+            <div><span>Margin %</span><strong>{productDetailsMargin.percentage === null ? "—" : `${productDetailsMargin.percentage.toFixed(2)}%`}</strong></div>
+            <div><span>Markup %</span><strong>{productDetailsMarkup === null || !Number.isFinite(productDetailsMarkup) ? "—" : `${productDetailsMarkup.toFixed(2)}%`}</strong></div>
+            <div><span>Stock / reorder</span><strong>{formatQuantity(productDetailsItem.stock)} {productDetailsItem.unit || ""} / {formatQuantity(productDetailsFields.reorder)} {productDetailsItem.unit || ""}</strong></div>
+            <div><span>Department</span><strong>{productDetailsItem.department || "—"}</strong></div>
+            <div><span>Main category</span><strong>{productDetailsItem.category || "—"}</strong></div>
+            <div><span>Sub-category</span><strong>{productDetailsItem.subcategory || "—"}</strong></div>
+            <div><span>Brand</span><strong>{productDetailsItem.brand || "—"}</strong></div>
+            <div><span>Manufacturer</span><strong>{productDetailsItem.manufacturer || "—"}</strong></div>
+            <div><span>Preferred vendor</span><strong>{productDetailsItem.preferredVendor || "—"}</strong></div>
+            <div className="product-details-batches"><span>EAN / MRP batches</span>{getProductEanMrpCombinations(productDetailsItem).length
+              ? getProductEanMrpCombinations(productDetailsItem).map((combination, index) => <strong key={combination.id || `${combination.barcode}-${combination.mrp}-${index}`}>Batch {index + 1}: {combination.barcode || "EAN not set"} · {combination.mrp === "" || combination.mrp === null || combination.mrp === undefined ? "MRP not set" : `MRP ${formatPreciseMoney(combination.mrp)}`}</strong>)
+              : <strong>—</strong>}</div>
+          </div>
+          {canManageAll && <div className="inventory-editor-actions product-details-actions"><button type="button" onClick={() => setProductDetailsItem(null)}>Close</button><button className="primary" type="button" onClick={() => { const item = productDetailsItem; setProductDetailsItem(null); openEdit(item); }}><Pencil size={16} /> Edit product</button></div>}
+        </section>
+      </div>}
+      {activeView === "purchase" && <>
+      <PurchaseEntryList records={purchaseDraftRecords} purchases={purchaseHistory} onNew={openPurchase}
+        onView={(row) => setViewingPurchaseRow(row)}
+        onEdit={(row) => row.status === "Approved" ? editPostedPurchase(row.purchase) : editSavedPurchaseDraft(row.record)}
+        onSubmit={(row) => submitPurchaseForApproval(row.record)}
+        onApprove={(row) => postPurchase(null, row.record)}
+        onReturnToDraft={(row) => returnSubmittedPurchaseToDraft(row.record)}
+        onDelete={(row) => row.status === "Approved" ? deletePostedPurchase(row.purchase) : deleteSavedPurchaseDraft(row.record)}
+        onSettle={(row) => { setSettlementPurchase(row.purchase); setSettlementDraft({ amount: String(row.balance.toFixed(2)), method: "Bank", date: localDateKey(), reference: row.invoice, note: "" }); }}
+        totals={(lines, entry) => calculatePurchaseInvoice(lines.map(purchaseLineAmounts), entry).totals} formatMoney={formatPreciseMoney} maximumDraftDays={maximumPurchaseDraftDays} />
+      {viewingPurchaseRow && <div className="purchase-entry-modal-backdrop" role="presentation"><section className="inventory-editor purchase-editor purchase-entry-modal purchase-bill-view" role="dialog" aria-modal="true" aria-label="Purchase bill details">
+        <div className="inventory-editor-head"><div><span>{viewingPurchaseRow.status === "PendingApproval" ? "Submitted for approval" : viewingPurchaseRow.status}</span><h3>{viewingPurchaseRow.invoice || viewingPurchaseRow.id}</h3><p>{viewingPurchaseRow.purchase?.id || "Purchase number assigned after approval"}</p></div><button type="button" className="icon-button" onClick={() => setViewingPurchaseRow(null)} aria-label="Close purchase bill"><X size={18} /></button></div>
+        <div className="purchase-bill-summary"><div><span>Vendor</span><strong>{viewingPurchaseRow.supplier || "—"}</strong></div><div><span>Date</span><strong>{viewingPurchaseRow.date || "—"}</strong></div><div><span>Invoice total</span><strong>{formatPreciseMoney(viewingPurchaseRow.total)}</strong></div><div><span>Paid</span><strong>{formatPreciseMoney(viewingPurchaseRow.paid)}</strong></div></div>
+        <div className="inventory-table-wrap"><table className="inventory-table purchase-history-table"><thead><tr><th>Item</th><th>Batch / EAN</th><th>Quantity</th><th>Rate</th><th>Discount</th><th>GST</th><th>Total</th></tr></thead><tbody>{viewedPurchaseLines.map((line, index) => <tr key={line.id || index}><td>{line.item || line.name || items.find((item) => item.id === line.itemId)?.name || "—"}</td><td>{line.batchLabel || line.batchBarcode || "—"}</td><td>{line.quantity} {line.unit}</td><td>{formatPreciseMoney(line.unitCost)}</td><td>{Number(line.discountPercent || 0)}%</td><td>{Number(line.taxRate || 0)}%</td><td>{formatPreciseMoney(line.total ?? purchaseLineAmounts(line).total)}</td></tr>)}</tbody></table></div>
+        <div className="inventory-editor-actions"><button type="button" onClick={() => setViewingPurchaseRow(null)}>Close</button></div>
+      </section></div>}
+        {settlementPurchase && <div className="panel purchase-history-panel"><form className="inventory-editor purchase-editor settlement-editor" onSubmit={postVendorSettlement}>
+          <div className="inventory-editor-head"><div><span>Vendor settlement</span><h3>Settle {settlementPurchase.supplier}</h3><p>Invoice {settlementPurchase.invoice} · {settlementPurchase.id} · Balance due {formatMoney(purchaseHistory.find((purchase) => purchase.id === settlementPurchase.id)?.balance ?? settlementPurchase.balance)}</p></div><button type="button" className="icon-button" onClick={() => setSettlementPurchase(null)} title="Close settlement" aria-label="Close settlement"><X size={18} /></button></div>
+          <div className="purchase-meta-grid">
+            <label><span>Settlement amount</span><div className="inventory-money-input"><span>₹</span><input type="number" min="0.01" step="0.01" max={purchaseHistory.find((purchase) => purchase.id === settlementPurchase.id)?.balance ?? settlementPurchase.balance} value={settlementDraft.amount} onChange={(event) => setSettlementDraft((current) => ({ ...current, amount: event.target.value }))} required /></div></label>
+            <label><span>Paid from</span><select value={settlementDraft.method} onChange={(event) => setSettlementDraft((current) => ({ ...current, method: event.target.value }))}><option>Bank</option><option>Cash</option><option>UPI</option><option>Cheque</option><option>Card</option></select></label>
+            <label><span>Payment date</span><input type="date" value={settlementDraft.date} onChange={(event) => setSettlementDraft((current) => ({ ...current, date: event.target.value }))} required /></label>
+            <label><span>Payment reference</span><input value={settlementDraft.reference} onChange={(event) => setSettlementDraft((current) => ({ ...current, reference: event.target.value }))} placeholder="Transaction or cheque number" /></label>
+            <label><span>Notes</span><input value={settlementDraft.note} onChange={(event) => setSettlementDraft((current) => ({ ...current, note: event.target.value }))} placeholder="Optional settlement note" /></label>
+          </div>
+          <div className="inventory-editor-actions"><button type="button" onClick={() => setSettlementPurchase(null)}>Cancel</button><button className="primary" type="submit" disabled={!inventoryWritesReady}><BadgeIndianRupee size={17} /> {inventoryWritesReady ? "Record settlement" : "Waiting for cloud sync"}</button></div>
+        </form></div>}
+      </>}
+      {activeView === "purchase-return" &&
+      <div className="panel purchase-history-panel">
+        <div className="purchase-history-head"><div><span>Supplier returns</span><h3>Recent purchase returns</h3></div><strong>{purchaseReturnHistory.length} posted</strong></div>
+        <div className="inventory-table-wrap">
+          <table className="inventory-table purchase-history-table">
+            <thead><tr><th>Date</th><th>Return no.</th><th>Supplier</th><th>Original invoice</th><th>Items</th><th>Qty returned</th><th>Estimated credit</th></tr></thead>
+            <tbody>
+              {purchaseReturnHistory.slice(0, 10).map((purchaseReturn) => <tr key={purchaseReturn.id}><td>{purchaseReturn.date}</td><td><strong>{purchaseReturn.id}</strong></td><td>{purchaseReturn.supplier}</td><td>{purchaseReturn.reference}</td><td>{purchaseReturn.itemCount}</td><td>{formatQuantity(purchaseReturn.quantity)}</td><td><strong>{formatMoney(purchaseReturn.total)}</strong></td></tr>)}
+              {!purchaseReturnHistory.length && <tr><td className="purchase-history-empty" colSpan="7">No purchase returns posted yet.</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
+      }
     </section>
   );
 }
 
 function ItemStock({ foodStock = [], onFoodStockChange, canManage = false, notify, onOpenProduction }) {
   const [editingItemId, setEditingItemId] = useState("");
-  const [editDraft, setEditDraft] = useState({ item: "", unit: "plate", produced: "", threshold: "5" });
+  const [editDraft, setEditDraft] = useState({ item: "", unit: "plate", produced: "", threshold: "" });
   const items = Array.from(foodStock.reduce((grouped, record) => {
     const key = normalizeFoodItemName(record.item) || String(record.id || record.item || "finished-item");
     const existing = grouped.get(key) || {
@@ -5878,7 +8410,7 @@ function ItemStock({ foodStock = [], onFoodStockChange, canManage = false, notif
 
   function closeEditor() {
     setEditingItemId("");
-    setEditDraft({ item: "", unit: "plate", produced: "", threshold: "5" });
+    setEditDraft({ item: "", unit: "plate", produced: "", threshold: "" });
   }
 
   function startEdit(item) {
@@ -6005,11 +8537,11 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
     name: "",
     category: "Main Course",
     portion: "Full",
-    outputQty: 1,
+    outputQty: "",
     outputUnit: "plate",
-    sellingPrice: 0,
+    sellingPrice: "",
     version: 1,
-    ingredients: [{ name: "", qty: 1, unit: "g" }],
+    ingredients: [{ name: "", qty: "", unit: "g" }],
   };
   const [recipeDraft, setRecipeDraft] = useState(() => selectedRecipe ? normalizeRecipeIngredientUnits(selectedRecipe) : blankRecipe);
   const [recipeEditorMode, setRecipeEditorMode] = useState("edit");
@@ -6031,7 +8563,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
   const [wastageDraft, setWastageDraft] = useState({
     item: "",
     reason: "Kitchen Waste",
-    qty: 1,
+    qty: "",
     unit: "kg",
     cost: 0,
     person: "",
@@ -6042,7 +8574,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
     item: selectedRecipe?.name || "Chicken Biryani",
     qty: "",
     unit: selectedRecipe?.outputUnit || "plate",
-    threshold: 5,
+    threshold: "",
   });
   const wastageStockItem = inventory.find((item) => item.name === wastageDraft.item);
   const wastageUnits = wastageStockItem ? productionUnits.filter((unit) => unitsAreCompatible(unit, wastageStockItem.unit)) : productionUnits;
@@ -6255,7 +8787,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
       return;
     }
     const sellingPrice = Number(recipeDraft.sellingPrice);
-    if (!Number.isFinite(sellingPrice) || sellingPrice < 0) {
+    if (!String(recipeDraft.sellingPrice).trim() || !Number.isFinite(sellingPrice) || sellingPrice < 0) {
       notify("Selling price must be a valid non-negative amount");
       return;
     }
@@ -6347,7 +8879,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
       notify("Completed quantity must be greater than zero");
       return;
     }
-    if (!Number.isFinite(threshold) || threshold < 0) {
+    if (!String(foodStockDraft.threshold).trim() || !Number.isFinite(threshold) || threshold < 0) {
       notify("Enter a valid low-stock alert level");
       return;
     }
@@ -6536,7 +9068,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
     }
     const entry = { ...wastageDraft, id: `WST-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, qty: quantity, cost: Number(wastageCost.toFixed(2)), approval: "Pending" };
     setWastageEntries((current) => [entry, ...current]);
-    setWastageDraft({ item: "", reason: "Kitchen Waste", qty: 1, unit: "kg", cost: 0, person: "", approval: "Pending", date: today });
+    setWastageDraft({ item: "", reason: "Kitchen Waste", qty: "", unit: "kg", cost: 0, person: "", approval: "Pending", date: today });
     notify("Wastage saved for approval");
   }
 
@@ -6688,7 +9220,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
                 </table>
               </div>
               <div className="production-actions">
-                <button disabled={recipeLocked} onClick={() => setRecipeDraft((current) => ({ ...current, ingredients: [...current.ingredients, { name: "", qty: 1, unit: "g" }] }))}>Add ingredient</button>
+                <button disabled={recipeLocked} onClick={() => setRecipeDraft((current) => ({ ...current, ingredients: [...current.ingredients, { name: "", qty: "", unit: "g" }] }))}>Add ingredient</button>
                 <button disabled={recipeLocked} onClick={saveRecipe}>Save as new version</button>
                 <button disabled={!canManageAll || !recipeDraft.id} onClick={deleteRecipe}>Delete recipe</button>
               </div>
@@ -6744,7 +9276,7 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
             <form className="production-form food-stock-form" onSubmit={addFoodStock}>
               <div className="food-stock-form-heading"><div><span>COMPLETED FOOD</span><h3>Add finished food to POS stock</h3></div><p>Every paid POS order reduces the remaining quantity automatically.</p></div>
               <label>Food item<input list="food-stock-item-options" value={foodStockDraft.item} onChange={(event) => { const recipe = recipes.find((entry) => normalizeFoodItemName(entry.name) === normalizeFoodItemName(event.target.value)); setFoodStockDraft((current) => ({ ...current, item: event.target.value, unit: recipe?.outputUnit || current.unit })); }} placeholder="Chicken Biryani" /><datalist id="food-stock-item-options">{Array.from(new Set([...recipes.map((recipe) => recipe.name), ...foodStock.map((record) => record.item)].filter(Boolean))).map((item) => <option key={item} value={item} />)}</datalist></label>
-              <label>Completed quantity<input type="number" min="0.01" step="0.01" value={foodStockDraft.qty} onChange={(event) => setFoodStockDraft((current) => ({ ...current, qty: event.target.value }))} placeholder="10" /></label>
+              <label>Completed quantity<input type="number" min="0.01" step="0.01" value={foodStockDraft.qty} onChange={(event) => setFoodStockDraft((current) => ({ ...current, qty: event.target.value }))} /></label>
               <label>Unit<select value={foodStockDraft.unit} onChange={(event) => setFoodStockDraft((current) => ({ ...current, unit: event.target.value }))}>{productionOutputUnits.map((unit) => <option key={unit}>{unit}</option>)}</select></label>
               <label>Alert when remaining at or below<input type="number" min="0" step="1" value={foodStockDraft.threshold} onChange={(event) => setFoodStockDraft((current) => ({ ...current, threshold: event.target.value }))} /></label>
               <div className="production-actions"><button type="submit" disabled={!canManageAll}><Plus size={15} /> Add completed production</button></div>
@@ -6814,39 +9346,21 @@ function Production({ notify, storeId, canManageAll, activeView = "Recipes", act
 
 function CRM({ notify, canManageAll, storeId, salesLedger = [] }) {
   const [overrides, setOverrides] = useBusinessState(`vestora-customer-details-${storeId}`, []);
-  const customers = new Map();
-  salesLedger.forEach((bill) => {
-    const name = String(bill.customerName || "").trim();
-    const mobile = String(bill.customerMobile || "").replace(/\D/g, "").slice(-10);
-    if (!name && !mobile) return;
-    const key = mobile || name.toLowerCase();
-    const current = customers.get(key) || { id: key, name: name || "Customer", mobile, points: 0, itemCounts: new Map() };
-    current.name = name || current.name;
-    current.mobile = mobile || current.mobile;
-    current.points += Math.round(Number(bill.total || 0));
-    (bill.items || []).forEach((item) => current.itemCounts.set(item.name, (current.itemCounts.get(item.name) || 0) + Number(item.qty || 0)));
-    customers.set(key, current);
-  });
-  const rows = Array.from(customers.values())
-    .filter((customer) => !overrides.find((entry) => entry.id === customer.id)?.deleted)
-    .map((customer) => {
-      const favourite = Array.from(customer.itemCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
-      const saved = overrides.find((entry) => entry.id === customer.id);
-      return Object.assign(saved?.values ? [...saved.values] : [customer.name, customer.mobile ? `+91 ${customer.mobile}` : "Not provided", String(customer.points), favourite], { recordId: customer.id });
-    })
-    .sort((a, b) => Number(b[2]) - Number(a[2]));
+  const [customerType, setCustomerType] = useState("All");
+  const allRows = buildCustomerRows(salesLedger, overrides);
+  const rows = customerType === "All" ? allRows : allRows.filter(row => row.customerTypes.includes(customerType));
   function updateCustomerRows(next) {
-    setOverrides((current) => {
-      const changes = new Map(current.map((entry) => [entry.id, entry]));
-      for (const row of rows) {
-        const replacement = next.find((entry) => entry.recordId === row.recordId);
-        if (!replacement) changes.set(row.recordId, { id: row.recordId, deleted: true });
-        else if (JSON.stringify(row) !== JSON.stringify(replacement)) changes.set(row.recordId, { id: row.recordId, values: [...replacement] });
-      }
-      return [...changes.values()];
-    });
+    setOverrides(current => mergeCustomerEdits(current, rows, next));
   }
-  return <DataTable title="Customer CRM" icon={Users} columns={["Customer", "Mobile", "Loyalty", "Favourite"]} rows={rows} onRowsChange={updateCustomerRows} notify={notify} canManageAll={canManageAll} emptyMessage="No customer details yet. Complete a bill with customer name or mobile to add it here." />;
+  return <div className="crm-workspace">
+    <div className="crm-customer-filters" role="group" aria-label="Customer type filter">
+      {["All", ...customerTypes].map(type => <button key={type} type="button" aria-pressed={customerType === type} onClick={() => setCustomerType(type)}>
+        {type}<span>{type === "All" ? allRows.length : allRows.filter(row => row.customerTypes.includes(type)).length}</span>
+      </button>)}
+    </div>
+    <p className="crm-filter-help">Types follow saved bills: Wholesale pricing, Online / E-commerce orders, or Retail. Customers can appear in more than one type; loyalty and favourites cover all their purchases.</p>
+    <DataTable key={`${storeId}-${customerType}`} title="Customer CRM" icon={Users} columns={["Customer", "Mobile", "Loyalty", "Favourite", "Customer type"]} rows={rows} onRowsChange={updateCustomerRows} notify={notify} canManageAll={canManageAll} showFilter={false} readOnlyColumns={[4]} emptyMessage={customerType === "All" ? "No customer details yet. Complete a bill with customer name or mobile to add it here." : `No ${customerType.toLowerCase()} customers yet.`} />
+  </div>;
 }
 
 function ProductItemsManager({ items, setItems, notify, canManageAll, menuCategories = [], onCreateCategory, mode = "items", editingItemId = "", onNavigate }) {
@@ -7040,7 +9554,7 @@ function ProductItemsManager({ items, setItems, notify, canManageAll, menuCatego
             <section className="product-form-section">
               <div className="product-form-section-head"><div><span>Pricing & tax</span><small>Customer price and GST rate</small></div></div>
               <div className="product-form-grid">
-                <label>Product rate<div className="product-input-prefix"><span>₹</span><input type="number" min="0" step="0.01" value={draft.price} onChange={(event) => update("price", event.target.value)} disabled={!canManageAll} placeholder="0.00" /></div></label>
+                <label>Product rate<div className="product-input-prefix"><span>₹</span><input type="number" min="0" step="0.01" value={draft.price} onChange={(event) => update("price", event.target.value)} disabled={!canManageAll} /></div></label>
                 <label>GST rate<div className="product-input-suffix"><input type="number" min="0" max="100" step="0.01" value={draft.tax} onChange={(event) => update("tax", event.target.value)} disabled={!canManageAll} /><span>%</span></div></label>
               </div>
               <div className="product-tax-note"><Percent size={16} /><span>GST will appear as CGST {Number(draft.tax || 0) / 2}% + SGST {Number(draft.tax || 0) / 2}% on the bill.</span></div>
@@ -7425,8 +9939,10 @@ function financeLedgerHierarchy(ledgers, balances = {}) {
 
 function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId, view = "Expenses" }) {
   const expenseStorageKey = `vestora-finance-expenses-${storeId}`;
+  const bankAccountStorageKey = `vestora-finance-bank-accounts-${storeId}`;
   const emptyExpense = () => ({ category: "", debitAccount: "", creditAccount: "Cash", amount: "", paidFrom: "Cash", status: "Posted", date: localDateKey(), reference: "", note: "" });
   const [expenses, setExpenses] = useBusinessState(expenseStorageKey, () => loadStoredArray(expenseStorageKey));
+  const [bankAccounts] = useBusinessState(bankAccountStorageKey, () => loadStoredArray(bankAccountStorageKey));
   const [expenseDraft, setExpenseDraft] = useState(emptyExpense);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -7436,7 +9952,10 @@ function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId
   const [ledgerDraft, setLedgerDraft] = useState({ date: localDateKey(), debitAccount: "", creditAccount: "", amount: "", reference: "", note: "" });
   const [filters, setFilters] = useState({ query: "", method: "All", status: "All", from: "", to: "" });
   const ledgerMasters = loadFinanceLedgers(storeId);
-  const accountNames = financeAccountNames(ledgerMasters);
+  const accountNames = Array.from(new Set([
+    ...financeAccountNames(ledgerMasters),
+    ...bankAccounts.filter((bank) => bank.status !== "Inactive").map((bank) => bank.accountName).filter(Boolean),
+  ]));
 
   useEffect(() => {
     setExpenses(loadStoredArray(expenseStorageKey));
@@ -7552,10 +10071,11 @@ function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId
   }, 0);
   const netGst = Math.max(ledgerTax - refundedTax, 0);
   if (view !== "Expenses") {
-    return <FinanceExtendedView view={view} notify={notify} canManageAll={canManageAll} storeId={storeId} expenses={expenses} netSales={netSales} netGst={netGst} cashCollected={cashReceipts - cashRefunds} receivables={netCreditReceivables} />;
+    return <FinanceExtendedView view={view} notify={notify} canManageAll={canManageAll} storeId={storeId} expenses={expenses} salesLedger={salesLedger} refundLedger={refundLedger} netSales={netSales} netGst={netGst} cashCollected={cashReceipts - cashRefunds} receivables={netCreditReceivables} />;
   }
   return (
-    <section className="screen">
+    <section className="screen finance-design-screen">
+      <FinancePageIntro view="Expenses" />
       <div className="metric-grid compact">
         <Metric icon={BadgeIndianRupee} label="Net sales" value={formatMoney(netSales)} trend={`Gross ${formatMoney(ledgerSales)}`} />
         <Metric icon={CreditCard} label="Cash collected" value={formatMoney(cashReceipts - cashRefunds)} trend={cashRefunds ? `Refunds ${formatMoney(cashRefunds)}` : "No cash refunds"} />
@@ -7586,18 +10106,18 @@ function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId
           <button className="text-action" onClick={() => setFilters({ query: "", method: "All", status: "All", from: "", to: "" })}>Clear filters</button>
         </div>}
 
-        {formOpen && <form className="finance-expense-form" onSubmit={saveExpense}>
+        {formOpen && <FinanceEntryDialog title={editingExpenseId ? "Edit expense" : "Add expense"} onClose={() => { setFormOpen(false); setEditingExpenseId(null); setExpenseDraft(emptyExpense()); }}><form className="finance-expense-form" onSubmit={saveExpense}>
           <div className="finance-form-title"><div><span>{editingExpenseId ? "Update expense" : "New expense"}</span><strong>{editingExpenseId ? "Edit expense details" : "Record a business expense"}</strong></div><button type="button" className="icon-button" title="Close expense form" onClick={() => { setFormOpen(false); setEditingExpenseId(null); setExpenseDraft(emptyExpense()); }}><X size={18} /></button></div>
           <label>Purpose / amount gone for<select autoFocus value={expenseDraft.category} onChange={(event) => setExpenseDraft((current) => ({ ...current, category: event.target.value, debitAccount: expenseAccountForPurpose(event.target.value) }))}><option value="">Select purpose</option>{financeExpensePurposes.map((purpose) => <option key={purpose}>{purpose}</option>)}</select></label>
           <label>Debited account<select value={expenseDraft.debitAccount || expenseAccountForPurpose(expenseDraft.category)} onChange={(event) => setExpenseDraft((current) => ({ ...current, debitAccount: event.target.value }))}><option value="">Select debit account</option>{financeOptions(accountNames, expenseDraft.debitAccount).map((account) => <option key={account}>{account}</option>)}</select></label>
-          <label>Amount<input type="number" min="0" step="0.01" placeholder="0.00" value={expenseDraft.amount} onChange={(event) => setExpenseDraft((current) => ({ ...current, amount: event.target.value }))} /></label>
+          <label>Amount<input type="number" min="0" step="0.01" value={expenseDraft.amount} onChange={(event) => setExpenseDraft((current) => ({ ...current, amount: event.target.value }))} /></label>
           <label>Credited account / paid from<select value={expenseDraft.creditAccount || expenseDraft.paidFrom} onChange={(event) => setExpenseDraft((current) => ({ ...current, creditAccount: event.target.value, paidFrom: event.target.value }))}>{financeOptions(accountNames, expenseDraft.creditAccount || expenseDraft.paidFrom).map((account) => <option key={account}>{account}</option>)}</select></label>
           <label>Status<select value={expenseDraft.status} onChange={(event) => setExpenseDraft((current) => ({ ...current, status: event.target.value }))}><option>Posted</option><option>Review</option><option>Pending</option><option>Paid</option></select></label>
           <label>Date<input type="date" value={expenseDraft.date} onChange={(event) => setExpenseDraft((current) => ({ ...current, date: event.target.value }))} /></label>
           <label>Reference<input placeholder="Invoice or receipt number" value={expenseDraft.reference} onChange={(event) => setExpenseDraft((current) => ({ ...current, reference: event.target.value }))} /></label>
           <label className="finance-note">Notes<input placeholder="Optional note" value={expenseDraft.note} onChange={(event) => setExpenseDraft((current) => ({ ...current, note: event.target.value }))} /></label>
           <div className="finance-form-actions"><button type="button" onClick={() => { setFormOpen(false); setEditingExpenseId(null); setExpenseDraft(emptyExpense()); }}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />{editingExpenseId ? "Save changes" : "Save expense"}</button></div>
-        </form>}
+        </form></FinanceEntryDialog>}
 
         <div className="finance-summary"><span>Receivables <strong>{formatMoney(netCreditReceivables)}</strong></span><span>Showing <strong>{filteredExpenses.length}</strong> expenses</span><span>Total <strong>{formatMoney(expenseTotal)}</strong></span></div>
         <div className="finance-table-wrap">
@@ -7611,7 +10131,7 @@ function Finance({ notify, canManageAll, salesLedger, refundLedger = [], storeId
   );
 }
 
-function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, netSales, netGst, cashCollected, receivables }) {
+function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, salesLedger = [], refundLedger = [], netSales, netGst, cashCollected, receivables }) {
   const keyByView = {
     Receipts: `vestora-finance-receipts-${storeId}`,
     "Bank Accounts": `vestora-finance-bank-accounts-${storeId}`,
@@ -7622,7 +10142,7 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
   const blank = () => view === "Receipts"
     ? { customer: "", purpose: "Food sales", debitAccount: "Cash", creditAccount: "Sales", amount: "", method: "Cash", status: "Received", date: localDateKey(), reference: "", note: "" }
     : view === "Bank Accounts"
-      ? { accountName: "", bankName: "", accountNumber: "", openingBalance: "", status: "Active", note: "" }
+      ? { accountName: "", bankName: "", accountNumber: "", openingBalance: "", isPrimary: false, status: "Active", note: "" }
       : view === "Vendor Payments"
         ? { vendor: "", purpose: "Supplier settlement", invoice: "", dueAmount: "", amount: "", debitAccount: "Accounts payable", creditAccount: "Bank", method: "Bank", status: "Paid", date: localDateKey(), reference: "", note: "" }
       : blankFinanceJournalDraft();
@@ -7654,8 +10174,20 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
   const [reportReceipts] = useBusinessState(`vestora-finance-receipts-${storeId}`, []);
   const [reportBanks] = useBusinessState(`vestora-finance-bank-accounts-${storeId}`, []);
   const [reportVendors] = useBusinessState(`vestora-finance-vendor-payments-${storeId}`, []);
+  const [paymentPurchaseTransactions] = useBusinessState(`vestora-inventory-transactions-${storeId}`, []);
+  const [ledgerVendors] = useBusinessState(`vestora-inventory-vendors-${storeId}`, []);
+  const [selectedLedgerVendor, setSelectedLedgerVendor] = useState("");
   const [reportJournals] = useBusinessState(`vestora-finance-journals-${storeId}`, []);
   const reportRecords = { receipts: reportReceipts, banks: reportBanks, vendors: reportVendors, journals: reportJournals };
+  const bankSummaries = buildBankAccountSummaries({
+    banks: reportRecords.banks,
+    receipts: reportRecords.receipts,
+    expenses,
+    vendorPayments: reportRecords.vendors,
+    journals: reportRecords.journals.map((journal) => ({ ...journal, lines: normalizeFinanceJournalLines(journal) })),
+    salesLedger,
+    refundLedger,
+  });
 
   useEffect(() => {
     setRecords(storageKey ? loadStoredArray(storageKey) : []);
@@ -7671,6 +10203,7 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     setLedgerMasterOpen(false);
     setLedgerMasterDraft({ code: nextFinanceLedgerCode("Asset", nextLedgers), name: "", type: "Asset", group: "Current asset", status: "Active" });
     setCollapsedLedgerNodes(new Set());
+    setSelectedLedgerVendor("");
     setFilters({ query: "", method: "All", status: "All", from: "", to: "" });
   }, [storeId, view]);
 
@@ -7678,12 +10211,22 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
   const title = isReports ? "Finance reports" : view;
   const singular = view === "Receipts" ? "Receipt" : view === "Bank Accounts" ? "Bank account" : view === "Vendor Payments" ? "Vendor payment" : "Journal entry";
   const statuses = view === "Receipts" ? ["Received", "Pending", "Reversed"] : view === "Bank Accounts" ? ["Active", "Inactive"] : view === "Vendor Payments" ? ["Paid", "Partially paid", "Pending", "Cancelled"] : ["Posted", "Draft", "Review"];
-  const accountNames = financeAccountNames(ledgerMasters);
+  const activeBankAccounts = reportRecords.banks.filter((bank) => bank.status !== "Inactive" && bank.accountName);
+  const bankLedgerMasters = activeBankAccounts.map((bank) => ({
+    id: `bank-${bank.id}`,
+    name: bank.accountName,
+    code: "BANK",
+    type: "Asset",
+    group: "Bank accounts",
+    status: "Active",
+    bankAccount: true,
+  }));
+  const accountNames = Array.from(new Set([...financeAccountNames(ledgerMasters), ...activeBankAccounts.map((bank) => bank.accountName)]));
   const setValue = (field, value) => setDraft((current) => ({ ...current, [field]: value }));
-  const ledgerSelectMasters = ledgerMasters
-    .filter((ledger) => !ledger.system && ledger.status !== "Inactive")
+  const ledgerSelectMasters = [...ledgerMasters.filter((ledger) => !ledger.system), ...bankLedgerMasters]
+    .filter((ledger, index, items) => ledger.status !== "Inactive" && items.findIndex((item) => item.name.toLowerCase() === ledger.name.toLowerCase()) === index)
     .sort((a, b) => `${a.type}-${a.group}-${a.code}`.localeCompare(`${b.type}-${b.group}-${b.code}`));
-  const ledgerInfo = (name) => ledgerMasters.find((ledger) => ledger.name === name);
+  const ledgerInfo = (name) => [...ledgerMasters, ...bankLedgerMasters].find((ledger) => ledger.name === name);
   const ledgerInfoText = (name) => {
     const ledger = ledgerInfo(name);
     if (!ledger) return "";
@@ -7723,8 +10266,8 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
           <div className="journal-lines-head"><span>Account</span><span>Debit</span><span>Credit</span><span>Description</span><span></span></div>
           {lines.map((line, index) => { const fixedDebit = line.side === "debit"; const fixedCredit = line.side === "credit"; return <div className={`journal-line-row ${fixedDebit ? "debit-line" : fixedCredit ? "credit-line" : ""}`} key={line.id}>
             <label><select autoFocus={autoFocus && index === 0} value={line.account} onChange={(event) => updateLine(line.id, { account: event.target.value })} required={index < 2}><option value="">Select created ledger</option>{renderLedgerOptions(line.account)}</select><small><span>{fixedDebit ? "Debit line" : fixedCredit ? "Credit line" : "Journal line"}</span>{ledgerInfoText(line.account) || "Only created ledgers show here"}</small></label>
-            <input type="number" min="0" step="0.01" placeholder={fixedCredit ? "-" : "0.00"} value={line.debit} disabled={fixedCredit} onChange={(event) => updateLine(line.id, { debit: event.target.value, credit: event.target.value ? "" : line.credit })} />
-            <input type="number" min="0" step="0.01" placeholder={fixedDebit ? "-" : "0.00"} value={line.credit} disabled={fixedDebit} onChange={(event) => updateLine(line.id, { credit: event.target.value, debit: event.target.value ? "" : line.debit })} />
+            <input type="number" min="0" step="0.01" placeholder={fixedCredit ? "-" : ""} value={line.debit} disabled={fixedCredit} onChange={(event) => updateLine(line.id, { debit: event.target.value, credit: event.target.value ? "" : line.credit })} />
+            <input type="number" min="0" step="0.01" placeholder={fixedDebit ? "-" : ""} value={line.credit} disabled={fixedDebit} onChange={(event) => updateLine(line.id, { credit: event.target.value, debit: event.target.value ? "" : line.debit })} />
             <input placeholder="Line description" value={line.description} onChange={(event) => updateLine(line.id, { description: event.target.value })} />
             <button type="button" className="icon-action danger-action" title="Remove line" onClick={() => removeLine(line.id)}><Trash2 size={16} /></button>
           </div>; })}
@@ -7822,7 +10365,7 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     setDraft(view === "Receipts"
       ? { customer: record.customer || "", purpose: record.purpose || "Food sales", debitAccount: record.debitAccount || record.method || "Cash", creditAccount: record.creditAccount || "Sales", amount: String(record.amount || ""), method: record.method || "Cash", status: record.status || "Received", date: record.date || localDateKey(), reference: record.reference || "", note: record.note || "" }
       : view === "Bank Accounts"
-      ? { accountName: record.accountName || "", bankName: record.bankName || "", accountNumber: record.accountNumber || "", openingBalance: String(record.openingBalance || ""), status: record.status || "Active", note: record.note || "" }
+      ? { accountName: record.accountName || "", bankName: record.bankName || "", accountNumber: record.accountNumber || "", openingBalance: String(record.openingBalance || ""), isPrimary: Boolean(record.isPrimary), status: record.status || "Active", note: record.note || "" }
         : view === "Vendor Payments"
           ? { vendor: record.vendor || "", purpose: record.purpose || "Supplier settlement", invoice: record.invoice || "", dueAmount: String(record.dueAmount || ""), amount: String(record.amount || ""), debitAccount: record.debitAccount || "Accounts payable", creditAccount: record.creditAccount || record.method || "Bank", method: record.method || "Bank", status: record.status || "Paid", date: record.date || localDateKey(), reference: record.reference || "", note: record.note || "" }
         : { date: record.date || localDateKey(), purpose: record.purpose || "", reference: record.reference || "", note: record.note || "", status: record.status || "Posted", lines: normalizeFinanceJournalLines(record) });
@@ -7830,6 +10373,7 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
   }
   function saveRecord(event) {
     event.preventDefault();
+    if (!canManageAll) return notify("Only an administrator can manage finance records");
     const amount = Number(view === "Bank Accounts" ? draft.openingBalance : draft.amount);
     let record;
     if (view === "Receipts") {
@@ -7837,16 +10381,33 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
       record = { ...draft, id: editingId || `RCT-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, customer: draft.customer.trim(), purpose: draft.purpose.trim(), debitAccount: draft.debitAccount.trim(), creditAccount: draft.creditAccount.trim(), method: draft.debitAccount.trim(), amount, reference: draft.reference.trim(), note: draft.note.trim(), updatedAt: new Date().toISOString() };
     } else if (view === "Bank Accounts") {
       if (!draft.accountName.trim() || !draft.bankName.trim()) return notify("Enter account and bank name");
-      record = { ...draft, id: editingId || `BANK-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, accountName: draft.accountName.trim(), bankName: draft.bankName.trim(), accountNumber: draft.accountNumber.trim(), openingBalance: Number.isFinite(amount) ? amount : 0, note: draft.note.trim(), updatedAt: new Date().toISOString() };
+      record = { ...draft, id: editingId || `BANK-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, accountName: draft.accountName.trim(), bankName: draft.bankName.trim(), accountNumber: draft.accountNumber.trim(), openingBalance: Number.isFinite(amount) ? amount : 0, isPrimary: Boolean(draft.isPrimary), note: draft.note.trim(), updatedAt: new Date().toISOString() };
     } else if (view === "Vendor Payments") {
+      if (cloudConfigured && window.vestoraCloudStateReady !== true) return notify("Wait for cloud synchronization before recording a payment.");
       const dueAmount = Number(draft.dueAmount);
       if (!draft.vendor.trim() || !draft.purpose?.trim() || !draft.debitAccount?.trim() || !draft.creditAccount?.trim() || !Number.isFinite(amount) || amount <= 0) return notify("Enter vendor, purpose, accounts, and payment amount");
       record = { ...draft, id: editingId || `VND-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`, vendor: draft.vendor.trim(), purpose: draft.purpose.trim(), invoice: draft.invoice.trim(), dueAmount: Number.isFinite(dueAmount) ? dueAmount : 0, amount, debitAccount: draft.debitAccount.trim(), creditAccount: draft.creditAccount.trim(), method: draft.creditAccount.trim(), reference: draft.reference.trim(), note: draft.note.trim(), updatedAt: new Date().toISOString() };
+      const originalPayment = records.find((payment) => payment.id === editingId);
+      const purchaseId = originalPayment?.purchaseId || draft.purchaseId || "";
+      const payables = buildPurchasePayables(loadStoredArray(`vestora-inventory-transactions-${storeId}`), records.filter((payment) => payment.id !== editingId));
+      const purchase = purchaseId ? payables.find((entry) => entry.id === purchaseId) : payables.find((entry) => paymentMatchesPurchase(record, entry));
+      if (purchaseId && !purchase) return notify("The linked purchase bill is no longer available.");
+      if (purchase) {
+        if (!paymentMatchesPurchase({ vendor: record.vendor, invoice: record.invoice }, purchase)) return notify("The vendor and invoice must match the linked purchase bill.");
+        if (!["Cancelled", "Reversed", "Pending"].includes(record.status) && amount > purchase.balance + 0.005) return notify(`Payment cannot exceed the outstanding balance of ${formatPreciseMoney(purchase.balance)}.`);
+        record.purchaseId = purchase.id;
+        record.dueAmount = purchase.balance;
+      }
     } else {
       record = prepareJournalRecord(draft, editingId);
       if (!record) return notify("Select ledger accounts, enter at least two valid lines, and match debit and credit totals");
     }
-    saveRecords((current) => editingId ? current.map((item) => item.id === editingId ? record : item) : [record, ...current]);
+    saveRecords((current) => {
+      const next = editingId ? current.map((item) => item.id === editingId ? record : item) : [record, ...current];
+      return view === "Bank Accounts" && record.isPrimary
+        ? next.map((item) => ({ ...item, isPrimary: item.id === record.id }))
+        : next;
+    });
     notify(editingId ? `${singular} updated` : `${singular} saved`);
     resetForm();
   }
@@ -7870,7 +10431,9 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     notify("Ledger entry posted");
   }
 
-  const filtered = records.filter((record) => {
+  const recordsForView = view === "Bank Accounts" ? bankSummaries : view === "Vendor Payments"
+    ? withPaymentPurchaseNumbers(records, buildPurchasePayables(paymentPurchaseTransactions, records)) : records;
+  const filtered = view === "Vendor Payments" ? filterVendorPaymentHistory(recordsForView, filters) : recordsForView.filter((record) => {
     const text = JSON.stringify(record).toLowerCase();
     return (!filters.query || text.includes(filters.query.toLowerCase()))
       && (!["Receipts", "Vendor Payments"].includes(view) || filters.method === "All" || record.method === filters.method || record.debitAccount === filters.method || record.creditAccount === filters.method)
@@ -7907,18 +10470,13 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
       { date: item.date, account: item.creditAccount || item.paidFrom || "Cash", debit: 0, credit: Number(item.amount || 0), source: "Expense", reference: item.reference || item.id, details: item.category },
     ]),
     ...reportRecords.vendors.filter((item) => item.status !== "Cancelled").flatMap((item) => [
-      { date: item.date, account: item.debitAccount || `Accounts payable - ${item.vendor}`, debit: Number(item.amount || 0), credit: 0, source: "Vendor payment", reference: item.reference || item.invoice || item.id, details: `${item.purpose || "Vendor settlement"} - ${item.vendor}` },
-      { date: item.date, account: item.creditAccount || item.method || "Bank", debit: 0, credit: Number(item.amount || 0), source: "Vendor payment", reference: item.reference || item.invoice || item.id, details: item.vendor },
+      { date: item.date, vendor: item.vendor, account: item.debitAccount || `Accounts payable - ${item.vendor}`, debit: Number(item.amount || 0), credit: 0, source: "Vendor payment", reference: item.reference || item.invoice || item.id, details: `${item.purpose || "Vendor settlement"} - ${item.vendor}` },
+      { date: item.date, vendor: item.vendor, account: item.creditAccount || item.method || "Bank", debit: 0, credit: Number(item.amount || 0), source: "Vendor payment", reference: item.reference || item.invoice || item.id, details: item.vendor },
     ]),
     ...reportRecords.journals.filter((item) => item.status === "Posted").flatMap((item) => normalizeFinanceJournalLines(item).map((line) => ({ date: item.date, account: line.account, debit: Number(line.debit || 0), credit: Number(line.credit || 0), source: "Journal", reference: item.reference || item.id, details: line.description || `${item.purpose || "Journal"}${item.note ? ` - ${item.note}` : ""}` }))),
   ].filter((item) => item.account);
-  const runningBalances = {};
-  const ledgerRowsWithBalances = rawLedgerRows.sort((a, b) => `${a.date}-${a.reference}`.localeCompare(`${b.date}-${b.reference}`)).map((item) => {
-    const balance = (runningBalances[item.account] || 0) + item.debit - item.credit;
-    runningBalances[item.account] = balance;
-    return { ...item, balance };
-  }).filter((item) => (!filters.query || `${item.account} ${item.reference} ${item.details}`.toLowerCase().includes(filters.query.toLowerCase())) && (!filters.from || item.date >= filters.from) && (!filters.to || item.date <= filters.to));
-  const ledgerRows = ledgerRowsWithBalances;
+  const vendorLedgerOptions = ledgerVendorOptions(ledgerVendors, reportRecords.vendors);
+  const { ledgerRows, runningBalances } = buildFilteredLedgerActivity(rawLedgerRows, { ...filters, vendor: selectedLedgerVendor });
   const visibleLedgerBalances = {};
   ledgerRows.forEach((item) => { visibleLedgerBalances[item.account] = item.balance; });
   const ledgerAccounts = Object.entries(visibleLedgerBalances).sort(([a], [b]) => a.localeCompare(b));
@@ -7937,24 +10495,30 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
   const financeExportColumns = view === "Receipts"
     ? ["date", "customer", "purpose", "debitAccount", "creditAccount", "reference", "amount", "status", "note"]
     : view === "Bank Accounts"
-      ? ["accountName", "bankName", "accountNumber", "openingBalance", "status", "note"]
+      ? ["accountName", "bankName", "accountNumber", "openingBalance", "moneyIn", "moneyOut", "currentBalance", "transactionCount", "isPrimary", "status", "note"]
       : view === "Vendor Payments"
-        ? ["date", "vendor", "purpose", "invoice", "dueAmount", "amount", "debitAccount", "creditAccount", "status", "reference", "note"]
+        ? ["date", "vendor", "purchaseNumber", "purpose", "invoice", "dueAmount", "amount", "debitAccount", "creditAccount", "status", "reference", "note"]
         : ["date", "purpose", "reference", "debitAccount", "creditAccount", "amount", "status", "note"];
-  const financeTableColumnCount = view === "Vendor Payments" ? 11 : view === "Bank Accounts" ? 6 : view === "Journal Entries" ? 8 : 9;
+  const financeTableColumnCount = view === "Vendor Payments" ? 12 : view === "Bank Accounts" ? 6 : view === "Journal Entries" ? 8 : 9;
+  const bankMoneyIn = bankSummaries.reduce((sum, bank) => sum + Number(bank.moneyIn || 0), 0);
+  const bankMoneyOut = bankSummaries.reduce((sum, bank) => sum + Number(bank.moneyOut || 0), 0);
+  const bankCurrentBalance = bankSummaries.reduce((sum, bank) => sum + Number(bank.currentBalance || 0), 0);
+  const bankActivity = (view === "Bank Accounts" ? filtered : bankSummaries)
+    .flatMap((bank) => bank.transactions || [])
+    .sort((a, b) => `${b.date || ""}-${b.reference || ""}`.localeCompare(`${a.date || ""}-${a.reference || ""}`));
 
-  if (isLedger) return <section className="screen"><div className="metric-grid compact">
+  if (isLedger) return <section className="screen finance-design-screen"><FinancePageIntro view={view} /><div className="metric-grid compact">
     <Metric icon={BookOpen} label="Ledger accounts" value={ledgerAccounts.length} trend="Accounts with recorded movement" />
     <Metric icon={ReceiptText} label="Total debits" value={formatMoney(ledgerRows.reduce((sum, item) => sum + item.debit, 0))} trend="Selected ledger period" />
     <Metric icon={CreditCard} label="Total credits" value={formatMoney(ledgerRows.reduce((sum, item) => sum + item.credit, 0))} trend="Selected ledger period" />
     <Metric icon={ClipboardList} label="Ledger entries" value={ledgerRows.length} trend="Receipts, expenses, vendor payments, journals" />
   </div><section className="panel finance-workspace"><div className="panel-head finance-head"><div><BookOpen /><h2>General ledger</h2></div><div className="finance-actions ledger-toolbar"><button className="ledger-toolbar-primary" onClick={() => { if (!canManageAll) return notify("Only an administrator can create ledgers"); setLedgerMasterOpen(true); setLedgerFormOpen(false); }}><Plus size={18} />Create ledger</button><button className="ledger-toolbar-primary" onClick={() => { if (!canManageAll) return notify("Only an administrator can create ledger entries"); setLedgerFormOpen(true); setLedgerMasterOpen(false); }}><ClipboardList size={18} />Post journal entry</button><button className={filtersOpen ? "active-action" : ""} onClick={() => setFiltersOpen((open) => !open)}><SlidersHorizontal size={18} />Filter</button><button className={rangeOpen ? "active-action" : ""} onClick={() => setRangeOpen((open) => !open)}><CalendarClock size={18} />Date range</button><button onClick={() => downloadCsv("uvpro-general-ledger.csv", ["Date", "Account", "Source", "Reference", "Details", "Debit", "Credit", "Balance"], ledgerRows.map((item) => ({ Date: item.date, Account: item.account, Source: item.source, Reference: item.reference, Details: item.details, Debit: item.debit, Credit: item.credit, Balance: item.balance })))}><Download size={18} />Export</button></div></div>
-    {ledgerMasterOpen && <form className="finance-expense-form ledger-master-form" onSubmit={saveLedgerMaster}><div className="finance-form-title"><div><span>Ledger master</span><h3>Create ledger account</h3></div><button type="button" className="icon-action" title="Close ledger form" onClick={() => setLedgerMasterOpen(false)}><X size={18} /></button></div><label>Auto code<input value={ledgerMasterDraft.code} readOnly /></label><label>Ledger name<input autoFocus placeholder="Bank Charges" value={ledgerMasterDraft.name} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, name: event.target.value }))} required /></label><label>Account type<select value={ledgerMasterDraft.type} onChange={(event) => updateLedgerMasterType(event.target.value)}>{Object.keys(financeLedgerGroups).map((type) => <option key={type}>{type}</option>)}</select></label><label>Group<select value={ledgerMasterDraft.group} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, group: event.target.value }))}>{(financeLedgerGroups[ledgerMasterDraft.type] || []).map((group) => <option key={group}>{group}</option>)}</select></label><label>Status<select value={ledgerMasterDraft.status} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, status: event.target.value }))}><option>Active</option><option>Inactive</option></select></label><div className="finance-form-actions"><button type="button" onClick={() => setLedgerMasterOpen(false)}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />Save ledger</button></div></form>}
-    {ledgerFormOpen && <form className="finance-expense-form journal-entry-form" onSubmit={saveLedgerEntry}><div className="finance-form-title"><div><span>Manual journal</span><h3>Create balanced ledger entry</h3></div><button type="button" className="icon-action" title="Close ledger entry form" onClick={() => setLedgerFormOpen(false)}><X size={18} /></button></div>{renderJournalFields(ledgerDraft, (patch) => setLedgerDraft((current) => ({ ...current, ...patch })), true)}<label className="finance-note">Notes<input placeholder="Optional note for this journal" value={ledgerDraft.note} onChange={(event) => setLedgerDraft((current) => ({ ...current, note: event.target.value }))} /></label><div className="finance-form-actions"><button type="button" onClick={() => setLedgerFormOpen(false)}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />Post entry</button></div></form>}
-    {(filtersOpen || rangeOpen) && <div className="finance-filter-row ledger-filter-panel">{filtersOpen && <label className="finance-search"><Search size={18} /><input placeholder="Search account, reference, or details" value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>}{rangeOpen && <><label>Start date<input type="date" value={filters.from} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} /></label><label>End date<input type="date" value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} /></label></>}<button className="text-action" onClick={() => setFilters({ query: "", method: "All", status: "All", from: "", to: "" })}>Clear filters</button></div>}
+    {ledgerMasterOpen && <FinanceEntryDialog title="Create ledger" onClose={() => setLedgerMasterOpen(false)}><form className="finance-expense-form ledger-master-form" onSubmit={saveLedgerMaster}><div className="finance-form-title"><div><span>Ledger master</span><h3>Create ledger account</h3></div><button type="button" className="icon-action" title="Close ledger form" onClick={() => setLedgerMasterOpen(false)}><X size={18} /></button></div><label>Auto code<input value={ledgerMasterDraft.code} readOnly /></label><label>Ledger name<input autoFocus placeholder="Bank Charges" value={ledgerMasterDraft.name} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, name: event.target.value }))} required /></label><label>Account type<select value={ledgerMasterDraft.type} onChange={(event) => updateLedgerMasterType(event.target.value)}>{Object.keys(financeLedgerGroups).map((type) => <option key={type}>{type}</option>)}</select></label><label>Group<select value={ledgerMasterDraft.group} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, group: event.target.value }))}>{(financeLedgerGroups[ledgerMasterDraft.type] || []).map((group) => <option key={group}>{group}</option>)}</select></label><label>Status<select value={ledgerMasterDraft.status} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, status: event.target.value }))}><option>Active</option><option>Inactive</option></select></label><div className="finance-form-actions"><button type="button" onClick={() => setLedgerMasterOpen(false)}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />Save ledger</button></div></form></FinanceEntryDialog>}
+    {ledgerFormOpen && <FinanceEntryDialog title="Create ledger entry" onClose={() => setLedgerFormOpen(false)}><form className="finance-expense-form journal-entry-form" onSubmit={saveLedgerEntry}><div className="finance-form-title"><div><span>Manual journal</span><h3>Create balanced ledger entry</h3></div><button type="button" className="icon-action" title="Close ledger entry form" onClick={() => setLedgerFormOpen(false)}><X size={18} /></button></div>{renderJournalFields(ledgerDraft, (patch) => setLedgerDraft((current) => ({ ...current, ...patch })), true)}<label className="finance-note">Notes<input placeholder="Optional note for this journal" value={ledgerDraft.note} onChange={(event) => setLedgerDraft((current) => ({ ...current, note: event.target.value }))} /></label><div className="finance-form-actions"><button type="button" onClick={() => setLedgerFormOpen(false)}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />Post entry</button></div></form></FinanceEntryDialog>}
+    <div className="finance-filter-row ledger-filter-panel ledger-vendor-filters"><label>Vendor<select aria-label="Ledger vendor" value={selectedLedgerVendor} onChange={(event) => setSelectedLedgerVendor(event.target.value)}><option value="">All vendors / all activity</option>{vendorLedgerOptions.map((vendor) => <option key={vendor.value} value={vendor.value}>{vendor.label}</option>)}</select></label>{filtersOpen && <label className="finance-search"><Search size={18} /><input placeholder="Search account, reference, or details" value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>}{rangeOpen && <><label>Start date<input type="date" value={filters.from} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} /></label><label>End date<input type="date" value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} /></label></>}<button className="text-action" onClick={() => { setSelectedLedgerVendor(""); setFilters({ query: "", method: "All", status: "All", from: "", to: "" }); }}>Clear filters</button></div>
   <div className="ledger-report-shell"><div className="ledger-report-hero"><div><span>General ledger report</span><h3>Chart of accounts and activity</h3><p>Review custom ledger groups, account balances, and posted debit or credit movements in one easy report view.</p></div><div className="ledger-report-total"><small>Net movement</small><strong>{formatMoney(ledgerRows.reduce((sum, item) => sum + item.debit - item.credit, 0))}</strong><em>{ledgerRows.length} posted lines</em></div></div><div className="finance-summary chart-account-summary"><span>Chart of accounts</span><div className="chart-account-tools"><span><strong>{customLedgerMasters.length}</strong> custom ledgers</span><button type="button" onClick={expandAllLedgerNodes} disabled={!ledgerTreeNodeKeys.length || !allLedgerNodesCollapsed}><ChevronDown size={16} />Expand all</button><button type="button" onClick={collapseAllLedgerNodes} disabled={!ledgerTreeNodeKeys.length || allLedgerNodesCollapsed}><ChevronRight size={16} />Collapse all</button></div></div><div className="chart-account-table"><div className="chart-account-head"><span>Account group</span><span>Balance</span></div>{ledgerHierarchy.length ? ledgerHierarchy.map((section) => { const typeKey = `type:${section.type}`; const typeClosed = collapsedLedgerNodes.has(typeKey); return <div className="chart-account-section" key={section.type}><button type="button" className="chart-account-row type-row" onClick={() => toggleLedgerNode(typeKey)} aria-expanded={!typeClosed}><span>{typeClosed ? <ChevronRight size={15} /> : <ChevronDown size={15} />} {typeClosed ? <Folder size={17} /> : <FolderOpen size={17} />} <strong>{section.type}</strong> <em>{section.groups.length} groups</em></span><b>{formatMoney(section.balance)}</b></button>{!typeClosed && section.groups.map((group) => { const groupKey = `group:${section.type}:${group.name}`; const groupClosed = collapsedLedgerNodes.has(groupKey); return <div className="chart-account-group" key={groupKey}><button type="button" className="chart-account-row group-row" onClick={() => toggleLedgerNode(groupKey)} aria-expanded={!groupClosed}><span>{groupClosed ? <ChevronRight size={15} /> : <ChevronDown size={15} />} {groupClosed ? <Folder size={17} /> : <FolderOpen size={17} />} <strong>{group.name}</strong> <em>{group.ledgers.length} ledgers</em></span><b>{formatMoney(group.balance)}</b></button>{!groupClosed && group.ledgers.map((ledger) => <div className="chart-account-row ledger-row" key={ledger.id || ledger.code}><span><BookOpen size={15} /> <strong>{ledger.code}</strong> - {ledger.name}</span><b>{formatMoney(runningBalances[ledger.name] || 0)}</b></div>)}</div>; })}</div>; }) : <div className="finance-empty">No custom ledgers created. Use Create ledger to add bank charges, capital, loan, asset, income, or expense ledgers.</div>}</div><div className="ledger-section-heading"><div><span>Posted activity</span><strong>Transaction movement</strong></div><small>Debit and credit lines are shown with running balance per ledger.</small></div><div className="finance-table-wrap ledger-activity-table"><table className="finance-table"><thead><tr><th>Date</th><th>Account</th><th>Source</th><th>Reference</th><th>Details</th><th>Debit</th><th>Credit</th><th>Running balance</th></tr></thead><tbody>{ledgerRows.length ? ledgerRows.map((item, index) => <tr key={`${item.account}-${item.reference}-${index}`}><td>{item.date || "-"}</td><td><strong>{item.account}</strong></td><td><span className="ledger-source-pill">{item.source}</span></td><td>{item.reference}</td><td>{item.details || "-"}</td><td>{item.debit ? formatMoney(item.debit) : "-"}</td><td>{item.credit ? formatMoney(item.credit) : "-"}</td><td><strong>{formatMoney(item.balance)}</strong></td></tr>) : <tr><td colSpan="8" className="finance-empty">No ledger entries match this period. Create a ledger entry or record receipts, expenses, vendor payments, or journals.</td></tr>}</tbody></table></div>{ledgerAccounts.length > 0 && <div className="finance-summary ledger-account-summary">{ledgerAccounts.map(([account, balance]) => <span key={account}>{account} <strong>{formatMoney(balance)}</strong></span>)}</div>}</div></section></section>;
 
-  if (isReports) return <section className="screen"><div className="metric-grid compact">
+  if (isReports) return <section className="screen finance-design-screen"><FinancePageIntro view={view} /><div className="metric-grid compact">
     <Metric icon={BadgeIndianRupee} label="Net sales" value={formatMoney(netSales)} trend="POS sales after refunds" />
     <Metric icon={ReceiptText} label="Recorded receipts" value={formatMoney(receiptTotal)} trend={`${receipts.length} received records`} />
     <Metric icon={DatabaseZap} label="Expenses" value={formatMoney(expenseTotal)} trend={`${expenses.length} expense records`} />
@@ -7962,11 +10526,62 @@ function FinanceExtendedView({ view, notify, canManageAll, storeId, expenses, ne
     <Metric icon={BadgeIndianRupee} label="Vendor paid" value={formatMoney(vendorPaymentTotal)} trend={`${reportRecords.vendors.length} vendor payments`} />
   </div><section className="panel finance-workspace"><div className="panel-head finance-head"><div><FileBarChart /><h2>Finance reports</h2></div><button onClick={() => downloadCsv("uvpro-finance-report.csv", ["Date", "Type", "Reference", "Details", "Method", "Amount", "Status"], reportRows.map((item) => ({ Date: item.date, Type: item.type, Reference: item.reference, Details: item.details, Method: item.method, Amount: item.amount, Status: item.status })))}><Download size={18} />Export</button></div><div className="finance-summary"><span>Cash collected <strong>{formatMoney(cashCollected)}</strong></span><span>Receivables <strong>{formatMoney(receivables)}</strong></span><span>Bank accounts <strong>{reportRecords.banks.length}</strong></span><span>Net GST <strong>{formatMoney(netGst)}</strong></span></div><div className="finance-table-wrap"><table className="finance-table"><thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Details</th><th>Method</th><th>Amount</th><th>Status</th></tr></thead><tbody>{reportRows.length ? reportRows.map((item, index) => <tr key={`${item.type}-${item.reference}-${index}`}><td>{item.date || "-"}</td><td>{item.type}</td><td>{item.reference}</td><td>{item.details}</td><td>{item.method}</td><td>{formatMoney(item.amount)}</td><td><span className={`status-pill ${String(item.status).toLowerCase()}`}>{item.status}</span></td></tr>) : <tr><td colSpan="7" className="finance-empty">No finance activity recorded yet.</td></tr>}</tbody></table></div></section></section>;
 
-  return <section className="screen"><div className="metric-grid compact"><Metric icon={BadgeIndianRupee} label="Net sales" value={formatMoney(netSales)} trend="POS sales after refunds" /><Metric icon={CreditCard} label="Cash collected" value={formatMoney(cashCollected)} trend="POS cash payments" /><Metric icon={DatabaseZap} label="Expenses" value={formatMoney(expenseTotal)} trend={`${expenses.length} expense records`} /><Metric icon={ReceiptText} label="Receivables" value={formatMoney(receivables)} trend="Credit due" /></div><section className="panel finance-workspace"><div className="panel-head finance-head"><div>{view === "Receipts" ? <ReceiptText /> : view === "Bank Accounts" ? <CreditCard /> : view === "Vendor Payments" ? <BadgeIndianRupee /> : <ClipboardList />}<h2>{title}</h2></div><div className="finance-actions"><button onClick={openNew}><Plus size={18} />{view === "Receipts" ? "Record receipt" : view === "Bank Accounts" ? "Add bank account" : view === "Vendor Payments" ? "Record vendor payment" : "Record journal"}</button><button className={filtersOpen ? "active-action" : ""} onClick={() => setFiltersOpen((open) => !open)}><SlidersHorizontal size={18} />Filter</button>{view !== "Bank Accounts" && <button className={rangeOpen ? "active-action" : ""} onClick={() => setRangeOpen((open) => !open)}><CalendarClock size={18} />Date range</button>}<button onClick={() => downloadCsv(`uvpro-${view.toLowerCase().replaceAll(" ", "-")}.csv`, financeExportColumns, filtered)}><Download size={18} />Export</button></div></div>
-    {(filtersOpen || rangeOpen) && <div className="finance-filter-row">{filtersOpen && <><label className="finance-search"><Search size={18} /><input placeholder={`Search ${title.toLowerCase()}`} value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>{["Receipts", "Vendor Payments"].includes(view) && <label>Debit / credit account<select value={filters.method} onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value }))}><option>All</option>{accountNames.map((account) => <option key={account}>{account}</option>)}</select></label>}<label>Status<select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option>All</option>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label></>}{rangeOpen && <><label>Start date<input type="date" value={filters.from} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} /></label><label>End date<input type="date" value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} /></label></>}<button className="text-action" onClick={() => setFilters({ query: "", method: "All", status: "All", from: "", to: "" })}>Clear filters</button></div>}
-    {ledgerMasterOpen && <form className="finance-expense-form ledger-master-form" onSubmit={saveLedgerMaster}><div className="finance-form-title"><div><span>Ledger master</span><h3>Create ledger account</h3></div><button type="button" className="icon-action" title="Close ledger form" onClick={() => setLedgerMasterOpen(false)}><X size={18} /></button></div><label>Auto code<input value={ledgerMasterDraft.code} readOnly /></label><label>Ledger name<input autoFocus placeholder="Bank Charges" value={ledgerMasterDraft.name} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, name: event.target.value }))} required /></label><label>Account type<select value={ledgerMasterDraft.type} onChange={(event) => updateLedgerMasterType(event.target.value)}>{Object.keys(financeLedgerGroups).map((type) => <option key={type}>{type}</option>)}</select></label><label>Group<select value={ledgerMasterDraft.group} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, group: event.target.value }))}>{(financeLedgerGroups[ledgerMasterDraft.type] || []).map((group) => <option key={group}>{group}</option>)}</select></label><label>Status<select value={ledgerMasterDraft.status} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, status: event.target.value }))}><option>Active</option><option>Inactive</option></select></label><div className="finance-form-actions"><button type="button" onClick={() => setLedgerMasterOpen(false)}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />Save ledger</button></div></form>}
-    {formOpen && <form className={`finance-expense-form ${view === "Journal Entries" ? "journal-entry-form" : ""}`} onSubmit={saveRecord}><div className="finance-form-title"><div><span>{editingId ? `Update ${singular.toLowerCase()}` : `New ${singular.toLowerCase()}`}</span><strong>{title}</strong></div><button type="button" className="icon-button" title="Close form" onClick={resetForm}><X size={18} /></button></div>{view === "Receipts" && <><label>Customer<input autoFocus placeholder="Customer name" value={draft.customer} onChange={(event) => setValue("customer", event.target.value)} /></label><label>Purpose / received for<select value={draft.purpose || "Food sales"} onChange={(event) => setValue("purpose", event.target.value)}>{financeReceiptPurposes.map((purpose) => <option key={purpose}>{purpose}</option>)}</select></label><label>Debited account / received into<select value={draft.debitAccount || draft.method || "Cash"} onChange={(event) => { setValue("debitAccount", event.target.value); setValue("method", event.target.value); }}>{financeOptions(accountNames, draft.debitAccount || draft.method).map((account) => <option key={account}>{account}</option>)}</select></label><label>Credited account<select value={draft.creditAccount || "Sales"} onChange={(event) => setValue("creditAccount", event.target.value)}>{financeOptions(accountNames, draft.creditAccount || "Sales").map((account) => <option key={account}>{account}</option>)}</select></label><label>Amount<input type="number" min="0" step="0.01" value={draft.amount} onChange={(event) => setValue("amount", event.target.value)} /></label><label>Date<input type="date" value={draft.date} onChange={(event) => setValue("date", event.target.value)} /></label></>}{view === "Bank Accounts" && <><label>Account name<input autoFocus placeholder="Current account" value={draft.accountName} onChange={(event) => setValue("accountName", event.target.value)} /></label><label>Bank name<input placeholder="Bank name" value={draft.bankName} onChange={(event) => setValue("bankName", event.target.value)} /></label><label>Account number<input placeholder="Last four digits or account number" value={draft.accountNumber} onChange={(event) => setValue("accountNumber", event.target.value)} /></label><label>Opening balance<input type="number" step="0.01" value={draft.openingBalance} onChange={(event) => setValue("openingBalance", event.target.value)} /></label></>}{view === "Vendor Payments" && <><label>Vendor<input autoFocus placeholder="Supplier or vendor name" value={draft.vendor} onChange={(event) => setValue("vendor", event.target.value)} /></label><label>Purpose / paid for<select value={draft.purpose || "Supplier settlement"} onChange={(event) => setValue("purpose", event.target.value)}>{financeJournalPurposes.map((purpose) => <option key={purpose}>{purpose}</option>)}</select></label><label>Invoice no.<input placeholder="Supplier invoice number" value={draft.invoice} onChange={(event) => setValue("invoice", event.target.value)} /></label><label>Due amount<input type="number" min="0" step="0.01" value={draft.dueAmount} onChange={(event) => setValue("dueAmount", event.target.value)} /></label><label>Paid amount<input type="number" min="0" step="0.01" value={draft.amount} onChange={(event) => setValue("amount", event.target.value)} /></label><label>Debited account<select value={draft.debitAccount || "Accounts payable"} onChange={(event) => setValue("debitAccount", event.target.value)}>{financeOptions(accountNames, draft.debitAccount || "Accounts payable").map((account) => <option key={account}>{account}</option>)}</select></label><label>Credited account / paid from<select value={draft.creditAccount || draft.method || "Bank"} onChange={(event) => { setValue("creditAccount", event.target.value); setValue("method", event.target.value); }}>{financeOptions(accountNames, draft.creditAccount || draft.method).map((account) => <option key={account}>{account}</option>)}</select></label><label>Date<input type="date" value={draft.date} onChange={(event) => setValue("date", event.target.value)} /></label></>}{view === "Journal Entries" && renderJournalFields(draft, (patch) => setDraft((current) => ({ ...current, ...patch })), true)}<label>Status<select value={draft.status} onChange={(event) => setValue("status", event.target.value)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label><label>Reference<input placeholder="Invoice, voucher, or receipt number" value={draft.reference || ""} onChange={(event) => setValue("reference", event.target.value)} /></label><label className="finance-note">Notes<input placeholder="Optional note" value={draft.note} onChange={(event) => setValue("note", event.target.value)} /></label><div className="finance-form-actions"><button type="button" onClick={resetForm}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />{editingId ? "Save changes" : `Save ${singular.toLowerCase()}`}</button></div></form>}
-    <div className="finance-summary"><span>Showing <strong>{filtered.length}</strong> records</span><span>{view === "Receipts" ? "Received" : view === "Bank Accounts" ? "Opening balance" : view === "Vendor Payments" ? "Paid to vendors" : "Posted value"} <strong>{formatMoney(filtered.reduce((sum, item) => sum + Number(item.amount ?? item.openingBalance ?? 0), 0))}</strong></span></div><div className="finance-table-wrap"><table className="finance-table"><thead><tr>{view === "Receipts" ? <><th>Date</th><th>Customer</th><th>Purpose</th><th>Debited</th><th>Credited</th><th>Receipt no.</th><th>Amount</th></> : view === "Bank Accounts" ? <><th>Account</th><th>Bank</th><th>Account number</th><th>Opening balance</th></> : view === "Vendor Payments" ? <><th>Date</th><th>Vendor</th><th>Purpose</th><th>Invoice no.</th><th>Due</th><th>Paid</th><th>Balance</th><th>Debited</th><th>Credited</th></> : <><th>Date</th><th>Purpose</th><th>Entry no.</th><th>Debited</th><th>Credited</th><th>Amount</th></>}<th>Status</th><th>Actions</th></tr></thead><tbody>{filtered.length ? filtered.map((record) => <tr key={record.id}>{view === "Receipts" ? <><td>{record.date}</td><td><strong>{record.customer}</strong>{record.note && <small>{record.note}</small>}</td><td>{record.purpose || "Food sales"}</td><td>{record.debitAccount || record.method}</td><td>{record.creditAccount || "Sales"}</td><td>{record.reference || record.id}</td><td>{formatMoney(record.amount)}</td></> : view === "Bank Accounts" ? <><td><strong>{record.accountName}</strong>{record.note && <small>{record.note}</small>}</td><td>{record.bankName}</td><td>{record.accountNumber || "-"}</td><td>{formatMoney(record.openingBalance)}</td></> : view === "Vendor Payments" ? <><td>{record.date}</td><td><strong>{record.vendor}</strong>{record.note && <small>{record.note}</small>}</td><td>{record.purpose || "Supplier settlement"}</td><td>{record.invoice || record.reference || "-"}</td><td>{formatMoney(record.dueAmount)}</td><td>{formatMoney(record.amount)}</td><td>{formatMoney(Math.max(0, Number(record.dueAmount || 0) - Number(record.amount || 0)))}</td><td>{record.debitAccount || `Accounts payable - ${record.vendor}`}</td><td>{record.creditAccount || record.method}</td></> : <><td>{record.date}</td><td>{record.purpose || "Journal"}</td><td>{record.reference || record.id}</td><td>{record.debitAccount}</td><td>{record.creditAccount}</td><td>{formatMoney(record.amount)}</td></>}<td><span className={`status-pill ${String(record.status).toLowerCase()}`}>{record.status}</span></td><td><div className="row-actions"><button title={`Edit ${singular.toLowerCase()}`} onClick={() => editRecord(record)}><Pencil size={17} />Edit</button><button className="danger-action" title={`Delete ${singular.toLowerCase()}`} onClick={() => deleteRecord(record)}><Trash2 size={17} />Delete</button></div></td></tr>) : <tr><td colSpan={financeTableColumnCount} className="finance-empty">No {title.toLowerCase()} records match this view.</td></tr>}</tbody></table></div></section></section>;
+  if (view === "Bank Accounts") return <section className="screen bank-ledger-screen finance-design-screen">
+    <FinancePageIntro view={view} />
+    <div className="metric-grid compact">
+      <Metric icon={CreditCard} label="Active accounts" value={bankSummaries.filter((bank) => bank.status !== "Inactive").length} trend={`${bankActivity.length} reflected transactions`} />
+      <Metric icon={Download} label="Money in" value={formatMoney(bankMoneyIn)} trend="Receipts, bank sales, and journal debits" />
+      <Metric icon={Upload} label="Money out" value={formatMoney(bankMoneyOut)} trend="Expenses, payments, refunds, and journal credits" />
+      <Metric icon={BadgeIndianRupee} label="Current bank balance" value={formatMoney(bankCurrentBalance)} trend="Opening balance + money in - money out" />
+    </div>
+    <section className="panel finance-workspace">
+      <div className="panel-head finance-head">
+        <div><CreditCard /><div><h2>Bank accounts</h2><small>Live balances from every completed bank transaction</small></div></div>
+        <div className="finance-actions">
+          <button onClick={openNew}><Plus size={18} />Add bank account</button>
+          <button className={filtersOpen ? "active-action" : ""} onClick={() => setFiltersOpen((open) => !open)}><SlidersHorizontal size={18} />Filter</button>
+          <button onClick={() => downloadCsv("uvpro-bank-accounts.csv", financeExportColumns, filtered)}><Download size={18} />Export</button>
+        </div>
+      </div>
+      {filtersOpen && <div className="finance-filter-row">
+        <label className="finance-search"><Search size={18} /><input placeholder="Search account, bank, or number" value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>
+        <label>Status<select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option>All</option>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+        <button className="text-action" onClick={() => setFilters({ query: "", method: "All", status: "All", from: "", to: "" })}>Clear filters</button>
+      </div>}
+      {formOpen && <FinanceEntryDialog title={editingId ? `Edit ${singular.toLowerCase()}` : `New ${singular.toLowerCase()}`} onClose={resetForm}><form className="finance-expense-form bank-account-form" onSubmit={saveRecord}>
+        <div className="finance-form-title"><div><span>{editingId ? "Update bank account" : "New bank account"}</span><strong>Settlement account details</strong></div><button type="button" className="icon-button" title="Close form" onClick={resetForm}><X size={18} /></button></div>
+        <label>Account name<input autoFocus placeholder="HDFC current account" value={draft.accountName} onChange={(event) => setValue("accountName", event.target.value)} required /></label>
+        <label>Bank name<input placeholder="Bank name" value={draft.bankName} onChange={(event) => setValue("bankName", event.target.value)} required /></label>
+        <label>Account number<input placeholder="Last four digits or account number" value={draft.accountNumber} onChange={(event) => setValue("accountNumber", event.target.value)} /></label>
+        <label>Opening balance<input type="number" step="0.01" value={draft.openingBalance} onChange={(event) => setValue("openingBalance", event.target.value)} /></label>
+        <label>Status<select value={draft.status} onChange={(event) => setValue("status", event.target.value)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+        <label className="bank-primary-field"><span>Default settlement</span><select value={draft.isPrimary ? "Yes" : "No"} onChange={(event) => setValue("isPrimary", event.target.value === "Yes")}><option>No</option><option>Yes</option></select><small>Generic Card, UPI, Bank, Online, Wallet, and Cheque transactions use this account.</small></label>
+        <label className="finance-note">Notes<input placeholder="Optional account note" value={draft.note || ""} onChange={(event) => setValue("note", event.target.value)} /></label>
+        <div className="finance-form-actions"><button type="button" onClick={resetForm}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />{editingId ? "Save changes" : "Save bank account"}</button></div>
+      </form></FinanceEntryDialog>}
+      <div className="bank-routing-note"><CreditCard size={18} /><div><strong>Automatic bank reflection is active</strong><span>Named accounts are available in receipt, expense, vendor-payment, and journal forms. Cash and credit transactions stay outside bank balances.</span></div></div>
+      <div className="finance-summary"><span>Showing <strong>{filtered.length}</strong> accounts</span><span>Money in <strong>{formatMoney(filtered.reduce((sum, bank) => sum + bank.moneyIn, 0))}</strong></span><span>Money out <strong>{formatMoney(filtered.reduce((sum, bank) => sum + bank.moneyOut, 0))}</strong></span><span>Current balance <strong>{formatMoney(filtered.reduce((sum, bank) => sum + bank.currentBalance, 0))}</strong></span></div>
+      <div className="finance-table-wrap">
+        <table className="finance-table bank-account-table">
+          <thead><tr><th>Account</th><th>Bank</th><th>Account number</th><th>Opening</th><th>Money in</th><th>Money out</th><th>Current balance</th><th>Transactions</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>{filtered.length ? filtered.map((bank) => <tr key={bank.id}><td><strong>{bank.accountName}</strong>{bank.isPrimary && <small className="bank-primary-badge">Default settlement</small>}{bank.note && <small>{bank.note}</small>}</td><td>{bank.bankName}</td><td>{bank.accountNumber || "-"}</td><td>{formatMoney(bank.openingBalance)}</td><td className="bank-money-in">+{formatMoney(bank.moneyIn)}</td><td className="bank-money-out">-{formatMoney(bank.moneyOut)}</td><td><strong className={bank.currentBalance < 0 ? "bank-negative-balance" : ""}>{formatMoney(bank.currentBalance)}</strong></td><td>{bank.transactionCount}</td><td><span className={`status-pill ${String(bank.status).toLowerCase()}`}>{bank.status}</span></td><td><div className="row-actions"><button title="Edit bank account" onClick={() => editRecord(bank)}><Pencil size={17} />Edit</button><button className="danger-action" title="Delete bank account" onClick={() => deleteRecord(bank)}><Trash2 size={17} />Delete</button></div></td></tr>) : <tr><td colSpan="10" className="finance-empty">No bank accounts match this view.</td></tr>}</tbody>
+        </table>
+      </div>
+      <div className="bank-activity-heading"><div><span>Bank ledger</span><h3>Transaction activity</h3></div><small>Only completed transactions are included. Pending, reversed, and cancelled entries are excluded.</small></div>
+      <div className="finance-table-wrap bank-activity-table">
+        <table className="finance-table"><thead><tr><th>Date</th><th>Account</th><th>Source</th><th>Reference</th><th>Details</th><th>Money in</th><th>Money out</th><th>Balance</th></tr></thead>
+          <tbody>{bankActivity.length ? bankActivity.map((item, index) => <tr key={`${item.accountName}-${item.source}-${item.reference}-${index}`}><td>{item.date || "-"}</td><td><strong>{item.accountName}</strong></td><td><span className="ledger-source-pill">{item.source}</span></td><td>{item.reference || "-"}</td><td>{item.details || "-"}</td><td className="bank-money-in">{item.direction === "in" ? `+${formatMoney(item.amount)}` : "-"}</td><td className="bank-money-out">{item.direction === "out" ? `-${formatMoney(item.amount)}` : "-"}</td><td><strong>{formatMoney(item.balance)}</strong></td></tr>) : <tr><td colSpan="8" className="finance-empty">No completed bank transactions yet.</td></tr>}</tbody>
+        </table>
+      </div>
+    </section>
+  </section>;
+
+  return <section className={`screen ${view === "Vendor Payments" ? "vendor-payments-screen" : "finance-design-screen"}`} ><FinancePageIntro view={view} />{view !== "Vendor Payments" && <div className="metric-grid compact"><Metric icon={BadgeIndianRupee} label="Net sales" value={formatMoney(netSales)} trend="POS sales after refunds" /><Metric icon={CreditCard} label="Cash collected" value={formatMoney(cashCollected)} trend="POS cash payments" /><Metric icon={DatabaseZap} label="Expenses" value={formatMoney(expenseTotal)} trend={`${expenses.length} expense records`} /><Metric icon={ReceiptText} label="Receivables" value={formatMoney(receivables)} trend="Credit due" /></div>}<section className="panel finance-workspace"><div className="panel-head finance-head"><div>{view === "Receipts" ? <ReceiptText /> : view === "Bank Accounts" ? <CreditCard /> : view === "Vendor Payments" ? <BadgeIndianRupee /> : <ClipboardList />}<h2>{title}</h2></div><div className="finance-actions"><button onClick={openNew}><Plus size={18} />{view === "Receipts" ? "Record receipt" : view === "Bank Accounts" ? "Add bank account" : view === "Vendor Payments" ? "Record vendor payment" : "Record journal"}</button><button className={filtersOpen ? "active-action" : ""} onClick={() => setFiltersOpen((open) => !open)}><SlidersHorizontal size={18} />Filter</button>{view !== "Bank Accounts" && <button className={rangeOpen ? "active-action" : ""} onClick={() => setRangeOpen((open) => !open)}><CalendarClock size={18} />Date range</button>}<button onClick={() => downloadCsv(`uvpro-${view.toLowerCase().replaceAll(" ", "-")}.csv`, financeExportColumns, filtered)}><Download size={18} />{view === "Vendor Payments" ? "Export history" : "Export"}</button></div></div>
+    {view !== "Vendor Payments" && (filtersOpen || rangeOpen) && <div className="finance-filter-row">{filtersOpen && <><label className="finance-search"><Search size={18} /><input placeholder={`Search ${title.toLowerCase()}`} value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} /></label>{["Receipts", "Vendor Payments"].includes(view) && <label>Debit / credit account<select value={filters.method} onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value }))}><option>All</option>{accountNames.map((account) => <option key={account}>{account}</option>)}</select></label>}<label>Status<select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option>All</option>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label></>}{rangeOpen && <><label>Start date<input type="date" value={filters.from} onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))} /></label><label>End date<input type="date" value={filters.to} onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))} /></label></>}<button className="text-action" onClick={() => setFilters({ query: "", method: "All", status: "All", from: "", to: "" })}>Clear filters</button></div>}
+    {ledgerMasterOpen && <FinanceEntryDialog title="Create ledger" onClose={() => setLedgerMasterOpen(false)}><form className="finance-expense-form ledger-master-form" onSubmit={saveLedgerMaster}><div className="finance-form-title"><div><span>Ledger master</span><h3>Create ledger account</h3></div><button type="button" className="icon-action" title="Close ledger form" onClick={() => setLedgerMasterOpen(false)}><X size={18} /></button></div><label>Auto code<input value={ledgerMasterDraft.code} readOnly /></label><label>Ledger name<input autoFocus placeholder="Bank Charges" value={ledgerMasterDraft.name} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, name: event.target.value }))} required /></label><label>Account type<select value={ledgerMasterDraft.type} onChange={(event) => updateLedgerMasterType(event.target.value)}>{Object.keys(financeLedgerGroups).map((type) => <option key={type}>{type}</option>)}</select></label><label>Group<select value={ledgerMasterDraft.group} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, group: event.target.value }))}>{(financeLedgerGroups[ledgerMasterDraft.type] || []).map((group) => <option key={group}>{group}</option>)}</select></label><label>Status<select value={ledgerMasterDraft.status} onChange={(event) => setLedgerMasterDraft((current) => ({ ...current, status: event.target.value }))}><option>Active</option><option>Inactive</option></select></label><div className="finance-form-actions"><button type="button" onClick={() => setLedgerMasterOpen(false)}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />Save ledger</button></div></form></FinanceEntryDialog>}
+    {formOpen && <FinanceEntryDialog title={editingId ? `Edit ${singular.toLowerCase()}` : `New ${singular.toLowerCase()}`} onClose={resetForm}><form className={`finance-expense-form ${view === "Journal Entries" ? "journal-entry-form" : ""}`} onSubmit={saveRecord}><div className="finance-form-title"><div><span>{editingId ? `Update ${singular.toLowerCase()}` : `New ${singular.toLowerCase()}`}</span><strong>{title}</strong></div><button type="button" className="icon-button" title="Close form" onClick={resetForm}><X size={18} /></button></div>{view === "Receipts" && <><label>Customer<input autoFocus placeholder="Customer name" value={draft.customer} onChange={(event) => setValue("customer", event.target.value)} /></label><label>Purpose / received for<select value={draft.purpose || "Food sales"} onChange={(event) => setValue("purpose", event.target.value)}>{financeReceiptPurposes.map((purpose) => <option key={purpose}>{purpose}</option>)}</select></label><label>Debited account / received into<select value={draft.debitAccount || draft.method || "Cash"} onChange={(event) => { setValue("debitAccount", event.target.value); setValue("method", event.target.value); }}>{financeOptions(accountNames, draft.debitAccount || draft.method).map((account) => <option key={account}>{account}</option>)}</select></label><label>Credited account<select value={draft.creditAccount || "Sales"} onChange={(event) => setValue("creditAccount", event.target.value)}>{financeOptions(accountNames, draft.creditAccount || "Sales").map((account) => <option key={account}>{account}</option>)}</select></label><label>Amount<input type="number" min="0" step="0.01" value={draft.amount} onChange={(event) => setValue("amount", event.target.value)} /></label><label>Date<input type="date" value={draft.date} onChange={(event) => setValue("date", event.target.value)} /></label></>}{view === "Bank Accounts" && <><label>Account name<input autoFocus placeholder="Current account" value={draft.accountName} onChange={(event) => setValue("accountName", event.target.value)} /></label><label>Bank name<input placeholder="Bank name" value={draft.bankName} onChange={(event) => setValue("bankName", event.target.value)} /></label><label>Account number<input placeholder="Last four digits or account number" value={draft.accountNumber} onChange={(event) => setValue("accountNumber", event.target.value)} /></label><label>Opening balance<input type="number" step="0.01" value={draft.openingBalance} onChange={(event) => setValue("openingBalance", event.target.value)} /></label></>}{view === "Vendor Payments" && <><label>Vendor<input autoFocus placeholder="Supplier or vendor name" value={draft.vendor} onChange={(event) => setValue("vendor", event.target.value)} /></label><label>Purpose / paid for<select value={draft.purpose || "Supplier settlement"} onChange={(event) => setValue("purpose", event.target.value)}>{financeJournalPurposes.map((purpose) => <option key={purpose}>{purpose}</option>)}</select></label><label>Invoice no.<input placeholder="Supplier invoice number" value={draft.invoice} onChange={(event) => setValue("invoice", event.target.value)} /></label><label>Due amount<input type="number" min="0" step="0.01" value={draft.dueAmount} onChange={(event) => setValue("dueAmount", event.target.value)} /></label><label>Paid amount<input type="number" min="0" step="0.01" value={draft.amount} onChange={(event) => setValue("amount", event.target.value)} /></label><label>Debited account<select value={draft.debitAccount || "Accounts payable"} onChange={(event) => setValue("debitAccount", event.target.value)}>{financeOptions(accountNames, draft.debitAccount || "Accounts payable").map((account) => <option key={account}>{account}</option>)}</select></label><label>Credited account / paid from<select value={draft.creditAccount || draft.method || "Bank"} onChange={(event) => { setValue("creditAccount", event.target.value); setValue("method", event.target.value); }}>{financeOptions(accountNames, draft.creditAccount || draft.method).map((account) => <option key={account}>{account}</option>)}</select></label><label>Date<input type="date" value={draft.date} onChange={(event) => setValue("date", event.target.value)} /></label></>}{view === "Journal Entries" && renderJournalFields(draft, (patch) => setDraft((current) => ({ ...current, ...patch })), true)}<label>Status<select value={draft.status} onChange={(event) => setValue("status", event.target.value)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label><label>Reference<input placeholder="Invoice, voucher, or receipt number" value={draft.reference || ""} onChange={(event) => setValue("reference", event.target.value)} /></label><label className="finance-note">Notes<input placeholder="Optional note" value={draft.note} onChange={(event) => setValue("note", event.target.value)} /></label><div className="finance-form-actions"><button type="button" onClick={resetForm}>Cancel</button><button className="primary-action" type="submit"><Save size={18} />{editingId ? "Save changes" : `Save ${singular.toLowerCase()}`}</button></div></form></FinanceEntryDialog>}
+    {view === "Vendor Payments" && <VendorPurchasePayables storeId={storeId} canManage={canManageAll} notify={notify} formatMoney={formatPreciseMoney} today={localDateKey} filters={filters} setFilters={setFilters} filtersOpen={filtersOpen} rangeOpen={rangeOpen} accountNames={accountNames} />}
+    <div className="finance-summary"><span>Showing <strong>{filtered.length}</strong> records</span><span>{view === "Receipts" ? "Received" : view === "Bank Accounts" ? "Opening balance" : view === "Vendor Payments" ? "Paid to vendors" : "Posted value"} <strong>{(view === "Vendor Payments" ? formatPreciseMoney : formatMoney)(filtered.filter((item) => view !== "Vendor Payments" || !["Pending", "Cancelled", "Reversed"].includes(item.status)).reduce((sum, item) => sum + Number(item.amount ?? item.openingBalance ?? 0), 0))}</strong></span></div><div className="finance-table-wrap"><table className="finance-table"><thead><tr>{view === "Receipts" ? <><th>Date</th><th>Customer</th><th>Purpose</th><th>Debited</th><th>Credited</th><th>Receipt no.</th><th>Amount</th></> : view === "Bank Accounts" ? <><th>Account</th><th>Bank</th><th>Account number</th><th>Opening balance</th></> : view === "Vendor Payments" ? <><th>Date</th><th>Vendor</th><th>Purchase no.</th><th>Purpose</th><th>Invoice no.</th><th>Due</th><th>Paid</th><th>Balance</th><th>Debited</th><th>Credited</th></> : <><th>Date</th><th>Purpose</th><th>Entry no.</th><th>Debited</th><th>Credited</th><th>Amount</th></>}<th>Status</th><th>Actions</th></tr></thead><tbody>{filtered.length ? filtered.map((record) => <tr key={record.id}>{view === "Receipts" ? <><td>{record.date}</td><td><strong>{record.customer}</strong>{record.note && <small>{record.note}</small>}</td><td>{record.purpose || "Food sales"}</td><td>{record.debitAccount || record.method}</td><td>{record.creditAccount || "Sales"}</td><td>{record.reference || record.id}</td><td>{(view === "Vendor Payments" ? formatPreciseMoney : formatMoney)(record.amount)}</td></> : view === "Bank Accounts" ? <><td><strong>{record.accountName}</strong>{record.note && <small>{record.note}</small>}</td><td>{record.bankName}</td><td>{record.accountNumber || "-"}</td><td>{(view === "Vendor Payments" ? formatPreciseMoney : formatMoney)(record.openingBalance)}</td></> : view === "Vendor Payments" ? <><td>{record.date}</td><td><strong>{record.vendor}</strong>{record.note && <small>{record.note}</small>}</td><td className="payment-purchase-number">{record.purchaseNumber || "—"}</td><td>{record.purpose || "Supplier settlement"}</td><td>{record.invoice || record.reference || "-"}</td><td>{(view === "Vendor Payments" ? formatPreciseMoney : formatMoney)(record.dueAmount)}</td><td>{(view === "Vendor Payments" ? formatPreciseMoney : formatMoney)(record.amount)}</td><td>{(view === "Vendor Payments" ? formatPreciseMoney : formatMoney)(Math.max(0, Number(record.dueAmount || 0) - Number(record.amount || 0)))}</td><td>{record.debitAccount || `Accounts payable - ${record.vendor}`}</td><td>{record.creditAccount || record.method}</td></> : <><td>{record.date}</td><td>{record.purpose || "Journal"}</td><td>{record.reference || record.id}</td><td>{record.debitAccount}</td><td>{record.creditAccount}</td><td>{(view === "Vendor Payments" ? formatPreciseMoney : formatMoney)(record.amount)}</td></>}<td><span className={`status-pill ${String(record.status).toLowerCase()}`}>{record.status}</span></td><td><div className="row-actions"><button title={`Edit ${singular.toLowerCase()}`} onClick={() => editRecord(record)}><Pencil size={17} />Edit</button><button className="danger-action" title={`Delete ${singular.toLowerCase()}`} onClick={() => deleteRecord(record)}><Trash2 size={17} />Delete</button></div></td></tr>) : <tr><td colSpan={financeTableColumnCount} className="finance-empty">No {title.toLowerCase()} records match this view.</td></tr>}</tbody></table></div></section></section>;
 }
 
 function BillTemplateEditor({ billTemplate, setBillTemplate, notify }) {
@@ -8380,7 +10995,8 @@ function offerMatchesTime(offer) {
   return start <= end ? current >= start && current <= end : current >= start || current <= end;
 }
 
-function calculatePosOffer(offer, cart, couponEntry = "") {
+function calculatePosOffer(offer, cart, couponEntry = "", context = {}) {
+  if (offer.ruleVersion === 2) return evaluatePromotion(offer, cart, { ...context, couponEntry });
   if (offer.status !== "Active") return { amount: 0, error: "This offer is not active" };
   if (!offerMatchesToday(offer)) return { amount: 0, error: "This offer is not scheduled for today" };
   if (!offerMatchesTime(offer)) return { amount: 0, error: "This offer is outside its active time" };
@@ -8423,7 +11039,7 @@ function OffersPromotions({ notify, canManage, storeId, productItems = [], activ
   });
   const [offerDialogOpen, setOfferDialogOpen] = useState(false);
   const [editingOfferId, setEditingOfferId] = useState(null);
-  const [offerDraft, setOfferDraft] = useState({ name: "", type: "Time based", discountValue: "20", startTime: "16:00", endTime: "19:00", window: "All day", runDays: offerWeekdays, buyProductId: "", freeProductId: "", comboProductIds: [], couponCode: "", minimumOrder: "0", status: "Active" });
+  const [offerDraft, setOfferDraft] = useState({ name: "", type: "Time based", discountValue: "", startTime: "16:00", endTime: "19:00", window: "All day", runDays: offerWeekdays, buyProductId: "", freeProductId: "", comboProductIds: [], couponCode: "", minimumOrder: "", status: "Active" });
 
   useEffect(() => {
     setSelectedView(activeView);
@@ -8468,7 +11084,7 @@ function OffersPromotions({ notify, canManage, storeId, productItems = [], activ
     setOfferDraft({
       name: "",
       type,
-      discountValue: type === "Combo" || type === "Coupon" ? "100" : "20",
+      discountValue: "",
       startTime: "16:00",
       endTime: "19:00",
       window: "All day",
@@ -8477,7 +11093,7 @@ function OffersPromotions({ notify, canManage, storeId, productItems = [], activ
       freeProductId: availableProducts[1]?.id || availableProducts[0]?.id || "",
       comboProductIds: [],
       couponCode: "",
-      minimumOrder: "0",
+      minimumOrder: "",
       status: "Active",
     });
     setEditingOfferId(null);
@@ -8489,6 +11105,10 @@ function OffersPromotions({ notify, canManage, storeId, productItems = [], activ
     const name = offerDraft.name.trim();
     if (!name) {
       notify("Enter an offer name to continue");
+      return;
+    }
+    if (offerDraft.type !== "BOGO" && (!String(offerDraft.discountValue).trim() || !Number.isFinite(Number(offerDraft.discountValue)) || Number(offerDraft.discountValue) < 0)) {
+      notify("Enter a valid discount amount or percentage");
       return;
     }
     const buyProduct = availableProducts.find((item) => item.id === offerDraft.buyProductId);
@@ -8529,11 +11149,7 @@ function OffersPromotions({ notify, canManage, storeId, productItems = [], activ
       minimumOrder: offerDraft.type === "Coupon" ? Number(offerDraft.minimumOrder || 0) : undefined,
       status: offerDraft.status,
     };
-    const viewByType = { "Time based": "Happy hour offer", Percentage: "Weekend offers", BOGO: "BOGO offers", Combo: "Combo discounts", Coupon: "Coupons" };
-    const createdOfferView = viewByType[offer.type] || "Happy hour offer";
     setOffers((current) => editingOfferId ? current.map((entry) => entry.id === editingOfferId ? offer : entry) : [offer, ...current]);
-    setSelectedView(createdOfferView);
-    onViewChange?.(createdOfferView);
     setOfferDialogOpen(false);
     setEditingOfferId(null);
     notify(`${offer.name} ${existingOffer ? "updated" : "created and ready for POS"}`);
@@ -8641,7 +11257,7 @@ function OffersPromotions({ notify, canManage, storeId, productItems = [], activ
           <p className="modal-help-text">Set the customer-facing details your counter team will use at POS.</p>
           <div className="offer-form-grid">
             <label className="wide">Offer name<input value={offerDraft.name} onChange={(event) => setOfferDraft((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Friday Dinner Special" autoFocus /></label>
-            <label>Offer type<select value={offerDraft.type} onChange={(event) => setOfferDraft((current) => ({ ...current, type: event.target.value, discountValue: event.target.value === "Combo" || event.target.value === "Coupon" ? "100" : "20", window: event.target.value === "Time based" ? current.window : "All day" }))}><option>Time based</option><option>Percentage</option><option>BOGO</option><option>Combo</option><option>Coupon</option></select></label>
+            <label>Offer type<select value={offerDraft.type} onChange={(event) => setOfferDraft((current) => ({ ...current, type: event.target.value, discountValue: "", window: event.target.value === "Time based" ? current.window : "All day" }))}><option>Time based</option><option>Percentage</option><option>BOGO</option><option>Combo</option><option>Coupon</option></select></label>
             {offerDraft.type === "BOGO" ? <><label>Customer buys<select value={offerDraft.buyProductId} onChange={(event) => setOfferDraft((current) => ({ ...current, buyProductId: event.target.value }))}><option value="">Select a menu item</option>{availableProducts.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Customer gets free<select value={offerDraft.freeProductId} onChange={(event) => setOfferDraft((current) => ({ ...current, freeProductId: event.target.value }))}><option value="">Select a menu item</option>{availableProducts.map((item) => <option key={item.id} value={item.id} disabled={item.id === offerDraft.buyProductId}>{item.name}</option>)}</select></label></> : <label>{offerDraft.type === "Combo" || offerDraft.type === "Coupon" ? "Discount amount (₹)" : "Discount (%)"}<input type="number" min="0" value={offerDraft.discountValue} onChange={(event) => setOfferDraft((current) => ({ ...current, discountValue: event.target.value }))} /></label>}
             {offerDraft.type === "Combo" && <fieldset className="offer-product-picker wide"><legend>Products included in this combo</legend><p>Select two or more menu items.</p><div>{availableProducts.map((item) => <button type="button" key={item.id} className={offerDraft.comboProductIds.includes(item.id) ? "selected" : ""} onClick={() => toggleComboProduct(item.id)} aria-pressed={offerDraft.comboProductIds.includes(item.id)}><span>{item.name}</span><small>{formatMoney(item.price)}</small></button>)}</div></fieldset>}
             {offerDraft.type === "Coupon" && <><label>Coupon code<input value={offerDraft.couponCode} onChange={(event) => setOfferDraft((current) => ({ ...current, couponCode: event.target.value.toUpperCase() }))} placeholder="e.g. WELCOME100" maxLength="24" /></label><label>Minimum order (₹)<input type="number" min="0" value={offerDraft.minimumOrder} onChange={(event) => setOfferDraft((current) => ({ ...current, minimumOrder: event.target.value }))} /></label></>}
@@ -8683,7 +11299,7 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
   function selectReport(name, message = true) {
     setSelectedReport(name);
     onReportChange?.(name);
-    if (message) notify(`${name} workbook opened`);
+    if (message) notify(`${name} report opened`);
   }
   const rangeLedger = salesLedger.filter((bill) => reportDate ? isOnReportDate(bill.createdAt, reportDate) : isInReportRange(bill.createdAt, range));
   const todayLedger = salesLedger.filter((bill) => isTodayDate(bill.createdAt));
@@ -8740,6 +11356,11 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     return [
       item.name,
       item.sku || "-",
+      item.hsnCode || "-",
+      item.department || "-",
+      item.category || "-",
+      item.subcategory || "-",
+      item.gstRate === null || item.gstRate === undefined || item.gstRate === "" ? "-" : `${Number(item.gstRate)}%`,
       stock.toLocaleString("en-IN", { maximumFractionDigits: 3 }),
       item.unit,
       formatPreciseMoney(unitCost),
@@ -8861,7 +11482,7 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     "Hourly sales": { columns: ["Hour", "Bills", "Sales"], rows: hourlyRows },
     GST: { columns: ["Date", "Bills", "Taxable value", "GST", "Total"], rows: gstRows },
     "Item-wise sales": { columns: ["Date", "Bill", "Billing type", "Item", "Qty sold", "Rate", "Sales"], rows: itemRows.length ? itemRows : [["No item sales found for this range", "", "", "", "", "", ""]] },
-    "Inventory valuation": { columns: ["Item", "SKU", "Stock", "Unit", "Unit cost", "Stock value"], rows: inventoryValuationRows.length ? inventoryValuationRows : [["No inventory items found", "", "", "", "", ""]] },
+    "Inventory valuation": { columns: ["Item", "SKU", "HSN code", "Department", "Category", "Sub-category", "GST", "Stock", "Unit", "Unit cost", "Stock value"], rows: inventoryValuationRows.length ? inventoryValuationRows : [["No inventory items found", "", "", "", "", "", "", "", "", "", ""]] },
     "Food cost analysis": { columns: ["Date", "Item", "Qty sold", "Recipe cost / unit", "Total food cost"], rows: foodCostRows.length ? foodCostRows : [["No POS sales found for this range", "", "", "", ""]] },
     "Menu profitability": { columns: ["Date", "Item", "Qty sold", "Net sales", "Food cost", "Gross profit", "Margin"], rows: menuProfitRows.length ? menuProfitRows : [["No POS sales found for this range", "", "", "", "", "", ""]] },
     Payroll: { columns: ["Period", "Bills handled", "Service sales"], rows: [["Current range", ledgerOrders, formatMoney(ledgerSales)]] },
@@ -8886,12 +11507,12 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     "Supplier outstanding": { label: "Supplier", column: 0 },
   };
   const currentFilter = reportFilterConfig[selectedReport] || { label: "Filter", column: 0 };
-  const reportFilterOptions = Array.from(new Set(activeTable.rows.map((row) => String(row[currentFilter.column] ?? "")).filter(Boolean))).sort((first, second) => first.localeCompare(second));
-  const filteredReportRows = activeTable.rows
+  const reportDataRows = activeTable.rows.filter((row) => !(String(row[0]).startsWith("No ") && row.slice(1).every((cell) => cell === "")));
+  const reportFilterOptions = Array.from(new Set(reportDataRows.map((row) => String(row[currentFilter.column] ?? "")).filter(Boolean))).sort((first, second) => first.localeCompare(second));
+  const filteredReportRows = reportDataRows
     .filter((row) => reportFilter === "All" || String(row[currentFilter.column] ?? "") === reportFilter)
     .filter((row) => row.join(" ").toLowerCase().includes(reportSearch.toLowerCase()));
-  const emptyReportRow = activeTable.columns.map((_, index) => (index === 0 ? "No POS sales found for this range" : ""));
-  const visibleReportRows = filteredReportRows.length ? filteredReportRows : [emptyReportRow];
+  const visibleReportRows = filteredReportRows;
   const displayAmountToNumber = (value) => {
     const normalized = String(value ?? "").replace(/[^0-9.-]/g, "");
     return Number.isFinite(Number(normalized)) ? Number(normalized) : 0;
@@ -8902,7 +11523,7 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     "Hourly sales": { 0: "TOTAL", 1: sumVisibleColumn(1), 2: formatMoney(sumVisibleColumn(2)) },
     GST: { 0: "TOTAL", 1: sumVisibleColumn(1), 2: formatMoney(sumVisibleColumn(2)), 3: formatMoney(sumVisibleColumn(3)), 4: formatMoney(sumVisibleColumn(4)) },
     "Item-wise sales": { 3: "TOTAL", 4: sumVisibleColumn(4), 6: formatMoney(sumVisibleColumn(6)) },
-    "Inventory valuation": { 0: "TOTAL", 5: formatPreciseMoney(sumVisibleColumn(5)) },
+    "Inventory valuation": { 0: "TOTAL", 10: formatPreciseMoney(sumVisibleColumn(10)) },
     "Food cost analysis": { 1: "TOTAL", 2: sumVisibleColumn(2), 4: formatPreciseMoney(sumVisibleColumn(4)) },
     "Menu profitability": { 1: "TOTAL", 3: formatPreciseMoney(sumVisibleColumn(3)), 4: formatPreciseMoney(sumVisibleColumn(4)), 5: formatPreciseMoney(sumVisibleColumn(5)) },
     Payroll: { 0: "TOTAL", 1: sumVisibleColumn(1), 2: formatMoney(sumVisibleColumn(2)) },
@@ -8940,33 +11561,17 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     }
   }
 
-  return (
-    <section className="screen">
-      <div className="panel large report-main-panel report-focus-panel print-report">
-        <PanelHead title={selectedReport} icon={FileBarChart} actions={["Excel", "PDF", "CSV", "Print"]} onAction={handleReportAction} />
-        <div className="report-focus-controls">
-          <label>Report<select value={selectedReport} onChange={(event) => selectReport(event.target.value)}>{reports.map((name) => <option key={name}>{name}</option>)}</select></label>
-          <div className="report-range-actions">{["Today", "7 days", "Month", "All"].map((option) => <button key={option} type="button" className={!reportDate && range === option ? "active" : ""} onClick={() => { setReportDate(""); setRange(option); notify(`${option} report range selected`); }}>{option}</button>)}</div>
-        </div>
-        <div className="report-control-row">
-          <label>Search report<input value={reportSearch} onChange={(event) => setReportSearch(event.target.value)} placeholder="Search this report" /></label>
-          <label className="report-specific-filter">{currentFilter.label}<select value={reportFilter} onChange={(event) => setReportFilter(event.target.value)}><option value="All">All</option>{reportFilterOptions.map((option) => <option key={option}>{option}</option>)}</select></label>
-          <label className="report-date-filter">Filter date<input type="date" value={reportDate} onChange={(event) => { setReportDate(event.target.value); notify(event.target.value ? "Date filter applied" : "Date filter cleared"); }} /></label>
-          <button type="button" onClick={() => { setReportDate(""); notify("Date filter cleared"); }}>Clear date</button>
-          <span>{filteredReportRows.length} rows</span>
-        </div>
-        <div className="professional-report-table">
-          <ExcelReportSheet title={selectedReport} range={range} columns={activeTable.columns} rows={visibleReportRows} columnTotals={reportColumnTotals} />
-        </div>
-      </div>
-    </section>
-  );
+  return <ReportsWorkspace selectedReport={selectedReport} reports={reports} onSelectReport={selectReport}
+    range={range} onRangeChange={setRange} reportDate={reportDate} onDateChange={setReportDate}
+    search={reportSearch} onSearchChange={setReportSearch} filter={reportFilter} onFilterChange={setReportFilter}
+    filterLabel={currentFilter.label} filterOptions={reportFilterOptions} columns={activeTable.columns}
+    rows={visibleReportRows} columnTotals={reportColumnTotals} onAction={handleReportAction} />;
 }
 
 function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageStore, stores, activeStore, activeView, onViewChange, customRoles = [], setCustomRoles }) {
   const defaultUserStoreId = activeStore.id === "GLOBAL" ? "" : activeStore.id;
   const [draft, setDraft] = useState({ name: "", email: "", password: "", role: "Cashier", status: "Active", storeId: defaultUserStoreId });
-  const [roleDraft, setRoleDraft] = useState({ id: "", name: "", description: "", status: "Active", modules: ["dashboard", "pos"] });
+  const [roleDraft, setRoleDraft] = useState({ id: "", name: "", description: "", status: "Active", modules: ["dashboard", "pos"], permissions: [] });
   const [editingId, setEditingId] = useState(null);
   const [showUserPassword, setShowUserPassword] = useState(false);
   const showUserEditor = activeView === "create";
@@ -9003,7 +11608,7 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
   }
 
   function resetRoleEditor() {
-    setRoleDraft({ id: "", name: "", description: "", status: "Active", modules: ["dashboard", "pos"] });
+    setRoleDraft({ id: "", name: "", description: "", status: "Active", modules: ["dashboard", "pos"], permissions: [] });
   }
 
   function closeUserEditor() {
@@ -9018,14 +11623,51 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
   function toggleRoleModule(moduleId) {
     setRoleDraft((current) => {
       const selected = new Set(current.modules || []);
-      if (selected.has(moduleId)) selected.delete(moduleId);
+      const wasSelected = selected.has(moduleId);
+      if (wasSelected) selected.delete(moduleId);
       else selected.add(moduleId);
-      return { ...current, modules: Array.from(selected) };
+      let permissions = prepareRolePermissionsForEdit(current);
+      const modulePermissions = accessPermissionsForModule(moduleId);
+      permissions = wasSelected
+        ? permissions.filter((permission) => !modulePermissions.includes(permission))
+        : [...new Set([...permissions, ...modulePermissions])];
+      if (moduleId === "attendance") {
+        permissions = wasSelected
+          ? permissions.filter((permission) => permission !== MANUAL_ATTENDANCE_PERMISSION)
+          : [...new Set([...permissions, MANUAL_ATTENDANCE_PERMISSION])];
+      }
+      return { ...current, modules: Array.from(selected), permissions: pruneRolePermissions(Array.from(selected), permissions) };
     });
   }
 
+  function toggleRoleOption(moduleId, optionId) {
+    setRoleDraft((current) => {
+      const permission = roleAccessPermission(moduleId, optionId);
+      const permissions = prepareRolePermissionsForEdit(current);
+      const checked = permissions.includes(permission);
+      let nextPermissions = checked ? permissions.filter((entry) => entry !== permission) : [...permissions, permission];
+      if (moduleId === "attendance" && optionId === "Manual Check In/Out") {
+        nextPermissions = checked
+          ? nextPermissions.filter((entry) => entry !== MANUAL_ATTENDANCE_PERMISSION)
+          : [...new Set([...nextPermissions, MANUAL_ATTENDANCE_PERMISSION])];
+      }
+      return { ...current, permissions: pruneRolePermissions(current.modules, nextPermissions) };
+    });
+  }
+
+  function selectAllRoleAccess() {
+    const selectedModules = roleAccessSections.map((section) => section.id);
+    const permissions = selectedModules.flatMap(accessPermissionsForModule);
+    setRoleDraft((current) => ({ ...current, modules: selectedModules, permissions: [...new Set([...permissions, MANUAL_ATTENDANCE_PERMISSION])] }));
+  }
+
+  function clearRoleAccess() {
+    setRoleDraft((current) => ({ ...current, modules: [], permissions: [] }));
+  }
+
   function editRole(role) {
-    setRoleDraft({ id: role.id, name: role.name, description: role.description || "", status: role.status || "Active", modules: role.modules?.length ? role.modules : ["dashboard"] });
+    const editableRole = { ...role, modules: role.modules?.length ? role.modules : ["dashboard"] };
+    setRoleDraft({ id: role.id, permissions: prepareRolePermissionsForEdit(editableRole), name: role.name, description: role.description || "", status: role.status || "Active", modules: editableRole.modules });
   }
 
   function saveRole() {
@@ -9051,6 +11693,8 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       notify("Select at least one module for this role");
       return;
     }
+    const preparedPermissions = pruneRolePermissions(roleDraft.modules, roleDraft.permissions || []);
+    const manualAccessSelected = preparedPermissions.includes(roleAccessPermission("attendance", "Manual Check In/Out"));
     const savedRole = {
       ...roleDraft,
       id: roleDraft.id || `ROLE-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
@@ -9058,6 +11702,9 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       description: roleDraft.description.trim(),
       status: roleDraft.status || "Active",
       modules: roleDraft.modules,
+      permissions: roleDraft.modules.includes("attendance") && manualAccessSelected
+        ? [...new Set([...preparedPermissions, MANUAL_ATTENDANCE_PERMISSION])]
+        : preparedPermissions.filter((permission) => permission !== MANUAL_ATTENDANCE_PERMISSION),
       storeId: activeStore.id,
     };
     setCustomRoles((current) => current.some((role) => role.id === savedRole.id) ? current.map((role) => role.id === savedRole.id ? savedRole : role) : [savedRole, ...current]);
@@ -9145,7 +11792,8 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
       ]);
       notify(replaceableDeletedLogin ? "Old login removed. New user ID created." : "New user created");
     }
-    closeUserEditor();
+    // Saving is not navigation: keep the administrator on the editor page.
+    resetUserEditor();
   }
 
   function editUser(user) {
@@ -9202,19 +11850,30 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
             <div className="panel user-editor-panel role-editor-panel">
               <PanelHead title={roleDraft.id ? "Edit role" : "Create role"} icon={ShieldCheck} actions={roleDraft.id ? ["New role"] : []} onAction={resetRoleEditor} />
               <div className="role-form">
-                <p className="permission-note">Create custom roles for this branch. Select only the modules staff should access.</p>
+                <p className="permission-note">Create custom roles for this branch. Select each main module, then choose the exact dropdown pages that staff can open.</p>
                 <label>Role name<input value={roleDraft.name} onChange={(event) => setRoleDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Floor Supervisor" /></label>
                 <label>Status<select value={roleDraft.status} onChange={(event) => setRoleDraft((current) => ({ ...current, status: event.target.value }))}><option>Active</option><option>Inactive</option></select></label>
                 <label className="role-description-field">Description<input value={roleDraft.description} onChange={(event) => setRoleDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Short access note" /></label>
-                <div className="role-module-grid">
-                  {modules.map((module) => {
-                    const Icon = module.icon;
-                    return (
-                      <button key={module.id} type="button" className={roleDraft.modules.includes(module.id) ? "selected" : ""} onClick={() => toggleRoleModule(module.id)}>
-                        <Icon size={16} />
-                        {module.label}
+                <div className="role-access-toolbar"><span>{roleDraft.modules.length} of {roleAccessSections.length} modules selected</span><div><button type="button" onClick={selectAllRoleAccess}>Select all</button><button type="button" onClick={clearRoleAccess}>Clear all</button></div></div>
+                <div className="role-permission-list">
+                  {roleAccessSections.map((section) => {
+                    const module = modules.find((entry) => entry.id === section.id);
+                    const Icon = module?.icon || ShieldCheck;
+                    const selected = roleDraft.modules.includes(section.id);
+                    const selectedOptions = section.options.filter((option) => (roleDraft.permissions || []).includes(roleAccessPermission(section.id, option.id))).length;
+                    return <section key={section.id} className={selected ? "role-permission-group selected" : "role-permission-group"}>
+                      <button type="button" className="role-permission-module" onClick={() => toggleRoleModule(section.id)} aria-expanded={selected && section.options.length > 0}>
+                        <span className="role-module-check">{selected && <CircleCheck size={16} />}</span><Icon size={17} />
+                        <span><strong>{section.label}</strong><small>{section.options.length ? `${selectedOptions} of ${section.options.length} options` : "Main module access"}</small></span>
+                        {section.options.length > 0 && <ChevronDown size={16} className={selected ? "open" : ""} />}
                       </button>
-                    );
+                      {selected && section.options.length > 0 && <div className="role-suboption-grid">
+                        {section.options.map((option) => <label key={option.id}>
+                          <input type="checkbox" checked={(roleDraft.permissions || []).includes(roleAccessPermission(section.id, option.id))} onChange={() => toggleRoleOption(section.id, option.id)} />
+                          <span><strong>{option.label}</strong>{option.group && <small>{option.group}</small>}</span>
+                        </label>)}
+                      </div>}
+                    </section>;
                   })}
                 </div>
                 <button className="login-submit" onClick={saveRole}>{roleDraft.id ? "Update role" : "Create role"}</button>
@@ -9227,7 +11886,7 @@ function Admin({ notify, users, setUsers, currentUser, canManageAll, canManageSt
                 <tbody>{storeCustomRoles.map((role) => (
                   <tr key={role.id}>
                     <td><strong>{role.name}</strong><small>{role.description || "Custom branch role"}</small></td>
-                    <td>{(role.modules || []).map((moduleId) => modules.find((module) => module.id === moduleId)?.label || moduleId).join(", ")}</td>
+                    <td><strong>{role.modules?.length || 0} modules</strong><small>{(role.permissions || []).filter((permission) => String(permission).startsWith("access:")).length || "All legacy"} dropdown options</small></td>
                     <td><span className={role.status === "Inactive" ? "active-chip inactive" : "active-chip"}>{role.status || "Active"}</span></td>
                     <td><div className="row-actions"><button onClick={() => editRole(role)}>Edit</button><button onClick={() => deleteRole(role)}>Delete</button></div></td>
                   </tr>
@@ -9470,9 +12129,146 @@ function PrinterConnectionSetup({ printer, setPrinter, notify, canManage, purpos
   );
 }
 
+function QzTraySetupGuide({ notify, canManage, billingPrinter, kotPrinter, onBack, onOpenPrinter }) {
+  const [setupOs, setSetupOs] = useState(() => {
+    if (typeof navigator === "undefined") return "Windows";
+    if (/mac/i.test(navigator.userAgent)) return "macOS";
+    if (/linux/i.test(navigator.userAgent)) return "Linux";
+    return "Windows";
+  });
+  const [signer, setSigner] = useState(null);
+  const [checking, setChecking] = useState(false);
+  const [connection, setConnection] = useState({ status: "Not checked", printers: [], detail: "Run the connection check after completing steps 1–3." });
+  const signingFilesRef = useRef(null);
+
+  useEffect(() => {
+    let active = true;
+    getOfflineQzSigner().then((savedSigner) => { if (active) setSigner(savedSigner); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  async function importSigningFiles(event) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (files.length !== 2) {
+      notify("Select both digital-certificate.txt and private-key.pem");
+      return;
+    }
+    setChecking(true);
+    try {
+      const contents = await Promise.all(files.map((file) => file.text()));
+      const certificate = contents.find((content) => content.includes("-----BEGIN CERTIFICATE-----"));
+      const privateKey = contents.find((content) => content.includes("-----BEGIN PRIVATE KEY-----"));
+      if (!certificate || !privateKey) throw new Error("The certificate and PKCS#8 private key files could not be identified");
+      const savedSigner = await saveOfflineQzSigner(certificate, privateKey);
+      resetQzSecurity();
+      if (qz.websocket.isActive()) await qz.websocket.disconnect().catch(() => {});
+      setSigner({ ...savedSigner, certificate });
+      setConnection({ status: "Ready to check", printers: [], detail: "Signing is configured. Start QZ Tray, then check the connection." });
+      notify("QZ certificate and private key verified for this browser", 9000);
+    } catch (error) {
+      notify(`QZ signing setup failed: ${error?.message || "Check the selected files"}`, 10000);
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function checkConnection() {
+    if (!canManage) return;
+    setChecking(true);
+    setConnection((current) => ({ ...current, status: "Checking", detail: "Connecting to QZ Tray on this computer…" }));
+    try {
+      const printers = await connectQzTray();
+      setConnection({ status: "Connected", printers, detail: printers.length ? `${printers.length} installed printer${printers.length === 1 ? "" : "s"} found.` : "QZ Tray is connected, but Windows/macOS/Linux reported no installed printers." });
+      notify(printers.length ? `QZ Tray connected · ${printers.length} printers found` : "QZ Tray connected, but no printers were found", 10000);
+    } catch (error) {
+      setConnection({ status: "Needs attention", printers: [], detail: error?.message || "Install and open QZ Tray, then retry." });
+      notify(`QZ Tray connection failed: ${error?.message || "Install and open QZ Tray, then retry"}`, 10000);
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function disconnectQz() {
+    if (qz.websocket.isActive()) await qz.websocket.disconnect().catch(() => {});
+    setConnection({ status: "Disconnected", printers: [], detail: "The local QZ Tray WebSocket session was closed." });
+    notify("QZ Tray session disconnected");
+  }
+
+  async function downloadCertificate() {
+    const savedSigner = signer?.certificate ? signer : await getOfflineQzSigner();
+    if (!savedSigner?.certificate) {
+      notify("Set up signing before downloading the public certificate");
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([savedSigner.certificate], { type: "application/x-x509-ca-cert" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "uvpro-qz-digital-certificate.txt";
+    link.click();
+    URL.revokeObjectURL(url);
+    notify("Public QZ certificate downloaded");
+  }
+
+  async function clearSigning() {
+    if (!window.confirm("Remove the QZ signing key from this browser? Direct printing will stop until it is set up again.")) return;
+    await removeOfflineQzSigner();
+    resetQzSecurity();
+    if (qz.websocket.isActive()) await qz.websocket.disconnect().catch(() => {});
+    setSigner(null);
+    setConnection({ status: "Not checked", printers: [], detail: "Signing was removed from this browser." });
+    notify("Local QZ signing removed");
+  }
+
+  const osInstructions = {
+    Windows: ["Install QZ Tray using the downloaded installer and keep the default options.", "Install the thermal printer’s Windows driver, print a Windows test page, and leave QZ Tray running in the system tray.", "In QZ Tray, open Advanced → Site Manager → + → Create New. Approve certificate creation, automatic installation, and the override copy. A QZ Tray Demo Cert folder will be created on the Desktop."],
+    macOS: ["Install the correct QZ Tray package for Apple Silicon or Intel, then open QZ Tray.", "Add the thermal printer in System Settings → Printers & Scanners and confirm a macOS test print.", "In QZ Tray, open Advanced → Site Manager → + → Create New and approve creation/installation of the local trusted certificate."],
+    Linux: ["Install the correct QZ Tray package for Intel/AMD or ARM and launch QZ Tray.", "Install the printer in CUPS and confirm a CUPS test page before continuing.", "In QZ Tray, open Advanced → Site Manager → + → Create New and approve creation/installation of the local trusted certificate."],
+  };
+  const signingReady = Boolean(signer);
+  const qzConnected = connection.status === "Connected";
+  const billingReady = billingPrinter?.enabled && billingPrinter?.status === "Connected";
+  const kotReady = kotPrinter?.enabled && kotPrinter?.status === "Connected";
+
+  return (
+    <section className="screen settings-detail-screen qz-setup-screen" aria-label="QZ Tray setup">
+      <button className="settings-back-button" onClick={onBack}><PanelLeftClose size={17} /> Back to settings</button>
+      <div className="panel qz-setup-panel">
+        <div className="qz-setup-hero">
+          <div><span className="qz-eyebrow"><ShieldCheck size={15} /> Secure local printing</span><h2>QZ Tray setup</h2><p>Connect the browser securely to receipt and kitchen printers on this terminal.</p></div>
+          <a className="qz-download-button" href="https://qz.io/download/" target="_blank" rel="noreferrer"><Download size={18} /> Download QZ Tray</a>
+        </div>
+
+        <div className="qz-health-grid">
+          <div className={signingReady ? "ready" : ""}><span>{signingReady ? <CircleCheck size={18} /> : <AlertTriangle size={18} />}</span><small>Signing</small><strong>{signingReady ? "Configured" : "Required"}</strong></div>
+          <div className={qzConnected ? "ready" : ""}><span>{qzConnected ? <Wifi size={18} /> : <WifiOff size={18} />}</span><small>QZ Tray</small><strong>{connection.status}</strong></div>
+          <div className={connection.printers.length ? "ready" : ""}><span><Printer size={18} /></span><small>Printers found</small><strong>{connection.printers.length}</strong></div>
+          <div className={billingReady || kotReady ? "ready" : ""}><span><ReceiptText size={18} /></span><small>UVPRO routes</small><strong>{Number(Boolean(billingReady)) + Number(Boolean(kotReady))} / 2</strong></div>
+        </div>
+
+        <div className="qz-guide-card">
+          <div className="qz-guide-heading"><div><span>Terminal installation</span><h3>Complete these steps once on every POS computer</h3><p>The signing key remains non-exportable in this browser. Repeat the setup for a different browser profile or computer.</p></div><div className="qz-os-tabs" role="tablist" aria-label="Operating system">{Object.keys(osInstructions).map((name) => <button type="button" role="tab" aria-selected={setupOs === name} className={setupOs === name ? "active" : ""} key={name} onClick={() => setSetupOs(name)}>{name}</button>)}</div></div>
+          <ol className="qz-steps">
+            <li><span>1</span><div><strong>Install QZ Tray</strong><p>{osInstructions[setupOs][0]}</p><a href="https://qz.io/download/" target="_blank" rel="noreferrer">Open official download <ChevronRight size={15} /></a></div></li>
+            <li><span>2</span><div><strong>Install and verify the printer</strong><p>{osInstructions[setupOs][1]}</p></div></li>
+            <li><span>3</span><div><strong>Create the trusted signing files</strong><p>{osInstructions[setupOs][2]}</p><p className="qz-security-note"><ShieldCheck size={15} /> For a local terminal, use the generated <b>digital-certificate.txt</b> and <b>private-key.pem</b>. For multi-terminal production deployment, use your organisation’s QZ certificate and secure signing policy.</p></div></li>
+            <li><span>4</span><div><strong>Verify signing in UVPRO</strong><p>Select both generated files together. UVPRO verifies that the key matches the certificate and stores the private key as non-exportable browser data.</p><div className="qz-step-actions"><button type="button" onClick={() => signingFilesRef.current?.click()} disabled={!canManage || checking}><Upload size={16} /> {signingReady ? "Replace signing files" : "Select certificate + private key"}</button>{signingReady && <button type="button" className="secondary" onClick={downloadCertificate}><Download size={16} /> Download public certificate</button>}<input ref={signingFilesRef} type="file" accept=".txt,.pem,.crt" multiple hidden onChange={importSigningFiles} /></div></div></li>
+            <li><span>5</span><div><strong>Check QZ Tray and discover printers</strong><p>Keep QZ Tray running, then check the secure WebSocket connection. If QZ asks for permission, choose Allow and Remember this decision.</p><div className="qz-step-actions"><button type="button" onClick={checkConnection} disabled={!canManage || checking}>{checking ? "Checking…" : "Check connection"}</button>{qzConnected && <button type="button" className="secondary" onClick={disconnectQz}>Disconnect session</button>}</div><div className={`qz-live-result ${qzConnected ? "connected" : connection.status === "Needs attention" ? "failed" : ""}`}><strong>{connection.status}</strong><span>{connection.detail}</span>{connection.printers.length > 0 && <small>{connection.printers.join(" · ")}</small>}</div></div></li>
+            <li><span>6</span><div><strong>Choose routes and print tests</strong><p>Select a printer separately for customer bills and kitchen tickets. They may use the same physical printer or different printers.</p><div className="qz-route-actions"><button type="button" onClick={() => onOpenPrinter("Billing printer connection")}><ReceiptText size={17} /> Billing printer <small>{billingReady ? "Connected" : "Set up"}</small></button><button type="button" onClick={() => onOpenPrinter("KOT printer connection")}><ChefHat size={17} /> KOT printer <small>{kotReady ? "Connected" : "Set up"}</small></button></div></div></li>
+          </ol>
+        </div>
+
+        <div className="qz-troubleshooting"><div><AlertTriangle size={18} /><span><strong>If connection fails</strong><small>Confirm QZ Tray is open, the printer works from the operating system, both signing files were selected, and antivirus/firewall allows localhost WebSocket ports. Then restart QZ Tray and retry.</small></span></div>{signingReady && <button type="button" className="danger-action" onClick={clearSigning} disabled={!canManage || checking}>Remove local signing</button>}</div>
+      </div>
+    </section>
+  );
+}
+
 function buildSettingsDefaults(activeStore, billTemplate) {
   return {
-    ...Object.fromEntries(Object.keys(settingsSectionConfig).map((name) => [name, settingsSectionConfig[name].defaults])),
+    ...Object.fromEntries(Object.keys(settingsSectionConfig)
+      .filter((name) => name !== "Amazon S3 storage")
+      .map((name) => [name, settingsSectionConfig[name].defaults])),
     "Restaurant profile": {
       ...settingsSectionConfig["Restaurant profile"].defaults,
       restaurantName: activeStore?.name || settingsSectionConfig["Restaurant profile"].defaults.restaurantName,
@@ -9502,12 +12298,12 @@ function buildSettingsDefaults(activeStore, billTemplate) {
   };
 }
 
-function SettingsManagement({ notify, canManage, activeStore, setStores, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, themeConfig, setThemeConfig, setDark, activeSection, onBack }) {
+function SettingsManagement({ notify, canManage, activeStore, setStores, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, themeConfig, setThemeConfig, setDark, displayScale, setDisplayScale, activeSection, onBack }) {
   const defaultSettings = buildSettingsDefaults(activeStore, billTemplate);
   const settingsStorageKey = `vestora-active-settings-${activeStore?.id || "global"}`;
   const [settings, setSettings] = useBusinessState(settingsStorageKey, () => {
     const saved = localStorage.getItem(settingsStorageKey) || localStorage.getItem("vestora-active-settings");
-    return saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings;
+    return stripBrowserCloudConfiguration(saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings);
   });
   const config = settingsSectionConfig[activeSection];
   const draft = activeSection === "Theme and language"
@@ -9519,11 +12315,28 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
     ...availablePrinters,
     ...(activeSection === "Printer setup" ? [draft.billPrinter, draft.kotPrinter, draft.counterPrinter] : []),
   ].filter(Boolean)));
+  const [awsStorageStatus, setAwsStorageStatus] = useState(() => normalizeAwsStorageStatus());
+  const [awsStorageStatusState, setAwsStorageStatusState] = useState("idle");
+
+  const refreshAwsStorageStatus = useCallback(async () => {
+    setAwsStorageStatusState("loading");
+    try {
+      const result = await cloudJson("/api/cloud/storage-status/");
+      setAwsStorageStatus(normalizeAwsStorageStatus(result));
+      setAwsStorageStatusState("ready");
+    } catch {
+      setAwsStorageStatusState("error");
+    }
+  }, []);
 
   useEffect(() => {
     const saved = localStorage.getItem(settingsStorageKey);
-    setSettings(saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings);
+    setSettings(stripBrowserCloudConfiguration(saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings));
   }, [settingsStorageKey]);
+
+  useEffect(() => {
+    if (activeSection === "Amazon S3 storage") refreshAwsStorageStatus();
+  }, [activeSection, refreshAwsStorageStatus]);
 
   useEffect(() => {
     localStorage.setItem(settingsStorageKey, JSON.stringify(settings));
@@ -9591,6 +12404,12 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
       notify("Admin permission required");
       return;
     }
+    if (activeSection === "Purchase controls") {
+      const maximumDraftDays = normalizePurchaseDraftDays(draft.maximumDraftDays);
+      setSettings((current) => ({ ...current, [activeSection]: { ...draft, maximumDraftDays: String(maximumDraftDays) } }));
+      notify(`Purchase drafts will be flagged overdue after ${maximumDraftDays} day${maximumDraftDays === 1 ? "" : "s"}`);
+      return;
+    }
     applySettingsToStore(activeSection, draft);
     notify(`${activeSection} saved`);
   }
@@ -9603,6 +12422,7 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
     if (activeSection === "Theme and language") {
       setThemeConfig(defaultThemeConfig);
       setDark(false);
+      setDisplayScale(100);
     }
     setSettings((current) => ({ ...current, [activeSection]: settingsSectionConfig[activeSection].defaults }));
     notify(`${activeSection} reset`);
@@ -9610,18 +12430,18 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
 
   function downloadLocalBackup() {
     const state = {};
-    Object.keys(localStorage)
-      .filter((key) => key.startsWith("vestora-") && !/(password|token|credential|secret|access.?key|api.?key)/i.test(key))
+    Object.keys(window.localStorage)
+      .filter((key) => key.startsWith("vestora-") && !isSensitiveRecoveryKey(key))
       .forEach((key) => {
-        try { state[key] = JSON.parse(localStorage.getItem(key)); }
-        catch { state[key] = localStorage.getItem(key); }
+        try { state[key] = JSON.parse(window.localStorage.getItem(key)); }
+        catch { state[key] = window.localStorage.getItem(key); }
       });
-    const payload = JSON.stringify({ version: 1, createdAt: new Date().toISOString(), storeId: activeStore.id, state }, (key, value) => /(password|token|credential|secret|access.?key|api.?key)/i.test(key) ? undefined : value, 2);
+    const payload = JSON.stringify({ version: 1, createdAt: new Date().toISOString(), storeId: activeStore?.id || "global", state }, (key, value) => isSensitiveRecoveryKey(key) ? undefined : value, 2);
     const blob = new Blob([payload], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `uvpro-backup-${activeStore.id}-${new Date().toISOString().slice(0, 10)}.json`;
+    link.download = `uvpro-backup-${activeStore?.id || "global"}-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -9647,15 +12467,11 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
     }
     if (activeSection === "Backup policy") {
       downloadLocalBackup();
-      notify("Local backup downloaded. Cloud backup requires an R2 connection.");
+      notify("Sanitised local recovery export downloaded. Automated AWS backups are managed by the server infrastructure.", 9000);
       return;
     }
     if (activeSection === "Payment providers") {
       notify("Provider settings saved. Live payment testing requires gateway credentials.", 9000);
-      return;
-    }
-    if (activeSection === "Cloudflare R2") {
-      notify("R2 settings saved. A server-side R2 connector is required for a live connection test.", 9000);
       return;
     }
     if (activeSection === "WhatsApp templates") {
@@ -9752,12 +12568,69 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
   const themeHeroStyle = draft.theme === "Dark"
     ? { background: "linear-gradient(135deg, #111816, #2f3a36)" }
     : { background: `linear-gradient(135deg, ${draft.sidebarColor}, ${draft.primaryColor})` };
+  const usesS3Storage = awsStorageStatus.provider === "amazon_s3";
+  const isS3StorageConfigured = usesS3Storage && awsStorageStatus.configured;
+  const awsStorageHeadline = awsStorageStatusState === "loading"
+    ? "Checking server storage…"
+    : awsStorageStatusState === "error"
+      ? "Storage status unavailable"
+      : isS3StorageConfigured
+        ? "Amazon S3 is active"
+        : usesS3Storage
+          ? "Amazon S3 needs server configuration"
+          : "Local development storage is active";
+  const awsStorageSummary = awsStorageStatusState === "loading"
+    ? "Requesting non-secret configuration metadata from the Django server."
+    : awsStorageStatusState === "error"
+      ? "The server did not return a storage status. Application data remains available; ask the deployment administrator to check the AWS configuration."
+      : isS3StorageConfigured
+        ? "Uploads are handled by the Django server using its AWS identity. No AWS credential is exposed to this device."
+        : usesS3Storage
+          ? "The server selected Amazon S3 but reports that setup is incomplete. Check its IAM role, bucket, and AWS Region."
+          : "This server is using its local filesystem. Configure the deployment's IAM role, S3 bucket, and AWS Region on the server to enable S3.";
 
   return (
     <section className="screen settings-detail-screen">
       <button className="settings-back-button" onClick={onBack}><PanelLeftClose size={17} /> Back to settings</button>
       <div className="panel settings-detail-panel">
-          {activeSection === "Print bill format" ? (
+          {activeSection === "Amazon S3 storage" ? (
+            <>
+              <PanelHead title="Amazon S3 storage" icon={DatabaseZap} actions={["Refresh status"]} onAction={refreshAwsStorageStatus} />
+              <p className="settings-description">{config.description}</p>
+              <div className={`aws-storage-status-card ${isS3StorageConfigured ? "connected" : ""} ${awsStorageStatusState === "error" ? "error" : ""}`}>
+                <div className="aws-storage-status-head">
+                  <span className="aws-storage-status-icon"><DatabaseZap size={24} /></span>
+                  <div>
+                    <strong>{awsStorageHeadline}</strong>
+                    <p>{awsStorageSummary}</p>
+                  </div>
+                  <span className="aws-storage-status-badge">
+                    {awsStorageStatusState === "loading" ? "Checking" : awsStorageStatusState === "error" ? "Unavailable" : isS3StorageConfigured ? "Connected" : usesS3Storage ? "Needs setup" : "Local only"}
+                  </span>
+                </div>
+                {awsStorageStatusState === "ready" && <dl className="aws-storage-facts">
+                  <div><dt>Provider</dt><dd>{usesS3Storage ? "Amazon S3" : "Local filesystem"}</dd></div>
+                  <div><dt>AWS Region</dt><dd>{usesS3Storage ? awsStorageStatus.region || "Not reported" : "Not applicable"}</dd></div>
+                  <div><dt>Object privacy</dt><dd>{awsStorageStatus.private ? "Private" : "Administrator review required"}</dd></div>
+                  <div><dt>File access</dt><dd>{awsStorageStatus.signedUrls ? "Expiring signed URLs" : "Server controlled"}</dd></div>
+                </dl>}
+              </div>
+              <div className="aws-storage-security-note">
+                <ShieldCheck size={21} />
+                <div><strong>Credentials stay on AWS</strong><small>Use an IAM role for the running service. Bucket names, access keys, secret keys, and endpoints are intentionally not configurable or stored in UVPRO's browser settings.</small></div>
+              </div>
+            </>
+          ) : activeSection === "Backup policy" ? (
+            <>
+              <PanelHead title="Backup and recovery" icon={Download} actions={canManage ? [config.action] : []} onAction={runSectionAction} />
+              <p className="settings-description">{config.description}</p>
+              <div className="backup-policy-grid">
+                <article><span><Download size={21} /></span><div><strong>Local recovery export</strong><p>Downloads a sanitised JSON copy of this browser's UVPRO records. Authentication tokens and credential fields are excluded.</p></div></article>
+                <article><span><ShieldCheck size={21} /></span><div><strong>AWS infrastructure backups</strong><p>RDS snapshots, S3 versioning, retention, and restore testing are controlled by the deployment—not by browser settings.</p></div></article>
+              </div>
+              {!canManage && <p className="permission-note">Admin permission required to download a recovery export.</p>}
+            </>
+          ) : activeSection === "Print bill format" ? (
             <>
               <PanelHead title="Print bill format" icon={Printer} actions={canManage ? ["Save"] : []} onAction={() => notify("Print bill format saved")} />
               {canManage ? <BillTemplateEditor billTemplate={billTemplate} setBillTemplate={setBillTemplate} notify={notify} /> : <p className="permission-note">Admin permission required.</p>}
@@ -9819,6 +12692,19 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
                     </div>
                   </div>
 
+                  <div className="display-scale-control">
+                    <div className="display-scale-heading">
+                      <div><strong>Display scale</strong><small>Adjust the size of the whole website. This preference is saved on this device.</small></div>
+                      <output className="display-scale-value">{displayScale}%</output>
+                    </div>
+                    <div className="display-scale-slider-row">
+                      <span>80%</span>
+                      <input type="range" min="80" max="120" step="5" value={displayScale} onChange={(event) => setDisplayScale(Number(event.target.value))} aria-label="Website display scale" aria-valuetext={`${displayScale}%`} />
+                      <span>120%</span>
+                      <button type="button" onClick={() => setDisplayScale(100)} disabled={displayScale === 100}>Default 100%</button>
+                    </div>
+                  </div>
+
                   <div className="theme-preset-grid">
                     {[...Object.keys(themePresets), "Custom"].map((preset) => {
                       const colors = preset === "Custom" ? draft : themePresets[preset];
@@ -9876,16 +12762,17 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
                           <option value="">Select printer</option>
                           {printerOptions.map((printer) => <option key={printer} value={printer}>{printer}</option>)}
                         </select>
-                      ) : <input value={draft[field] || ""} onChange={(event) => update(field, event.target.value)} disabled={!canManage} />}
+                      ) : <input type={activeSection === "Purchase controls" && field === "maximumDraftDays" ? "number" : "text"} min={activeSection === "Purchase controls" && field === "maximumDraftDays" ? "1" : undefined} max={activeSection === "Purchase controls" && field === "maximumDraftDays" ? "365" : undefined} step={activeSection === "Purchase controls" && field === "maximumDraftDays" ? "1" : undefined} value={draft[field] || ""} onChange={(event) => update(field, event.target.value)} disabled={!canManage} />}
                     </label>
                   ))}
+                  {activeSection === "Purchase controls" && <p className="settings-field-help">Drafts older than this limit are marked overdue in Purchase Entry. They are never automatically deleted, so staff can review, submit, or remove them safely.</p>}
                 </div>
               )}
               {activeSection === "Printer setup" && <div className="printer-option-manager">
                 <div><strong>Add a newly installed printer</strong><small>Install the Windows driver first, then enter the printer name exactly as it appears in Windows.</small></div>
                 <div className="printer-option-entry"><input value={newPrinterName} onChange={(event) => setNewPrinterName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addPrinterName(); } }} disabled={!canManage} placeholder="Example: BPOS RP-260IV" /><button type="button" onClick={addPrinterName} disabled={!canManage}><Plus size={16} /> Add printer</button></div>
               </div>}
-              {!canManage && <p className="permission-note">Admin permission required to edit settings.</p>}
+              {!canManage && <p className="permission-note">Display scale is saved locally on this device. Admin permission is required to change shared theme and business settings.</p>}
               <div className="row-actions menu-admin-actions">
                 <button onClick={saveSettings} disabled={!canManage}>Save settings</button>
                 <button onClick={activeSection === "Printer setup" ? testPrinterRouting : runSectionAction} disabled={!canManage}>{config.action}</button>
@@ -9902,7 +12789,7 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
   );
 }
 
-const attendanceTabs = ["Add Face ID", "Face Check In/Out", "Attendance Report", "Attendance Records", "Leave Requests", "Payroll Summary", "Settings"];
+const attendanceTabs = ["Add Face ID", "Face Check In/Out", "Manual Check In/Out", "Attendance Report", "Attendance Records", "Leave Requests", "Leave Approvals", "Payroll Summary", "Settings"];
 const defaultAttendanceTab = attendanceTabs[0];
 
 const defaultAttendanceSettings = {
@@ -10091,7 +12978,7 @@ function downloadCsv(filename, columns, rows) {
   URL.revokeObjectURL(url);
 }
 
-function AttendanceModule({ notify, activeStore, stores = [], users, canManage, canManageAll, activeView = defaultAttendanceTab, onViewChange, onOpenAdmin }) {
+function AttendanceModule({ notify, activeStore, stores = [], users, canManage, canManageAll, canManualAttendance = false, activeView = defaultAttendanceTab, onViewChange, onOpenAdmin }) {
   const employeesKey = `vestora-attendance-employees-${activeStore.id}`;
   const logsKey = `vestora-attendance-logs-${activeStore.id}`;
   const settingsKey = `vestora-attendance-settings-${activeStore.id}`;
@@ -10371,7 +13258,6 @@ function AttendanceModule({ notify, activeStore, stores = [], users, canManage, 
       faceStoreImages: Boolean(settings.storeFaceImages),
     } : employee));
     setSamples([]);
-    onViewChange?.("Face Check In/Out");
     notify(`${selectedEmployee.name} face enrolled`);
   }
 
@@ -10402,6 +13288,7 @@ function AttendanceModule({ notify, activeStore, stores = [], users, canManage, 
   }
 
   function markAttendance(type, employeeOverride = null) {
+    if (employeeOverride && !canManualAttendance) { notify("Manual attendance permission is required"); return; }
     const employee = employeeOverride || matchedFace?.employee;
     if (!employee) {
       notify("No recognized employee selected");
@@ -10454,10 +13341,11 @@ function AttendanceModule({ notify, activeStore, stores = [], users, canManage, 
   }
 
   function markManualAttendance(type, employee) {
-    if (!canManageAttendance) {
-      notify("Administrator permission is required for manual attendance");
+    if (!canManualAttendance) {
+      notify("Manual attendance permission is required");
       return;
     }
+    if (!employee || !employees.some((entry) => entry.id === employee.id) || !["in", "out"].includes(type)) { notify("Select an employee"); return; }
     markAttendance(type, employee);
   }
 
@@ -10508,7 +13396,11 @@ function AttendanceModule({ notify, activeStore, stores = [], users, canManage, 
       notify("Admin permission is required to review leave");
       return;
     }
-    setLeaveRequests((current) => current.map((request) => request.id === id ? { ...request, status, reviewedAt: new Date().toISOString() } : request));
+    if (!["Approved", "Rejected"].includes(status) || !leaveRequests.some((request) => request.id === id && request.status === "Pending")) {
+      notify("Only pending leave requests can be reviewed");
+      return;
+    }
+    setLeaveRequests((current) => current.map((request) => request.id === id && request.status === "Pending" ? { ...request, status, reviewedAt: new Date().toISOString() } : request));
     notify(`Leave request ${status.toLowerCase()}`);
   }
 
@@ -10649,7 +13541,8 @@ function AttendanceModule({ notify, activeStore, stores = [], users, canManage, 
   const matchedEmployeeOpenLog = matchedFace ? openLogByEmployeeId.get(matchedFace.employee.id) : null;
 
   return (
-    <section className="screen attendance-screen">
+    <section className="screen attendance-screen finance-design-screen attendance-design-screen">
+      <AttendancePageIntro view={activeTab} branch={activeStore.branch} />
       {activeTab === "Face Check In/Out" && (
         <div className="attendance-live-grid">
           <div className="attendance-kiosk-header">
@@ -10737,47 +13630,7 @@ function AttendanceModule({ notify, activeStore, stores = [], users, canManage, 
                 <span>{streamRef.current ? (enrolledCount ? "Face the camera and keep still for a moment." : "Add employee Face ID before using this kiosk.") : "The employee will be identified before check-in or check-out is enabled."}</span>
               </div>
             )}
-            {canManageAttendance ? (
-              <>
-                <div className="manual-fallback">
-                  <label>Manual attendance<select value={manualEmployeeId} onChange={(event) => setManualEmployeeId(event.target.value)}>
-                    <option value="">Select employee</option>
-                    {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} - {employee.code}</option>)}
-                  </select></label>
-                  <div className="row-actions">
-                    <button onClick={() => markManualAttendance("in", manualEmployee)} disabled={!manualEmployee}>Manual In</button>
-                    <button onClick={() => markManualAttendance("out", manualEmployee)} disabled={!manualEmployee}>Manual Out</button>
-                  </div>
-                </div>
-                <div className="employee-punch-panel">
-                  <h3>Employee Check In / Out</h3>
-                  <p>Administrators can correct or record attendance manually.</p>
-                  <div className="employee-punch-list">
-                    {employees.map((employee) => {
-                      const openLog = openLogByEmployeeId.get(employee.id);
-                      return (
-                        <div key={employee.id} className="employee-punch-row">
-                          <span className={openLog ? "face-dot enrolled" : "face-dot"} />
-                          <div>
-                            <strong>{employee.name}</strong>
-                            <small>{employee.code} / {openLog ? `Checked in at ${formatAttendanceTime(openLog.checkIn)}` : "Not checked in"}</small>
-                          </div>
-                          <button className={openLog ? "punch-out" : "punch-in"} onClick={() => markManualAttendance(openLog ? "out" : "in", employee)}>
-                            {openLog ? "Check Out" : "Check In"}
-                          </button>
-                        </div>
-                      );
-                    })}
-                    {!employees.length && <div className="attendance-empty"><Users size={22} /><strong>No employees available</strong><span>Create users in Admin first, then return here.</span></div>}
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="attendance-admin-note">
-                <ShieldCheck size={18} />
-                <span>Manual check-in and check-out are available to administrators only.</span>
-              </div>
-            )}
+
             <div className="attendance-mini-log">
               <h3>Recent punches</h3>
               {todayLogs.slice(0, 5).map((log) => (
@@ -10789,6 +13642,39 @@ function AttendanceModule({ notify, activeStore, stores = [], users, canManage, 
           </div>
         </div>
       )}
+
+      {activeTab === "Manual Check In/Out" && (canManualAttendance ? (
+        <div className="panel manual-attendance-panel">
+          <PanelHead title="Manual Check In/Out" icon={Pencil} />
+          <p className="permission-note">For authorized staff when an employee cannot use the face kiosk. Punches use the current time and are marked Manual in attendance records.</p>
+          <div className="manual-fallback">
+            <label>Employee<select value={manualEmployeeId} onChange={(event) => setManualEmployeeId(event.target.value)}>
+              <option value="">Select employee</option>
+              {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} — {employee.code}</option>)}
+            </select></label>
+            <div className="row-actions">
+              <button className="punch-in" disabled={!manualEmployee || openLogByEmployeeId.has(manualEmployee.id)} onClick={() => markManualAttendance("in", manualEmployee)}>Check In</button>
+              <button className="punch-out" disabled={!manualEmployee || !openLogByEmployeeId.has(manualEmployee.id)} onClick={() => markManualAttendance("out", manualEmployee)}>Check Out</button>
+            </div>
+          </div>
+          {manualEmployee && <p className="permission-note">{openLogByEmployeeId.has(manualEmployee.id) ? `Checked in at ${formatAttendanceTime(openLogByEmployeeId.get(manualEmployee.id).checkIn)}` : "No open check-in today."}</p>}
+          {attendanceResult && <div className="manual-attendance-result" role="status"><CircleCheck size={20} /><span>{attendanceResult.employeeName} checked {attendanceResult.type} at {formatAttendanceTime(attendanceResult.time)}.</span></div>}
+          <div className="employee-punch-panel">
+            <h3>Today's employee status</h3>
+            <div className="employee-punch-list">
+              {employees.map((employee) => {
+                const openLog = openLogByEmployeeId.get(employee.id);
+                return <div key={employee.id} className="employee-punch-row">
+                  <span className={openLog ? "face-dot enrolled" : "face-dot"} />
+                  <div><strong>{employee.name}</strong><small>{employee.code} · {openLog ? `Checked in at ${formatAttendanceTime(openLog.checkIn)}` : "Not checked in"}</small></div>
+                  <button className={openLog ? "punch-out" : "punch-in"} onClick={() => markManualAttendance(openLog ? "out" : "in", employee)}>{openLog ? "Check Out" : "Check In"}</button>
+                </div>;
+              })}
+              {!employees.length && <div className="attendance-empty"><Users size={22} /><strong>No employees available</strong><span>Create employees in Admin first.</span></div>}
+            </div>
+          </div>
+        </div>
+      ) : <div className="panel attendance-admin-note"><ShieldCheck size={20} /><span>Manual attendance permission is required. Contact your administrator.</span></div>)}
 
       {activeTab === "Add Face ID" && (
         <div className="attendance-employee-grid">
@@ -10992,14 +13878,18 @@ function AttendanceModule({ notify, activeStore, stores = [], users, canManage, 
           </form>
           <div className="panel table-panel leave-request-list">
             <PanelHead title="Leave requests" icon={CalendarClock} actions={["Export CSV"]} onAction={() => { downloadCsv(`uvpro-leave-requests-${reportMonth}.csv`, ["employee", "type", "from", "to", "reason", "status"], leaveRequests); notify("Leave requests exported"); }} />
-            <table>
-              <thead><tr><th>Employee</th><th>Leave</th><th>Dates</th><th>Reason</th><th>Status</th>{canManageAttendance && <th>Action</th>}</tr></thead>
-              <tbody>{leaveRequests.map((request) => <tr key={request.id}><td>{request.employeeName}<br /><small>{request.employeeCode}</small></td><td>{request.type}</td><td>{request.from}<br /><small>to {request.to}</small></td><td>{request.reason}</td><td><span className={request.status === "Approved" ? "active-chip" : request.status === "Rejected" ? "danger-chip" : "attendance-open-chip"}>{request.status}</span></td>{canManageAttendance && <td>{request.status === "Pending" && <div className="leave-review-actions"><button onClick={() => updateLeaveStatus(request.id, "Approved")}>Approve</button><button className="danger-action" onClick={() => updateLeaveStatus(request.id, "Rejected")}>Reject</button></div>}</td>}</tr>)}</tbody>
-            </table>
-            {!leaveRequests.length && <div className="empty-table-state">No leave requests for this branch yet.</div>}
+            <AttendanceLeaveList requests={leaveRequests} />
           </div>
         </div>
       )}
+
+      {activeTab === "Leave Approvals" && (canManageAttendance ? (
+        <div className="panel table-panel leave-approvals-panel">
+          <PanelHead title="Leave approvals" icon={ShieldCheck} />
+          <p className="permission-note">Review pending requests and approve or reject them here. Employees can track the result in Leave requests.</p>
+          <AttendanceLeaveList requests={leaveRequests} onReview={updateLeaveStatus} />
+        </div>
+      ) : <div className="panel attendance-admin-note"><ShieldCheck size={20} /><span>Admin permission is required to review leave.</span></div>)}
 
       {activeTab === "Payroll Summary" && (
         <div className="payroll-summary-stack">
@@ -11018,8 +13908,8 @@ function AttendanceModule({ notify, activeStore, stores = [], users, canManage, 
             <div className="payroll-rate-list">
               {employees.map((employee) => <div className="payroll-rate-row" key={employee.id}>
                 <div><strong>{employee.name}</strong><small>{employee.code} · {employee.designation}</small></div>
-                <label>Monthly salary<input type="number" min="0" step="1" value={employee.salary || ""} placeholder="0" onChange={(event) => updateEmployeePayroll(employee.id, "salary", event.target.value)} /></label>
-                <label>Overtime per hour<input type="number" min="0" step="1" value={employee.overtimeRate || ""} placeholder="0" onChange={(event) => updateEmployeePayroll(employee.id, "overtimeRate", event.target.value)} /></label>
+                <label>Monthly salary<input type="number" min="0" step="1" value={employee.salary || ""} onChange={(event) => updateEmployeePayroll(employee.id, "salary", event.target.value)} /></label>
+                <label>Overtime per hour<input type="number" min="0" step="1" value={employee.overtimeRate || ""} onChange={(event) => updateEmployeePayroll(employee.id, "overtimeRate", event.target.value)} /></label>
               </div>)}
             </div>
           </div>}
@@ -11426,7 +14316,7 @@ function OnlineOrderingIntegrationSettings({ activeStore, canManage, notify, men
   );
 }
 
-function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, billingPrinter, setBillingPrinter, canManage, canManageAll, activeStore, setStores, menuItems, themeConfig, setThemeConfig, setDark }) {
+function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, billingPrinter, setBillingPrinter, canManage, canManageAll, activeStore, setStores, menuItems, themeConfig, setThemeConfig, setDark, displayScale, setDisplayScale }) {
   const sectionNames = canManageAll ? Object.keys(settingsSectionConfig) : storeSettingsSections;
   const [selectedSetting, setSelectedSetting] = useState(null);
   const settingMeta = {
@@ -11436,12 +14326,17 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
     "Print bill format": ReceiptText,
     "Printer setup": Printer,
     "Payment providers": CreditCard,
+    "Purchase controls": ClipboardList,
     Integrations: ShoppingCart,
-    "Cloudflare R2": DatabaseZap,
+    "Amazon S3 storage": DatabaseZap,
     "WhatsApp templates": Bell,
     "Backup policy": DatabaseZap,
     "Theme and language": Sun,
   };
+
+  if (selectedSetting === "QZ Tray setup") {
+    return <QzTraySetupGuide notify={notify} canManage={canManage} billingPrinter={billingPrinter} kotPrinter={kotPrinter} onBack={() => setSelectedSetting(null)} onOpenPrinter={setSelectedSetting} />;
+  }
 
   if (selectedSetting === "KOT printer connection" || selectedSetting === "Billing printer connection") {
     const isBilling = selectedSetting === "Billing printer connection";
@@ -11451,6 +14346,7 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
         <div className="panel settings-detail-panel">
           <PanelHead title={selectedSetting} icon={Printer} actions={canManage ? ["Save"] : []} onAction={() => notify(`${isBilling ? "Billing" : "KOT"} printer settings saved on this computer`)} />
           <p className="settings-description">{isBilling ? "Connect and test the customer bill printer. Used when you click Print bill or Reprint bill." : "Connect and test the kitchen printer used for KOT tickets."}</p>
+          <button type="button" className="qz-inline-guide-link" onClick={() => setSelectedSetting("QZ Tray setup")}><ShieldCheck size={16} /> New terminal? Open the complete QZ Tray setup guide <ChevronRight size={16} /></button>
           <PrinterConnectionSetup key={selectedSetting} purpose={isBilling ? "billing" : "kot"} printer={isBilling ? billingPrinter : kotPrinter} setPrinter={isBilling ? setBillingPrinter : setKotPrinter} notify={notify} canManage={canManage} />
         </div>
       </section>
@@ -11466,7 +14362,7 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
   }
 
   if (selectedSetting) {
-    return <SettingsManagement notify={notify} canManage={canManage} activeStore={activeStore} setStores={setStores} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} themeConfig={themeConfig} setThemeConfig={setThemeConfig} setDark={setDark} activeSection={selectedSetting} onBack={() => setSelectedSetting(null)} />;
+    return <SettingsManagement notify={notify} canManage={canManage} activeStore={activeStore} setStores={setStores} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} themeConfig={themeConfig} setThemeConfig={setThemeConfig} setDark={setDark} displayScale={displayScale} setDisplayScale={setDisplayScale} activeSection={selectedSetting} onBack={() => setSelectedSetting(null)} />;
   }
 
   return (
@@ -11480,6 +14376,14 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
         <span className="settings-location">{activeStore?.name || "UVPRO"} / {activeStore?.branch || "All stores"}</span>
       </div>
       <div className="settings-card-grid">
+        <button className="settings-card settings-card-featured" onClick={() => setSelectedSetting("QZ Tray setup")}>
+          <span className="settings-card-icon"><ShieldCheck size={21} /></span>
+          <span className="settings-card-copy">
+            <strong>QZ Tray setup</strong>
+            <small>Install, secure, connect, discover printers, and verify this terminal.</small>
+          </span>
+          <span className="settings-card-open">Set up <ChevronRight size={17} /></span>
+        </button>
         {sectionNames.map((name) => {
           const Icon = settingMeta[name] || Settings;
           return (
@@ -11595,7 +14499,7 @@ function DataModule({ title, icon: Icon, rows, notify, canManageAll }) {
   );
 }
 
-function DataTable({ title, icon, columns, rows, onRowsChange, notify, canManageAll, allowAdd = false, addLabel = "Add item", addRowDefaults = [], emptyMessage = "No records found" }) {
+function DataTable({ title, icon, columns, rows, onRowsChange, notify, canManageAll, allowAdd = false, addLabel = "Add item", addRowDefaults = [], emptyMessage = "No records found", showFilter = true, readOnlyColumns = [] }) {
   const Icon = icon;
   const [filterOn, setFilterOn] = useState(false);
   const [localRows, setLocalRows] = useState(rows);
@@ -11665,7 +14569,7 @@ function DataTable({ title, icon, columns, rows, onRowsChange, notify, canManage
   return (
     <section className="screen">
       <div className="panel table-panel">
-        <PanelHead title={title} icon={Icon} actions={[...(allowAdd ? [addLabel] : []), "Filter", "Export"]} activeAction={filterOn ? "Filter" : ""} onAction={(action) => {
+        <PanelHead title={title} icon={Icon} actions={[...(allowAdd ? [addLabel] : []), ...(showFilter ? ["Filter"] : []), "Export"]} activeAction={filterOn ? "Filter" : ""} onAction={(action) => {
           if (action === addLabel && allowAdd) { openNewRow(); return; }
           if (action === "Filter") { setFilterOn((value) => !value); return; }
           if (action === "Export") exportRows();
@@ -11687,7 +14591,7 @@ function DataTable({ title, icon, columns, rows, onRowsChange, notify, canManage
               <tr key={`${row.join("-")}-${sourceIndex}`} onClick={() => notify(`${row[0]} selected`)}>
                 {row.map((cell, cellIndex) => (
                   <td key={`${cell}-${cellIndex}`}>
-                    {isEditing ? <input className="table-edit-input" value={rowDraft[cellIndex]} onChange={(event) => setRowDraft((current) => current.map((value, index) => index === cellIndex ? event.target.value : value))} /> : cell}
+                    {isEditing && !readOnlyColumns.includes(cellIndex) ? <input className="table-edit-input" aria-label={columns[cellIndex]} value={rowDraft[cellIndex]} onChange={(event) => setRowDraft((current) => current.map((value, index) => index === cellIndex ? event.target.value : value))} /> : cell}
                   </td>
                 ))}
                 {canManageAll && (
@@ -11713,7 +14617,7 @@ function Insight({ title, text }) {
 }
 
 function Metric({ icon: Icon, label, value, trend, danger }) {
-  return <div className={danger ? "metric danger" : "metric"}><Icon size={20} /><span>{label}</span><strong>{value}</strong>{trend && <em>{trend}</em>}</div>;
+  return <div className={danger ? "metric danger" : "metric"}><div className="metric-heading"><span>{label}</span><span className="metric-icon"><Icon size={19} /></span></div><strong>{value}</strong>{trend && <em><span className="metric-status-dot" />{trend}</em>}</div>;
 }
 
 function PanelHead({ title, icon: Icon, actions = [], onAction, activeAction }) {

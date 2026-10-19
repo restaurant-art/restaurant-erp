@@ -10,16 +10,20 @@ The customer-facing product name is **UVPRO**. Legacy `vestora` identifiers are 
 - Application, manifest, API, admin, worker, documentation, and deployment workflow display names: `UVPRO`
 - Public logo asset: `uvpro-mark.png`
 
-## AWS resources that require replacement or a coordinated cutover
+## Legacy resources that require replacement or a coordinated cutover
+
+The target is now the CloudFormation stack in `deploy/aws/cloudformation.yml`.
+CloudFormation may generate physical IDs for resources whose names must be
+globally unique; use stack outputs and tags instead of assuming a physical ID.
 
 | Service | Current identifier | Target identifier | Migration requirement |
 | --- | --- | --- | --- |
-| ECS | `vestora-prod-cluster` | `uvpro-prod-cluster` | Create a new cluster and services, deploy the same task definitions with UVPRO images/configuration, then drain the old services. |
-| ECS | `vestora-prod-api` | `uvpro-prod-api` | Create in the UVPRO cluster, verify health checks, then move traffic. |
-| ECS | `vestora-prod-celery` | `uvpro-prod-celery` | Create in the UVPRO cluster and verify jobs before stopping the old worker. |
-| ECR | `vestora-prod-backend` | `uvpro-prod-backend` | Create the repository and copy/re-tag all required images. |
-| S3 | `vestora-prod-frontend-042396229639-ap-south-1` | `uvpro-prod-frontend-042396229639-ap-south-1` | Create, copy objects and bucket configuration, deploy, then update the origin. |
-| S3 | `vestora-prod-media-042396229639-ap-south-1` | `uvpro-prod-media-042396229639-ap-south-1` | Create, copy objects and permissions, update application configuration, and verify uploads/downloads. |
+| ECS | `vestora-prod-cluster` | `uvpro-prod` | Create the stack, deploy an immutable image, migrate, verify, then drain the old services. |
+| ECS | `vestora-prod-api` | `uvpro-prod-web` | Verify `/api/health/` and core transactions before moving traffic. |
+| ECS | `vestora-prod-celery` | `uvpro-prod-worker` | Verify a test background job before stopping the old worker. |
+| ECR | `vestora-prod-backend` | `uvpro-prod-app` | Push a new immutable image built from the intended release commit. |
+| S3 | Legacy frontend bucket | Bundled frontend in the application image | The AWS Docker image contains the Vite build, so a separate public frontend bucket is not required. |
+| S3 | Legacy media bucket | Stack `MediaBucketName` output | Copy objects while preserving keys, validate counts and checksums, then verify signed download URLs. |
 | ALB | `vestora-prod-alb` | `uvpro-prod-alb` | Create a new load balancer and target group, verify HTTPS and health checks, then switch DNS. |
 | Target group | `vestora-prod-api-tg` | `uvpro-prod-api-tg` | Register UVPRO service targets and verify them before the DNS cutover. |
 | RDS | `vestora-prod-postgres` | `uvpro-prod-postgres` | Coordinate the identifier/endpoint change with ECS secrets and task definitions; a restart and brief interruption are possible. |
@@ -29,13 +33,15 @@ The customer-facing product name is **UVPRO**. Legacy `vestora` identifiers are 
 
 ## Safe cutover order
 
-1. Create the UVPRO ECR repository and copy the current backend images.
-2. Create UVPRO S3 buckets, copy data and settings, and verify object access.
-3. Prepare the UVPRO database/cache endpoints and update secrets without exposing credentials.
-4. Create the UVPRO ECS cluster and services and verify API, worker, database, and cache health.
-5. Create the UVPRO ALB and target group, then verify the application through the load-balancer endpoint.
-6. Change `uvpro.in` DNS to the UVPRO load balancer.
+1. Deploy the CloudFormation foundation with both ECS service counts at zero.
+2. Build and push a UVPRO image, then copy legacy media to the retained private bucket.
+3. Migrate or restore PostgreSQL data and validate tenant/branch row counts.
+4. Run the dedicated ECS migration task and require exit code zero.
+5. Activate ECS web/worker services and verify API, worker, database, cache, and signed media access.
+6. Change application DNS to the new load balancer.
 7. Monitor production, then remove legacy resources only after a separate deletion approval.
+
+See `docs/AWS_DEPLOYMENT.md` for exact deployment and rollback commands.
 
 Parallel resources temporarily add AWS charges. Do not create the replacement stack until that cost has been approved.
 

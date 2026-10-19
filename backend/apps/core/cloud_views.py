@@ -3,6 +3,7 @@ import json
 import uuid
 from decimal import Decimal
 
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.db import IntegrityError, transaction
 from django.utils import timezone
@@ -11,7 +12,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import PublicOrder, SharedAppState, SyncOperation
+from .models import Branch, PublicOrder, SharedAppState, SyncOperation
+from .attendance_permissions import can_record_manual_attendance, changes_manual_attendance
 
 
 User = get_user_model()
@@ -22,11 +24,15 @@ GLOBAL_KEYS = {
     "vestora-kds-orders", "vestora-table-orders", "vestora-supplier-orders",
 }
 STORE_PREFIXES = (
+    "purchase-drafts", "purchase-orders",
+    "inventory-category-profiles", "inventory-tax-profiles",
     "active-settings", "attendance-employees", "attendance-logs", "attendance-records",
     "attendance-report", "attendance-settings", "finance-bank-accounts", "finance-expenses",
     "finance-journals", "finance-ledgers", "finance-receipts", "finance-vendor-payments",
-    "finished-goods", "floors", "food-stock", "inventory-categories", "inventory-transactions",
-    "inventory", "last-shift-close", "shifts", "shift-history", "leave-requests", "menu-items",
+    "finished-goods", "floors", "food-stock", "inventory-brands", "inventory-manufacturers",
+    "inventory-categories", "inventory-departments", "inventory-subcategories",
+    "inventory-transactions", "inventory-vendors", "inventory-brand-manufacturer-profiles", "inventory",
+    "last-shift-close", "shifts", "shift-history", "leave-requests", "menu-items",
     "menu-setup", "offers", "payroll-attendance", "production-batches", "production-categories",
     "production-wastage", "recipes", "tables", "bill-template", "theme-config",
     "supplier-documents", "customer-details",
@@ -72,12 +78,49 @@ def _state_store(key):
     return None
 
 
+def _tenant_directory_store_ids(user, directory):
+    """Map tenant-owned app directory branches to the authenticated account.
+
+    The browser store directory predates the relational Restaurant/Branch
+    records and usually has no restaurantId field. When a user is linked to a
+    tenant branch in Django, match that branch by code (or, for older records,
+    by name) while requiring the directory's restaurant name to match too.
+    """
+    if user.restaurant_id is None:
+        return set()
+
+    branches = list(user.branches.filter(restaurant_id=user.restaurant_id, is_active=True))
+    if not branches and user.user_type in ("owner", "restaurant_admin"):
+        branches = list(Branch.objects.filter(restaurant_id=user.restaurant_id, is_active=True))
+    if not branches:
+        return set()
+
+    restaurant_name = str(user.restaurant.name or "").strip().casefold()
+    branch_codes = {str(branch.code or "").strip().casefold() for branch in branches if branch.code}
+    branch_names = {str(branch.name or "").strip().casefold() for branch in branches if branch.name}
+    tenant_store_ids = set()
+    for store in directory:
+        if not isinstance(store, dict) or str(store.get("name", "")).strip().casefold() != restaurant_name:
+            continue
+        branch_code = str(store.get("branchCode", "")).strip().casefold()
+        branch_name = str(store.get("branch", "")).strip().casefold()
+        if branch_code:
+            branch_matches = branch_code in branch_codes
+        elif branch_name:
+            branch_matches = branch_name in branch_names
+        else:
+            # Older single-branch records may omit branch fields entirely.
+            branch_matches = len(branches) == 1
+        if branch_matches and store.get("id"):
+            tenant_store_ids.add(str(store["id"]))
+    return tenant_store_ids
+
+
 def _business_key(key):
     return key in GLOBAL_KEYS or _state_store(key) is not None
 
 
-def _access(request):
-    user = request.user
+def _user_access(user):
     directory = _state_value("vestora-stores", []) or []
     staff = _state_value("vestora-users", []) or []
     roles = _state_value("vestora-custom-roles", []) or []
@@ -85,18 +128,24 @@ def _access(request):
     linked = next((entry for entry in staff if str(entry.get("email", "")).lower() == email and str(entry.get("status", "Active")).lower() == "active"), None)
     platform_admin = bool(user.is_superuser or user.user_type == "super_admin")
     assigned_store = str((linked or {}).get("storeId") or "")
+    tenant_store_ids = _tenant_directory_store_ids(user, directory)
     allowed = [
         str(store.get("id")) for store in directory
         if platform_admin
         or str(store.get("id")) == assigned_store
         or str(store.get("adminEmail", "")).lower() == email
         or (user.restaurant_id is not None and str(store.get("restaurantId", "")) == str(user.restaurant_id))
+        or str(store.get("id", "")) in tenant_store_ids
     ]
     return {
         "user": user, "directory": directory, "staff": staff, "roles": roles,
         "linked": linked, "platform_admin": platform_admin,
         "assigned_store": assigned_store, "allowed": allowed,
     }
+
+
+def _access(request):
+    return _user_access(request.user)
 
 
 def _can_store(access, store_id):
@@ -120,25 +169,42 @@ def _scope_value(access, key, value):
 def _profile(access):
     user = access["user"]
     store_id = access["assigned_store"] or (access["allowed"][0] if access["allowed"] else "GLOBAL")
+    app_role = ROLE_LABELS.get(user.user_type, user.user_type)
+    linked_role = (access.get("linked") or {}).get("role")
+    if user.user_type not in ("super_admin", "owner", "restaurant_admin") and any(
+        role.get("name") == linked_role and role.get("status") != "Inactive"
+        and role.get("storeId") in (store_id, "GLOBAL") for role in access.get("roles", [])
+    ):
+        app_role = linked_role
     store = next((entry for entry in access["directory"] if str(entry.get("id")) == store_id), {})
     expires = str(store.get("subscriptionExpiresAt", ""))[:10] or None
     expired = bool(not access["platform_admin"] and expires and expires < timezone.localdate().isoformat())
     return {
         "id": user.pk, "email": user.email, "restaurantId": user.restaurant_id,
-        "role": user.user_type, "appRole": ROLE_LABELS.get(user.user_type, user.user_type),
+        "role": user.user_type, "appRole": app_role,
         "isSuperuser": user.is_superuser, "status": "Active", "storeId": store_id,
         "allowedStoreIds": access["allowed"], "subscriptionExpiresAt": expires,
         "subscriptionExpired": expired,
     }
 
 
-def _session_user(user):
-    profile = _profile({
-        "user": user, "directory": _state_value("vestora-stores", []) or [],
-        "staff": _state_value("vestora-users", []) or [], "roles": [],
-        "linked": None, "platform_admin": bool(user.is_superuser or user.user_type == "super_admin"),
-        "assigned_store": "", "allowed": [],
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def storage_status(request):
+    """Return non-sensitive media-storage readiness for the administration UI."""
+
+    configured = bool(getattr(settings, "USE_S3_STORAGE", False))
+    return Response({
+        "provider": "amazon_s3" if configured else "local",
+        "configured": configured,
+        "region": getattr(settings, "AWS_S3_REGION_NAME", None) if configured else None,
+        "private": True,
+        "signedUrls": bool(getattr(settings, "AWS_QUERYSTRING_AUTH", True)) if configured else False,
     })
+
+
+def _session_user(user):
+    profile = _profile(_user_access(user))
     return {
         "id": str(user.pk), "email": user.email,
         "user_metadata": {"name": user.get_full_name() or user.email},
@@ -229,40 +295,68 @@ def cloud_state(request):
         "expected": request.data.get("expectedUpdatedAt"),
     }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     actor_id = str(request.user.pk)
-    previous_operation = SyncOperation.objects.filter(actor_id=actor_id, operation_id=operation_id).first()
-    if previous_operation:
-        if previous_operation.request_hash != fingerprint:
-            return _json_error("Mutation identifier was already used", 409)
-        return Response(previous_operation.result)
-
     with transaction.atomic():
+        # Claim the mutation before locking or changing the shared row.  The
+        # unique constraint makes a concurrent replay wait for the first
+        # request to commit, after which get_or_create returns its recorded
+        # result.  Checking for a journal entry before the transaction leaves
+        # a race where the same stock delta can be applied twice.
+        operation, created = SyncOperation.objects.select_for_update().get_or_create(
+            actor_id=actor_id,
+            operation_id=operation_id,
+            defaults={"request_hash": fingerprint, "result": {}},
+        )
+        if not created:
+            if operation.request_hash != fingerprint:
+                return _json_error("Mutation identifier was already used", 409)
+            return Response(operation.result)
+
         row = SharedAppState.objects.select_for_update().filter(state_key=key).first()
         expected = request.data.get("expectedUpdatedAt")
         current_version = row.updated_at.isoformat() if row else None
         if current_version != expected:
+            # A conflict did not apply this mutation, so do not leave an empty
+            # journal result that a later retry could mistake for success.
+            operation.delete()
             return _json_error("Data changed on another device; retry with the latest version", 409)
         value = requested_value
+        if (key.startswith("vestora-attendance-logs-")
+                and not can_record_manual_attendance(access, _state_store(key))
+                and changes_manual_attendance(row.state_value if row else [], value)):
+            operation.delete()
+            return _json_error("Manual attendance permission required", 403)
         if not access["platform_admin"] and key in GLOBAL_KEYS:
             if not isinstance(value, list):
+                operation.delete()
                 return _json_error("Expected a list of store records")
-            if any(not _can_store(access, item.get("id") if key == "vestora-stores" else item.get("storeId", "")) for item in value):
+            if any(not isinstance(item, dict) or not _can_store(access, item.get("id") if key == "vestora-stores" else item.get("storeId", "")) for item in value):
+                operation.delete()
                 return _json_error("Cannot change records from another store", 403)
             old = row.state_value if row and isinstance(row.state_value, list) else []
             value = value + [item for item in old if not _can_store(access, item.get("id") if key == "vestora-stores" else item.get("storeId", ""))]
-        if not row:
+        creating = row is None
+        if creating:
             row = SharedAppState(state_key=key)
         row.state_value = value
         row.updated_at = timezone.now()
-        row.save()
+        try:
+            with transaction.atomic():
+                row.save(force_insert=creating)
+        except IntegrityError:
+            if not creating:
+                raise
+            # Different devices may both see a missing key. The unique state
+            # key chooses the winner; the loser must refresh and merge, never
+            # overwrite the winner or leave a false successful replay entry.
+            operation.delete()
+            return _json_error("Data changed on another device; retry with the latest version", 409)
         result = {
             "state_key": row.state_key,
             "state_value": _scope_value(access, key, row.state_value),
             "updated_at": row.updated_at.isoformat(),
         }
-        try:
-            SyncOperation.objects.create(actor_id=actor_id, operation_id=operation_id, request_hash=fingerprint, result=result)
-        except IntegrityError:
-            pass
+        operation.result = result
+        operation.save(update_fields=["result"])
     return Response(result)
 
 

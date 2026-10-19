@@ -1,0 +1,38 @@
+.finance-entry-backdrop {
+  position: fixed; inset: 0; z-index: 11000; display: grid; place-items: center;
+  padding: 24px; background: rgb(12 32 26 / 50%); backdrop-filter: blur(4px);
+}
+.finance-entry-dialog {
+  width: min(1080px, 100%); max-height: calc(100dvh - 48px); overflow: auto;
+  overscroll-behavior: contain; border-radius: 18px; border: 1px solid var(--design-border, #dce6df);
+  background: var(--theme-surface, #fff); color: var(--theme-text, #173d31);
+  box-shadow: 0 24px 90px rgb(8 30 22 / 25%);
+}
+.finance-entry-dialog > .finance-expense-form {
+  margin: 0; padding: 28px; border: 0; border-radius: 0;
+  background: var(--theme-surface, #fff); gap: 20px;
+}
+.finance-entry-dialog .finance-form-title {
+  gap: 20px; padding-bottom: 20px; border-bottom: 1px solid var(--design-border, #dce6df);
+}
+.finance-entry-dialog .finance-form-title strong,
+.finance-entry-dialog .finance-form-title h3 { font-size: 23px; margin: 4px 0 0; }
+.finance-entry-dialog .finance-form-title button { flex-shrink: 0; }
+.finance-entry-dialog .finance-form-actions {
+  grid-column: 1 / -1; padding-top: 20px; border-top: 1px solid var(--design-border, #dce6df); margin: 0;
+}
+.finance-entry-dialog label { min-width: 0; color: var(--theme-muted, #657b70); font-size: 12px; font-weight: 600; }
+.finance-entry-dialog input, .finance-entry-dialog select {
+  min-width: 0; max-width: 100%; width: 100%; min-height: 44px; padding: 10px 12px;
+  border: 1px solid var(--design-border, #dce6df); border-radius: 8px;
+  background: var(--theme-surface, #fff); color: var(--theme-text, #173d31); font-size: 13px; font-weight: 400;
+}
+.finance-entry-dialog input[type="checkbox"] { width: 18px; min-height: 18px; }
+body.finance-dialog-open .toast { z-index: 12000; }
+@media (max-width: 700px) {
+  .finance-entry-backdrop { padding: 12px; }
+  .finance-entry-dialog { max-height: calc(100dvh - 24px); border-radius: 14px; }
+  .finance-entry-dialog > .finance-expense-form { padding: 20px; grid-template-columns: 1fr; gap: 16px; }
+  .finance-entry-dialog .finance-note { grid-column: 1 / -1; }
+  .finance-entry-dialog .finance-form-actions { flex-wrap: wrap; }
+}

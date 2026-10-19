@@ -7,8 +7,8 @@ Production-oriented multi-tenant restaurant ERP and POS platform inspired by Pet
 - Frontend: React, Vite, Tailwind CSS, PWA service worker
 - Backend: Django, Django REST Framework, Simple JWT, Channels, Celery
 - Database/cache: PostgreSQL and Redis
-- Storage: Cloudflare R2 via S3-compatible `django-storages`
-- Deployment: Docker, Gunicorn, Nginx, GitHub Actions
+- Storage: private Amazon S3 via IAM task roles and `django-storages`
+- Deployment: AWS ECS/Fargate, RDS, ElastiCache, ECR, ALB/WAF, CloudWatch, Docker, and CloudFormation
 
 ## Apps
 
@@ -19,6 +19,14 @@ Production-oriented multi-tenant restaurant ERP and POS platform inspired by Pet
 - Table, order, menu, inventory, purchase, CRM, HR, finance, report, notification, subscription, and settings modules
 
 ## Quick Start
+
+For the existing Windows local setup with `backend/.venv`, its database, and a
+built frontend, run `./start-local.ps1` from PowerShell. It starts the backend
+and serves the app together at http://localhost:8000 using the existing data.
+Run it again after restarting Windows; it reuses an already-running service.
+See [docs/INSTALLATION.md](docs/INSTALLATION.md) for the local demo login.
+
+For a Docker installation:
 
 ```bash
 cp backend/.env.example backend/.env
@@ -37,4 +45,9 @@ Seed demo data:
 docker compose exec backend python manage.py seed_demo
 ```
 
-See [docs/INSTALLATION.md](docs/INSTALLATION.md) and [docs/API.md](docs/API.md).
+Local development does not require an AWS account. Production is AWS-only and
+does not depend on Supabase, Cloudflare, or long-lived AWS access keys.
+
+See [docs/INSTALLATION.md](docs/INSTALLATION.md),
+[docs/AWS_DEPLOYMENT.md](docs/AWS_DEPLOYMENT.md), and
+[docs/API.md](docs/API.md).

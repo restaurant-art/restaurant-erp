@@ -185,6 +185,6 @@ class Command(BaseCommand):
             amount=Decimal("2450.00"),
             expense_date=timezone.localdate(),
         )
-        IntegrationSetting.objects.get_or_create(restaurant=restaurant, branch=branch, provider="cloudflare_r2")
+        IntegrationSetting.objects.get_or_create(restaurant=restaurant, branch=branch, provider="amazon_s3")
         Printer.objects.get_or_create(restaurant=restaurant, branch=branch, name="Counter 80mm", target="billing")
         self.stdout.write(self.style.SUCCESS("Demo tenant ready: admin@demo.test / Demo@12345"))

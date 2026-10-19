@@ -1,0 +1,8 @@
+.pos-pricing-control { display: grid; gap: 4px; min-width: 145px; color: #284a40; font-size: 12px; font-weight: 650; }
+.pos-pricing-control select { padding: 9px 30px 9px 12px; border: 1px solid #b8d8ca; border-radius: 8px; background: #f0f8f4; color: #143e30; font: inherit; font-size: 14px; }
+.pos-wholesale-note { padding: 10px 14px; border: 1px solid #e8d6ad; border-radius: 8px; background: #fff9ed; color: #765523; font-size: 12px; line-height: 1.5; }
+.pos-retail-fallback { display: block; font-size: 11px; font-style: normal; color: #94631e; }
+.dark .pos-pricing-control { color: #d3e8dc; }
+.dark .pos-pricing-control select { background: #183c30; color: #e3f3eb; border-color: #3d6455; }
+.dark .pos-wholesale-note { background: #382f1b; color: #f1dcb1; border-color: #685635; }
+@media (min-width: 901px) { .inventory-product-modal .inventory-product-prices-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

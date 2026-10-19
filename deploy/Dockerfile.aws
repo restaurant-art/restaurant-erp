@@ -17,13 +17,17 @@ ENV FRONTEND_DIST_DIR=/app/frontend-dist
 
 WORKDIR /app
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential libpq-dev \
+    && apt-get install -y --no-install-recommends build-essential libpq-dev ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /app/certs \
+    && curl --fail --show-error --silent --location https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o /app/certs/rds-global-bundle.pem
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./
 COPY --from=frontend-build /src/frontend/dist /app/frontend-dist
 RUN python manage.py collectstatic --noinput
+RUN useradd --system --uid 10001 --create-home uvpro
+USER uvpro
 
 EXPOSE 8000
-CMD ["sh", "-c", "python manage.py migrate --noinput && gunicorn config.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000"]
+CMD ["gunicorn", "config.asgi:application", "--worker-class", "uvicorn.workers.UvicornWorker", "--workers", "2", "--bind", "0.0.0.0:8000", "--access-logfile", "-", "--error-logfile", "-"]
