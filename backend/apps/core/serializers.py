@@ -178,6 +178,8 @@ class OrderSerializer(serializers.ModelSerializer):
                 - discount_total
             )
             order.save()
+            from .production_orders import confirm_relational_order
+            confirm_relational_order(order, request.user)
         return order
 
 
@@ -325,7 +327,24 @@ class DeviceLoginSerializer(serializers.ModelSerializer):
 
 
 class ReportExportSerializer(serializers.ModelSerializer):
+    def validate_report_type(self, value):
+        if value != "daily-sales":
+            raise serializers.ValidationError("Supported background report: daily-sales.")
+        return value
+
+    def validate_filters(self, value):
+        from datetime import date
+        if not isinstance(value, dict) or set(value) - {"from", "to"}:
+            raise serializers.ValidationError("Enter optional from and to dates.")
+        try:
+            dates = {key: date.fromisoformat(day) for key, day in value.items()}
+        except (ValueError, TypeError):
+            raise serializers.ValidationError("Use YYYY-MM-DD dates.")
+        if "from" in dates and "to" in dates and dates["from"] > dates["to"]:
+            raise serializers.ValidationError("The start date must precede the end date.")
+        return {key: day.isoformat() for key, day in dates.items()}
+
     class Meta:
         model = ReportExport
         fields = "__all__"
-        read_only_fields = ("restaurant", "requested_by")
+        read_only_fields = ("restaurant", "requested_by", "status", "file")

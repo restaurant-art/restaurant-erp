@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { withBillingPrice, repriceCart, wholesalePriceError, ecommercePriceError } from "./pos-pricing.js";
+import { withBillingPrice, repriceCart, wholesalePriceError, ecommercePriceError, cardPriceError } from "./pos-pricing.js";
 import { buildProductSearchCatalog, filterPosCatalog } from "./pos-catalog.js";
 
 test("retail is the default; wholesale uses its own price", () => {
@@ -66,4 +66,10 @@ test("e-commerce pricing is preserved independently without changing POS retail 
   assert.equal(catalogItem.ecommercePrice, 95.5);
   assert.equal(withBillingPrice(catalogItem, "Retail").price, 100);
   assert.equal(withBillingPrice(catalogItem, "Wholesale").price, 80);
+});
+
+test("card price is optional and validated independently within MRP", () => {
+  for (const value of [undefined, null, "", " ", 0, "80.50", 100]) assert.equal(cardPriceError(value, 100), "");
+  for (const value of [-1, "invalid", Infinity]) assert.equal(cardPriceError(value, 100), "Card price must be zero or more.");
+  assert.equal(cardPriceError(100.01, 100), "Card price cannot be greater than MRP.");
 });

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
-import { ArrowDown, ArrowUp, ArrowUpDown, CalendarDays, ChevronLeft, ChevronRight, FileBarChart, FileDown, FileSearch, FileSpreadsheet, ListFilter, Printer, Search, SlidersHorizontal, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, CalendarDays, ChevronLeft, ChevronRight, FileBarChart, FileDown, FileSearch, FileSpreadsheet, ListFilter, Printer, RefreshCw, Search, SlidersHorizontal, X } from "lucide-react";
 import "./reports-workspace.css";
+import { SalesBillDialog } from "./sales-bill-dialog.jsx";
 
 const descriptions = {
   "Daily sales": "Review bills, payments, discounts, and sales for your selected period.",
@@ -19,7 +20,12 @@ const numericValue = (value) => {
 };
 
 export function ReportsWorkspace({ selectedReport, reports, onSelectReport, range, onRangeChange, reportDate, onDateChange,
-  search, onSearchChange, filter, onFilterChange, filterLabel, filterOptions, columns, rows, columnTotals, onAction }) {
+  fromDate = "", toDate = "", onFromDateChange, onToDateChange, onDatePreset, dateRangeValid = true,
+  search, onSearchChange, filter, onFilterChange, filterLabel, filterOptions, columns, rows, columnTotals, onAction,
+  onBack, backLabel = "Back to finance reports", eyebrow = "BUSINESS REPORTS", description = "", autoUpdate = false, bills = [], refunds = [] }) {
+  const [selectedBill, setSelectedBill] = useState(null);
+  const billsById = new Map(bills.map((bill) => [bill.id, bill]));
+  useEffect(() => { setSelectedBill(null); }, [selectedReport]);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [sort, setSort] = useState(null);
@@ -33,9 +39,13 @@ export function ReportsWorkspace({ selectedReport, reports, onSelectReport, rang
   }, []);
   useEffect(() => { setPage(0); }, [selectedReport, range, reportDate, search, filter, pageSize, sort]);
   useEffect(() => { setSort(null); }, [selectedReport]);
-  const period = reportDate ? new Date(`${reportDate}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : range === "All" ? "All dates" : range === "7 days" ? "Last 7 days" : range === "Month" ? "This month" : range;
-  const hasFilters = Boolean(search.trim() || filter !== "All" || reportDate);
-  const resetFilters = () => { onSearchChange(""); onFilterChange("All"); onDateChange(""); };
+  const usesDateRange = typeof onFromDateChange === "function" && typeof onToDateChange === "function";
+  const displayDate = (value) => value ? new Date(`${value}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "";
+  const period = usesDateRange
+    ? fromDate && toDate ? `${displayDate(fromDate)} to ${displayDate(toDate)}` : fromDate ? `From ${displayDate(fromDate)}` : toDate ? `Up to ${displayDate(toDate)}` : "All dates"
+    : reportDate ? displayDate(reportDate) : range === "All" ? "All dates" : range === "7 days" ? "Last 7 days" : range === "Month" ? "This month" : range;
+  const hasFilters = Boolean(search.trim() || filter !== "All" || (!usesDateRange && reportDate));
+  const resetFilters = () => { onSearchChange(""); onFilterChange("All"); if (!usesDateRange) onDateChange(""); };
   const orderedRows = sort ? [...rows].sort((first, second) => {
     const a = first[sort.column];
     const b = second[sort.column];
@@ -56,11 +66,12 @@ export function ReportsWorkspace({ selectedReport, reports, onSelectReport, rang
   return <section className="screen reports-workspace" aria-label="Reports workspace">
     <div className="reports-print-surface print-report">
       <header className="reports-page-head">
-        <div className="reports-title-group"><div className="reports-title-icon"><FileBarChart size={24} /></div><div>
-          <span className="reports-eyebrow">BUSINESS REPORTS</span><h2>{selectedReport}</h2>
-          <p>{descriptions[selectedReport] || "Explore detailed records and totals for your selected report."}</p>
+        <div className="reports-title-group">{onBack && <button type="button" className="reports-back-button" aria-label={backLabel} title={backLabel} onClick={onBack}><ArrowLeft size={20} /></button>}<div className="reports-title-icon"><FileBarChart size={24} /></div><div>
+          <span className="reports-eyebrow">{eyebrow}</span><h2>{selectedReport}</h2>
+          <p>{description || descriptions[selectedReport] || "Explore detailed records and totals for your selected report."}</p>
         </div></div>
         <div className="reports-export-actions" aria-label="Export report">
+          {autoUpdate && <span className="reports-auto-update"><RefreshCw size={15} />Updates automatically</span>}
           <button type="button" onClick={() => onAction("Excel")}><FileSpreadsheet size={16} />Excel</button>
           <button type="button" onClick={() => onAction("CSV")}><FileDown size={16} />CSV</button>
           <button type="button" onClick={() => onAction("PDF")}><FileDown size={16} />PDF</button>
@@ -71,9 +82,16 @@ export function ReportsWorkspace({ selectedReport, reports, onSelectReport, rang
       <section className="reports-filter-card" aria-label="Report filters">
         <div className="reports-primary-filters">
           <label className="reports-report-picker"><span>Report type</span><select value={selectedReport} onChange={(event) => onSelectReport(event.target.value)}>{reports.map((name) => <option key={name}>{name}</option>)}</select></label>
-          <div className="reports-period-picker"><span>Report period</span><div className="reports-period-options" role="group" aria-label="Report period">{["Today", "7 days", "Month", "All"].map((option) => <button type="button" key={option} aria-pressed={!reportDate && range === option} onClick={() => { onDateChange(""); onRangeChange(option); }}>{option === "All" ? "All dates" : option === "Month" ? "This month" : option === "7 days" ? "Last 7 days" : option}</button>)}</div></div>
-          <label className="reports-date-picker"><span>Specific date</span><div><CalendarDays size={16} /><input aria-label="Specific date" type="date" value={reportDate} onChange={(event) => onDateChange(event.target.value)} />{reportDate && <button type="button" aria-label="Clear date" onClick={() => onDateChange("")}><X size={14} /></button>}</div></label>
+          {usesDateRange ? <>
+            <label className="reports-date-picker"><span>From date</span><div><CalendarDays size={16} /><input aria-label="From date" type="date" value={fromDate} onChange={(event) => onFromDateChange(event.target.value)} /></div></label>
+            <label className="reports-date-picker"><span>To date</span><div><CalendarDays size={16} /><input aria-label="To date" type="date" value={toDate} onChange={(event) => onToDateChange(event.target.value)} /></div></label>
+          </> : <>
+            <div className="reports-period-picker"><span>Report period</span><div className="reports-period-options" role="group" aria-label="Report period">{["Today", "7 days", "Month", "All"].map((option) => <button type="button" key={option} aria-pressed={!reportDate && range === option} onClick={() => { onDateChange(""); onRangeChange(option); }}>{option === "All" ? "All dates" : option === "Month" ? "This month" : option === "7 days" ? "Last 7 days" : option}</button>)}</div></div>
+            <label className="reports-date-picker"><span>Specific date</span><div><CalendarDays size={16} /><input aria-label="Specific date" type="date" value={reportDate} onChange={(event) => onDateChange(event.target.value)} />{reportDate && <button type="button" aria-label="Clear date" onClick={() => onDateChange("")}><X size={14} /></button>}</div></label>
+          </>}
         </div>
+        {usesDateRange && <div className="reports-range-presets" role="group" aria-label="Quick date range">{["Today", "This month", "Previous month", "Financial year to date", "All time"].map((preset) => <button type="button" key={preset} onClick={() => onDatePreset(preset)}>{preset}</button>)}</div>}
+        {usesDateRange && !dateRangeValid && <div className="reports-date-error" role="alert">The From date must be before or the same as the To date.</div>}
         <div className="reports-secondary-filters">
           <label className="reports-search"><Search size={18} /><input aria-label="Search report" placeholder="Search within this report…" value={search} onChange={(event) => onSearchChange(event.target.value)} />{search && <button type="button" aria-label="Clear report search" onClick={() => onSearchChange("")}><X size={15} /></button>}</label>
           <label className="reports-value-filter"><ListFilter size={16} /><span>{filterLabel}</span><select aria-label={filterLabel} value={filter} onChange={(event) => onFilterChange(event.target.value)}><option value="All">All</option>{filterOptions.map((option) => <option key={option}>{option}</option>)}</select></label>
@@ -91,8 +109,8 @@ export function ReportsWorkspace({ selectedReport, reports, onSelectReport, rang
           <table className="reports-data-table"><caption>{selectedReport} · {period}</caption><thead><tr><th scope="col" className="reports-row-index">#</th>{columns.map((column, index) => <th key={column} scope="col" className={isNumericColumn(column) ? "numeric" : ""} aria-sort={sort?.column === index ? sort.direction === "asc" ? "ascending" : "descending" : "none"}>
             <button type="button" onClick={() => setSort({ column: index, direction: sort?.column === index && sort.direction === "asc" ? "desc" : "asc" })}>{column}{sort?.column === index ? sort.direction === "asc" ? <ArrowUp size={13} /> : <ArrowDown size={13} /> : <ArrowUpDown size={12} />}</button>
           </th>)}</tr></thead>
-          <tbody>{pageRows.map((row, rowIndex) => <tr key={`${rowIndex}-${row.join("-")}`}><td className="reports-row-index">{(printing ? 0 : start) + rowIndex + 1}</td>{columns.map((column, index) => <td key={column} className={isNumericColumn(column) ? "numeric" : ""}>{row[index] ?? "—"}</td>)}</tr>)}
-            {!rows.length && <tr><td colSpan={columns.length + 1}><div className="reports-empty"><span><FileSearch size={28} /></span><h3>No records to display</h3><p>{hasFilters ? "Try a different search or clear your filters to see more records." : "There are no records for this period. Try a wider date range."}</p><button type="button" onClick={() => { resetFilters(); if (!hasFilters) onRangeChange("All"); }}>{hasFilters ? "Clear filters" : "View all dates"}</button></div></td></tr>}
+          <tbody>{pageRows.map((row, rowIndex) => <tr key={`${rowIndex}-${row.join("-")}`}><td className="reports-row-index">{(printing ? 0 : start) + rowIndex + 1}</td>{columns.map((column, index) => <td key={column} className={isNumericColumn(column) ? "numeric" : ""}>{!printing && column === "Bill" && billsById.has(row[index]) ? <button type="button" className="reports-bill-link" aria-label={`View bill ${row[index]}`} onClick={() => setSelectedBill(billsById.get(row[index]))}>{row[index]}</button> : row[index] ?? "—"}</td>)}</tr>)}
+            {!rows.length && <tr><td colSpan={columns.length + 1}><div className="reports-empty"><span><FileSearch size={28} /></span><h3>{dateRangeValid ? "No records to display" : "Check the date range"}</h3><p>{!dateRangeValid ? "The From date must be before or the same as the To date." : hasFilters ? "Try a different search or clear your filters to see more records." : "There are no records for this period. Try a wider date range."}</p><button type="button" onClick={() => { if (!dateRangeValid && usesDateRange) onDatePreset("This month"); else { resetFilters(); if (!hasFilters) usesDateRange ? onDatePreset("All time") : onRangeChange("All"); } }}>{!dateRangeValid ? "Use this month" : hasFilters ? "Clear filters" : "View all dates"}</button></div></td></tr>}
           </tbody>
           {rows.length > 0 && <tfoot><tr><td className="reports-row-index"></td>{columns.map((column, index) => <td key={column} className={isNumericColumn(column) ? "numeric" : ""}>{columnTotals[index] === "TOTAL" ? "Total" : columnTotals[index] ?? ""}</td>)}</tr></tfoot>}
           </table>
@@ -101,5 +119,6 @@ export function ReportsWorkspace({ selectedReport, reports, onSelectReport, rang
       </section>
       <p className="reports-export-note">Exports include all filtered records. Summary values follow your current filters.</p>
     </div>
+    {selectedBill && <SalesBillDialog bill={selectedBill} refunds={refunds} onClose={() => setSelectedBill(null)} />}
   </section>;
 }

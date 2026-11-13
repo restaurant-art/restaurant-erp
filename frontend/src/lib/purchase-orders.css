@@ -28,6 +28,19 @@
 .purchase-order-notes { grid-column: span 2; }
 .purchase-order-form label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; font-weight: 800; }
 .purchase-order-form input, .purchase-order-form select { width: 100%; min-height: 42px; }
+.purchase-order-vendor-field { position: relative; z-index: 8; }
+.purchase-order-vendor-picker { position: relative; width: 100%; }
+.purchase-order-vendor-picker > input { padding-right: 44px; padding-left: 38px; }
+.purchase-order-vendor-search-icon { position: absolute; top: 50%; left: 12px; z-index: 2; color: var(--muted); pointer-events: none; transform: translateY(-50%); }
+.purchase-order-vendor-toggle { position: absolute; top: 3px; right: 3px; display: grid; width: 36px; height: 36px; place-items: center; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; }
+.purchase-order-vendor-toggle:hover { background: #e6f3ef; color: var(--theme-primary); }
+.purchase-order-vendor-picker.is-open .purchase-order-vendor-toggle svg { transform: rotate(180deg); }
+.purchase-order-vendor-options { position: absolute; top: calc(100% + 6px); right: 0; left: 0; z-index: 120; display: grid; max-height: 250px; overflow-y: auto; padding: 6px; border: 1px solid #b9d8cf; border-radius: 10px; background: var(--surface); box-shadow: 0 16px 34px rgba(16,35,31,.2); }
+.purchase-order-vendor-options-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px; color: var(--muted); font-size: 10px; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; }
+.purchase-order-vendor-options-head strong { display: inline-grid; min-width: 23px; height: 23px; place-items: center; border-radius: 999px; background: #e6f3ef; color: var(--theme-primary); font-size: 11px; }
+.purchase-order-vendor-options > button { width: 100%; min-height: 40px; padding: 9px 11px; border: 0; border-radius: 7px; background: transparent; color: var(--ink); font: inherit; font-weight: 750; text-align: left; cursor: pointer; }
+.purchase-order-vendor-options > button:hover, .purchase-order-vendor-options > button[data-active="true"], .purchase-order-vendor-options > button[aria-selected="true"] { background: #eaf5f0; color: var(--theme-primary); }
+.purchase-order-vendor-empty { padding: 14px 10px; color: var(--muted); font-size: 12px; font-weight: 600; }
 .purchase-order-recall { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 15px; border: 1px solid #b9ddd4; border-radius: 10px; background: rgba(230,243,239,.68); }
 .purchase-order-recall > div:first-child { display: grid; gap: 3px; min-width: 220px; }
 .purchase-order-recall > div:first-child span, .purchase-order-recall-empty { color: var(--muted); font-size: 12px; }
@@ -74,5 +87,8 @@
 .purchase-order-empty span { color: var(--muted); }
 .dark .purchase-order-form, .dark .purchase-order-status-filter button.active { background: rgba(44,104,84,.22); }
 .dark .purchase-order-recall { background: rgba(44,104,84,.18); }
+.dark .purchase-order-vendor-options { border-color: #3b5044; background: #172b24; }
+.dark .purchase-order-vendor-options > button { color: #e2eee9; }
+.dark .purchase-order-vendor-options > button:hover, .dark .purchase-order-vendor-options > button[data-active="true"], .dark .purchase-order-vendor-options > button[aria-selected="true"] { background: #203d2d; color: #c8ddd2; }
 @media (max-width: 1150px) { .purchase-order-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } .purchase-order-line { grid-template-columns: 32px repeat(3,minmax(120px,1fr)); } .purchase-order-item-field { grid-column: span 2; } }
 @media (max-width: 760px) { .purchase-order-hero, .purchase-order-toolbar, .purchase-order-form-head, .purchase-order-form-footer, .purchase-order-recall { align-items: stretch; flex-direction: column; } .purchase-order-recall-controls { grid-template-columns: 1fr; } .purchase-order-modal-backdrop { padding: 8px; } .purchase-order-modal { max-height: calc(100vh - 16px); padding: 14px 12px; } .purchase-order-metrics, .purchase-order-meta { grid-template-columns: 1fr; } .purchase-order-notes { grid-column: auto; } .purchase-order-line { grid-template-columns: 32px 1fr; } .purchase-order-line > * { grid-column: 2; } .purchase-order-line-number { grid-column: 1; grid-row: 1; } .purchase-order-remove { grid-column: 1; } .purchase-order-status-filter { overflow-x: auto; flex-wrap: nowrap; } }

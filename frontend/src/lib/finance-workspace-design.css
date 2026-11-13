@@ -80,6 +80,31 @@
 .finance-design-screen .chart-account-table, .finance-design-screen .journal-lines-table { border-radius: 10px; overflow-x: auto; border: 1px solid var(--fin-border); }
 .finance-design-screen .chart-account-row { min-height: 46px; font-size: 13px; }
 .finance-design-screen .bank-routing-note { background: var(--fin-soft); border-color: var(--fin-border); border-radius: 10px; }
+.customer-accounts-head > div { display: flex; align-items: flex-start; gap: 12px; }
+.customer-accounts-head > div > svg { flex: 0 0 auto; margin-top: 2px; color: var(--fin-accent); }
+.customer-accounts-head > div > div { min-width: 0; }
+.customer-accounts-head > div h2 { margin: 0; }
+.customer-accounts-head > div small { display: block; margin-top: 5px; color: var(--fin-muted); font-size: 12px; font-weight: 400; }
+.customer-accounts-search { display: flex; align-items: center; gap: 9px; min-width: min(340px, 40vw); min-height: 42px; padding: 0 12px; border: 1px solid var(--fin-border); border-radius: 9px; color: var(--fin-muted); background: var(--fin-surface); }
+.customer-accounts-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--fin-ink); font: inherit; }
+.customer-accounts-table { min-width: 1060px; }
+.customer-account-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.customer-account-actions button { min-height: 34px; padding: 7px 10px; border: 1px solid var(--fin-border); border-radius: 7px; color: var(--fin-accent); background: var(--fin-surface); font-size: 11px; font-weight: 650; white-space: nowrap; cursor: pointer; }
+.customer-account-actions button:first-child { color: #fff; background: var(--fin-accent); border-color: var(--fin-accent); }
+.customer-account-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.customer-account-entry-form { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.customer-account-entry-form .finance-form-title, .customer-account-entry-form .finance-form-actions { grid-column: 1 / -1; }
+.customer-account-entry-form .finance-form-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.customer-account-entry-form .finance-form-title > div { display: grid; gap: 4px; }
+.customer-account-entry-form .finance-form-title small { color: var(--fin-muted); font-size: 12px; }
+.customer-account-entry-form .finance-form-title .icon-button { flex: 0 0 auto; }
+.customer-account-history .finance-head { padding-bottom: 14px; }
+.customer-account-history .finance-head > strong { color: var(--fin-muted); font-size: 12px; }
+.customer-account-report-note { margin: 0; color: var(--fin-muted); font-size: 12px; line-height: 1.55; }
+.customer-wallet-allocation { grid-column: 1 / -1; margin: 0; padding: 12px 14px; border-radius: 10px; background: var(--fin-soft, #f3f8f5); color: var(--fin-muted, #61776f); font-size: 13px; line-height: 1.6; }
+.customer-account-history .finance-table { min-width: 760px; }
+.dark .customer-account-actions button { color: var(--fin-ink); background: var(--fin-surface); }
+.dark .customer-account-actions button:first-child { color: #fff; background: #206a4f; border-color: #327e60; }
 .finance-design-screen .bank-activity-heading, .finance-design-screen .ledger-section-heading { flex-wrap: wrap; gap: 12px; }
 .finance-design-screen button:focus-visible, .finance-design-screen input:focus-visible, .finance-design-screen select:focus-visible, .finance-design-screen textarea:focus-visible { outline: 2px solid #2f9472; outline-offset: 3px; }
 .dark .finance-design-screen { --fin-accent: #7ac9a7; --fin-ink: #e4f1e9; --fin-muted: #a3b9ad; --fin-border: #354d41; --fin-surface: #1b2b23; --fin-soft: #22372c; }
@@ -87,4 +112,5 @@
 .dark .finance-design-screen .finance-intro-icon, .dark .finance-design-screen .metric-icon { background: #2d4939; border-color: #3b5e49; }
 .dark .finance-design-screen .finance-actions button:first-child, .dark .finance-design-screen .finance-form-actions .primary-action { background: #206a4f; border-color: #327e60; }
 @media (max-width: 1100px) { .finance-page-intro { flex-wrap: wrap; } .finance-intro-label { display: none; } .finance-design-screen .finance-head { align-items: flex-start; } .finance-design-screen .finance-actions { justify-content: flex-start; } .finance-design-screen > .metric-grid:has(> .metric:nth-child(5)) { grid-template-columns: repeat(2, minmax(0, 1fr)); } .finance-design-screen > .metric-grid:has(> .metric:nth-child(5)) > .metric:last-child { grid-column: 1 / -1; } }
-@media (max-width: 640px) { .finance-page-intro, .finance-design-screen .finance-workspace { padding: 18px; } .finance-intro-main { align-items: flex-start; gap: 12px; } .finance-intro-icon { flex-basis: 42px; height: 42px; } .finance-design-screen > .metric-grid { grid-template-columns: 1fr; } .finance-design-screen .finance-actions { width: 100%; } .finance-design-screen .finance-actions button { flex: 1 1 auto; } .finance-design-screen .finance-expense-form { grid-template-columns: minmax(0, 1fr); padding: 16px; } .finance-design-screen .finance-expense-form > label, .finance-design-screen .finance-form-title, .finance-design-screen .finance-form-actions { grid-column: 1 / -1; } .finance-design-screen .ledger-report-hero { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .customer-account-entry-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } .customer-account-actions { justify-content: flex-start; } }
+@media (max-width: 640px) { .finance-page-intro, .finance-design-screen .finance-workspace { padding: 18px; } .finance-intro-main { align-items: flex-start; gap: 12px; } .finance-intro-icon { flex-basis: 42px; height: 42px; } .finance-design-screen > .metric-grid { grid-template-columns: 1fr; } .finance-design-screen .finance-actions { width: 100%; } .finance-design-screen .finance-actions button { flex: 1 1 auto; } .finance-design-screen .finance-expense-form { grid-template-columns: minmax(0, 1fr); padding: 16px; } .finance-design-screen .finance-expense-form > label, .finance-design-screen .finance-form-title, .finance-design-screen .finance-form-actions { grid-column: 1 / -1; } .customer-account-entry-form { grid-template-columns: 1fr; } .customer-accounts-search { min-width: 0; width: 100%; } .customer-accounts-head { align-items: stretch !important; } .customer-accounts-head > div { width: 100%; } .customer-accounts-head > .customer-accounts-search { flex: 1 1 100%; } .customer-account-actions { flex-wrap: wrap; } .finance-design-screen .customer-account-history { padding: 18px; } .finance-design-screen .ledger-report-hero { grid-template-columns: 1fr; } }

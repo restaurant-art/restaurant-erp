@@ -3,9 +3,166 @@
   .pos-page .bill-panel-top { flex: 0 0 auto; }
   .pos-page .bill-panel .bill-paper { overflow-y: auto; overscroll-behavior: contain; }
   .pos-page .bill-panel .bill-items.scrollable {
-    flex: 1 1 150px;
-    min-height: 64px;
+    height: auto;
+    max-height: none;
+    flex: 1 1 0;
+    min-height: 96px;
+    overflow-y: auto;
   }
-  .pos-page .bill-panel .bill-items .empty { min-height: 64px; }
+  .pos-page .bill-panel .bill-items .empty { min-height: 88px; }
   .pos-page .bill-panel .totals { flex: 0 0 auto; }
+}
+
+/* Keep checkout visible on shorter desktop displays (including browser chrome
+   taking a sizeable share of the screen). The item list gives up space first. */
+@media screen and (min-width: 1181px) and (max-height: 950px) {
+  .pos-page .bill-panel { padding: 9px; }
+  .pos-page .bill-panel .bill-paper { padding: 8px; }
+  .pos-page .bill-panel-top { margin-bottom: 6px; }
+  .pos-page .bill-panel .bill-items.scrollable { min-height: 58px; }
+  .pos-page .pos-bill-customer { margin-bottom: 3px; }
+  .pos-page .pos-coupon-control { margin: 3px 0 2px; }
+  .pos-page .bill-panel .totals { gap: 3px; padding-top: 5px; }
+  .pos-page .bill-panel .bill-actions { gap: 4px; }
+  .pos-page .bill-panel .bill-actions .primary { min-height: 40px; }
+}
+
+.pos-page .pos-coupon-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  margin: 6px 0 3px;
+  padding: 3px 6px;
+  border: 1px solid rgba(34, 116, 94, 0.16);
+  border-radius: 8px;
+  background: rgba(34, 116, 94, 0.045);
+}
+
+.pos-page .pos-coupon-entry,
+.pos-page .pos-coupon-applied {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  flex: 1 1 auto;
+  color: #17604b;
+}
+
+.pos-page .pos-coupon-entry input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: 26px;
+  padding: 2px 4px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #10231f;
+  font: inherit;
+  font-size: 12px;
+  line-height: 20px;
+  box-shadow: none;
+}
+
+.pos-page .pos-coupon-entry > svg,
+.pos-page .pos-coupon-applied > svg { width: 13px; height: 13px; flex-shrink: 0; }
+.pos-page .pos-coupon-applied strong { font-size: 12px; line-height: 14px; }
+
+.pos-page .pos-coupon-entry input:focus-visible {
+  outline: 2px solid rgba(34, 116, 94, 0.55);
+  outline-offset: 1px;
+  border-radius: 5px;
+}
+
+.pos-page .pos-coupon-applied > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.pos-page .pos-coupon-applied strong,
+.pos-page .pos-coupon-applied small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pos-page .pos-coupon-applied small {
+  color: #60736a;
+  font-size: 10px;
+  line-height: 12px;
+}
+
+.pos-page .pos-coupon-control .pos-coupon-apply,
+.pos-page .pos-coupon-control .pos-coupon-remove {
+  flex: 0 0 auto;
+  min-height: 26px;
+  height: 26px;
+  padding: 3px 9px;
+  border: 1px solid #17604b;
+  border-radius: 6px;
+  background: #17604b;
+  color: white;
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 750;
+}
+
+.pos-page .pos-coupon-control .pos-coupon-apply:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.pos-page .pos-coupon-control .pos-coupon-remove {
+  border-color: rgba(16, 35, 31, 0.16);
+  background: white;
+  color: #52675f;
+}
+
+.pos-page .pos-coupon-message {
+  flex: 0 0 100%;
+  color: #a23d29;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.pos-page .pos-coupon-control:has(.pos-coupon-message) {
+  flex-wrap: wrap;
+}
+
+.pos-drafts-button,
+.pos-hold-bill-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 4px 9px;
+  border: 1px solid rgba(34, 116, 94, .22);
+  border-radius: 7px;
+  background: #f2f8f5;
+  color: #17604b;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.pos-page .bill-actions .pos-hold-bill-button { min-height: 32px; }
+.pos-page .bill-actions .pos-hold-bill-button:disabled { opacity: .48; }
+.pos-held-bills-modal { width: min(640px, calc(100vw - 32px)); max-height: min(720px, calc(100dvh - 32px)); overflow-y: auto; }
+.pos-held-bills-note { margin: 0 0 14px; color: #687c72; font-size: 13px; line-height: 1.5; }
+.pos-held-bills-empty { padding: 28px 18px; border: 1px dashed #cbdcd2; border-radius: 10px; color: #687c72; text-align: center; font-size: 13px; }
+.pos-held-bills-list { display: grid; gap: 9px; max-height: min(420px, 50dvh); overflow-y: auto; }
+.pos-held-bill-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 14px; padding: 12px; border: 1px solid #dce8e2; border-radius: 10px; background: #fbfdfb; }
+.pos-held-bill-row > div { display: grid; gap: 4px; min-width: 0; }
+.pos-held-bill-row > div strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pos-held-bill-row > div span,.pos-held-bill-row > div small { color: #687c72; font-size: 11px; }
+.pos-held-bill-total { color: #17604b; white-space: nowrap; }
+
+@media (max-width: 560px) {
+  .pos-held-bill-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .pos-held-bill-row .primary-table-action { grid-column: 1 / -1; width: 100%; }
 }

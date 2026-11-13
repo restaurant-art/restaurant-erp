@@ -4,6 +4,12 @@ from pathlib import Path
 
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
+
+
+# Local development reads secrets from backend/.env. Deployed environments keep
+# using their injected environment variables because existing values win.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
 
 
 TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -167,6 +173,15 @@ else:
             conn_max_age=600,
         )
     }
+
+if DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3":
+    # Local checkouts and report reads can overlap while one stock transaction
+    # holds the SQLite write lock. Give queued writes time to acquire it.
+    DATABASES["default"].setdefault("OPTIONS", {}).update({
+        "timeout": 20,
+        "transaction_mode": "IMMEDIATE",
+        "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL",
+    })
 
 DATABASE_SSL_ROOT_CERT = os.getenv("DATABASE_SSL_ROOT_CERT", "").strip()
 if DATABASE_SSL_ROOT_CERT and DATABASES["default"]["ENGINE"] != "django.db.backends.sqlite3":

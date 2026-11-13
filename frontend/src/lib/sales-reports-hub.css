@@ -1,0 +1,30 @@
+.sales-reports-hub { --sales-hub-text: #18362e; --sales-hub-muted: #657b72; --sales-hub-surface: #fff; --sales-hub-border: #dbe7e0; color: var(--sales-hub-text); }
+.sales-reports-hub-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 24px; border-radius: 16px; background: #edf6f1; border: 1px solid var(--sales-hub-border); }
+.sales-reports-hub-head > div > span { font-size: 10px; font-weight: 800; color: #29745b; letter-spacing: .12em; }
+.sales-reports-hub-head h2 { display: flex; align-items: center; gap: 10px; font-size: 26px; margin: 8px 0; }
+.sales-reports-hub-head p { margin: 0; font-size: 13px; color: var(--sales-hub-muted); }
+.sales-reports-hub-search { display: flex; align-items: center; gap: 10px; flex: 0 1 310px; padding: 0 12px; min-height: 42px; border: 1px solid var(--sales-hub-border); border-radius: 10px; background: var(--sales-hub-surface); }
+.sales-reports-hub-search input { width: 100%; min-width: 0; background: transparent; color: inherit; border: 0; padding: 10px 0; outline: 0; }
+.sales-reports-hub-search button { display: grid; place-items: center; background: none; border: 0; padding: 4px; color: inherit; }
+.sales-reports-hub-count { margin: 15px 0; font-size: 12px; color: var(--sales-hub-muted); }
+.sales-reports-hub-group { margin-bottom: 24px; }
+.sales-reports-hub-group h3 { font-size: 16px; margin: 0 0 12px; }
+.sales-reports-hub-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.sales-reports-hub-card { --card-color: #177455; --card-tint: #e7f4ec; display: grid; grid-template-columns: 44px minmax(0, 1fr); align-content: start; gap: 7px 14px; padding: 18px; min-width: 0; border: 1px solid var(--sales-hub-border); border-top: 3px solid var(--card-color); border-radius: 13px; background: var(--sales-hub-surface); color: var(--sales-hub-text); text-align: left; font: inherit; cursor: pointer; }
+.sales-reports-hub-card.tone-blue { --card-color: #2c67ad; --card-tint: #eaf1fc; }
+.sales-reports-hub-card.tone-violet { --card-color: #7955b0; --card-tint: #f0eafa; }
+.sales-reports-hub-card.tone-amber { --card-color: #9b670e; --card-tint: #fff3dc; }
+.sales-reports-hub-card.tone-rose { --card-color: #af4b60; --card-tint: #fcebf0; }
+.sales-reports-hub-icon { grid-row: span 2; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 11px; background: var(--card-tint); color: var(--card-color); }
+.sales-reports-hub-card strong { align-self: center; font-size: 15px; }
+.sales-reports-hub-card small { color: var(--sales-hub-muted); line-height: 1.5; font-size: 12px; min-height: 36px; }
+.sales-reports-hub-open { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--sales-hub-border); color: var(--card-color); font-size: 11px; font-weight: 700; }
+.sales-reports-hub-card:hover { border-color: var(--card-color); box-shadow: 0 5px 18px #14372b12; }
+.sales-reports-hub button:focus-visible, .sales-reports-hub-search:focus-within { outline: 3px solid #559c8170; outline-offset: 3px; }
+.sales-reports-hub-empty { text-align: center; padding: 40px; color: var(--sales-hub-muted); }
+.dark .sales-reports-hub { --sales-hub-text: #e5f1eb; --sales-hub-muted: #abc2b6; --sales-hub-surface: #1b2d25; --sales-hub-border: #354e40; }
+.dark .sales-reports-hub-head { background: #203c30; }
+.dark .sales-reports-hub-head > div > span { color: #a2d6bc; }
+.dark .sales-reports-hub-open { color: color-mix(in srgb, var(--card-color) 55%, white); }
+@media(max-width: 1000px) { .sales-reports-hub-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media(max-width: 600px) { .sales-reports-hub-head { align-items: stretch; flex-direction: column; padding: 16px; } .sales-reports-hub-search { flex-basis: auto; } .sales-reports-hub-grid { grid-template-columns: 1fr; } }

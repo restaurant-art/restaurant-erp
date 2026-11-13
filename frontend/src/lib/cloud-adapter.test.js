@@ -31,7 +31,7 @@ function device(rows, profile = { role: "super_admin", isSuperuser: true }) {
     createSharedSync, isBusinessKey, stateStore, sanitize, isInventoryStateKey,
     URL, Response, Set, Map, JSON, Promise, AbortSignal, setTimeout, clearTimeout,
   };
-  vm.runInNewContext(source + "\nglobalThis.adapter = { businessStorage, hydrateLocalStateFromCloud, cloudProfile, syncLocalStateToCloud, cloudClient, getCloudSyncStatus, subscribeBusinessState, stopCloudSync };", context);
+  vm.runInNewContext(source + "\nglobalThis.adapter = { businessStorage, hydrateLocalStateFromCloud, cloudProfile, syncLocalStateToCloud, cloudClient, getCloudSyncStatus, subscribeBusinessState, stopCloudSync, reportCloudStartupFailure, clearCloudStartupFailure };", context);
   return { ...context.adapter, raw: storage, events, requests, context,
     ready: async () => { await context.adapter.cloudProfile(); await context.adapter.hydrateLocalStateFromCloud(); context.window.vestoraCloudStateReady = true; },
   };
@@ -55,6 +55,31 @@ test("gateway error messages are retained instead of hidden by a generic API err
   const a = device(new Map());
   a.context.fetch = async () => Response.json({ message: "Invalid JWT" }, { status: 401 });
   await assert.rejects(a.cloudProfile(), /Invalid JWT \[profile: 401\]/);
+});
+
+test("retired stock does not block startup or unrelated saves on the real adapter", async () => {
+  const key = "vestora-food-stock-A";
+  const rows = new Map([[key, { state_key: key, state_value: [], updated_at: null, read_only: true, read_only_reason: "production_ledger" }]]);
+  const a = device(rows);
+  a.raw.setItem(key, JSON.stringify([{ id: "old-stock", available: 200 }]));
+  await a.ready();
+  assert.equal(a.getCloudSyncStatus().state, "synced");
+  assert.equal(a.requests.filter((r) => r.method === "PUT").length, 0);
+  assert.deepEqual(JSON.parse(a.raw.getItem(key)), []);
+  a.businessStorage.setItem("vestora-menu-items-A", JSON.stringify([{ id: "rice", price: 100 }]));
+  await a.syncLocalStateToCloud();
+  assert.equal(rows.get("vestora-menu-items-A").state_value[0].price, 100);
+  assert.equal(a.getCloudSyncStatus().state, "synced");
+  assert.ok(a.raw.getItem(`cloud-sync:https://api.test:verified-user:${key}:read-only-recovery`));
+});
+
+test("a transient startup failure is visible and clears after a successful retry", () => {
+  const a = device(new Map());
+  a.reportCloudStartupFailure(new Error("temporary network failure"));
+  assert.equal(a.getCloudSyncStatus().state, "error");
+  assert.match(a.getCloudSyncStatus().message, /temporary network failure.*Retrying automatically/i);
+  a.clearCloudStartupFailure();
+  assert.notEqual(a.getCloudSyncStatus().state, "error");
 });
 
 test("login rejects an HTML fallback without storing an invalid session", async () => {
@@ -123,6 +148,23 @@ test("startup effects cannot overwrite a cloud record before authenticated hydra
   assert.equal(a.raw.getItem(key), null);
   await a.ready();
   assert.equal(JSON.parse(a.raw.getItem(key))[0].id, "real");
+});
+test("an explicit user mutation can be preserved locally before hydration", async () => {
+  const rows = new Map(), a = device(rows);
+  const key = "vestora-inventory-A";
+  a.businessStorage.setItem(key, JSON.stringify([{ id: "new-product", stock: 0 }]), { preserveWhileLoading: true });
+  assert.equal(JSON.parse(a.raw.getItem(key))[0].id, "new-product");
+  await a.ready();
+  assert.equal(rows.get(key).state_value[0].id, "new-product");
+});
+test("purchase drafts can be preserved locally while authenticated hydration is pending", async () => {
+  const rows = new Map(), a = device(rows);
+  const key = "vestora-purchase-drafts-A";
+  a.businessStorage.setItem(key, JSON.stringify([{ id: "draft-1", status: "Draft" }]));
+  assert.equal(JSON.parse(a.raw.getItem(key))[0].id, "draft-1");
+  assert.notEqual(a.getCloudSyncStatus().state, "saving");
+  await a.ready();
+  assert.equal(rows.get(key).state_value[0].id, "draft-1");
 });
 test("login cache filtering excludes other stores and never uploads printer or session state", async () => {
   const rows = new Map(), a = device(rows, { role: "cashier", allowedStoreIds: ["A"], storeId: "A" });

@@ -32,6 +32,7 @@ export function PromotionsWorkspace({ storeId, productItems = [], canManage, not
   const [query,setQuery] = useState('');
   const [pickerOpen,setPickerOpen] = useState(false);
   const [draft,setDraft] = useState(null);
+  const [limitProductId,setLimitProductId] = useState('');
   const [error,setError] = useState('');
   const dialogRef = useRef(null);
   const launchRef = useRef(null);
@@ -43,6 +44,7 @@ export function PromotionsWorkspace({ storeId, productItems = [], canManage, not
     launchRef.current = document.activeElement;
     setPickerOpen(false);
     setDraft(offer ? editablePromotion(offer) : newPromotion(templateId));
+    setLimitProductId('');
     setError('');
   }
   function openPicker() {
@@ -72,6 +74,7 @@ export function PromotionsWorkspace({ storeId, productItems = [], canManage, not
     if(message) return setError(message);
     const selectedIds = [...draft.productIds,...draft.rewardProductIds,...draft.bundleLines.map(l=>l.itemId),...(draft.productDiscounts || []).map(l=>l.itemId)];
     if(selectedIds.some(id=>!products.some(p=>p.id===id))) return setError('A selected product is no longer available. Update the product selection.');
+    if ((draft.customerQuantityLimits || []).some((entry) => !limitProducts.some((product) => product.id === entry.productId))) return setError('Remove customer limits for products that are no longer eligible for this offer.');
     if(draft.template==='product-discounts') {
       const invalidRate = draft.productDiscounts.find(line=>{
         const product = products.find(item=>item.id===line.itemId);
@@ -94,6 +97,12 @@ export function PromotionsWorkspace({ storeId, productItems = [], canManage, not
   const scoped = draft && !['spend-percent','spend-flat','bundle','product-discounts'].includes(draft.template);
   const hasValue = draft && !['tier','shipping','product-discounts'].includes(draft.template);
   const changeMode = draft && ['bundle','coupon','first','custom','fixed-quantity'].includes(draft.template);
+  const quantityLimitSupported = draft && ['percent','flat','product-discounts'].includes(draft.template) && !(draft.template === 'percent' && draft.discountMode === 'amount');
+  const eligibleIds = draft?.template === 'product-discounts' ? (draft.productDiscounts || []).map((entry) => entry.itemId) : draft?.productIds || [];
+  const eligibleMasterIds = new Set(products.filter((product) => eligibleIds.includes(product.id)).map((product) => String(product.productMasterId || product.id)));
+  const limitProductMap = new Map();
+  products.forEach((product) => { const id = String(product.productMasterId || product.id); if ((!eligibleIds.length || eligibleMasterIds.has(id)) && (!limitProductMap.has(id) || String(product.id) === id)) limitProductMap.set(id, { ...product, id, unit: product.unit || product.salesUnit || 'units' }); });
+  const limitProducts = [...limitProductMap.values()];
   return <section className="screen promo-workspace promo-compact-workspace">
     <section className="promo-campaigns promo-register" aria-label="Saved offers">
       <header className="promo-register-head">
@@ -146,11 +155,19 @@ export function PromotionsWorkspace({ storeId, productItems = [], canManage, not
       {draft.template==='buy-get' && <ProductSelection title="Reward products" products={products.filter(p=>!draft.productIds.includes(p.id))} value={draft.rewardProductIds} onChange={v=>change('rewardProductIds',v)} hint="Choose a different selection from the products being bought."/>}
       {draft.template==='bundle' && <><ProductSelection title="Bundle products" products={products} value={draft.bundleLines.map(l=>l.itemId)} onChange={ids=>change('bundleLines',ids.map(itemId=>draft.bundleLines.find(l=>l.itemId===itemId)||{itemId,quantity:'1'}))} hint="Select at least two products, then set the quantity of each per bundle."/><div className="promo-rule-fields">{draft.bundleLines.map(l=><NumberField key={l.itemId} label={`${products.find(p=>p.id===l.itemId)?.name || 'Unavailable product'} quantity`} value={l.quantity} min={0.01} onChange={v=>change('bundleLines',draft.bundleLines.map(x=>x.itemId===l.itemId?{...x,quantity:v}:x))}/>)}</div></>}
       {draft.template==='product-discounts' && <><ProductSelection title="Products with individual offer rates" products={products} value={(draft.productDiscounts || []).map(line=>line.itemId)} onChange={ids=>change('productDiscounts',ids.map(itemId=>(draft.productDiscounts || []).find(line=>line.itemId===itemId)||{itemId,offerPrice:''}))} hint="Choose any number of products. The current rate is shown below; enter the offer rate for each product."/><div className="promo-rule-fields promo-product-discount-fields">{(draft.productDiscounts || []).map(line=>{const product=products.find(item=>item.id===line.itemId);return <label className="promo-field promo-offer-rate-field" key={line.itemId}><span><strong>{product?.name || 'Unavailable product'}</strong><small>Current rate {money(product?.price)}</small></span><input type="number" min="0" max={Math.max(0,Number(product?.price || 0)-0.01)} step="0.01" value={line.offerPrice} placeholder="Enter offer rate" onChange={event=>change('productDiscounts',draft.productDiscounts.map(entry=>entry.itemId===line.itemId?{...entry,offerPrice:event.target.value}:entry))} required/></label>;})}</div></>}
+      <fieldset className="promo-customer-limits"><legend>Customer limits <small>(optional)</small></legend><p>Identify the customer by mobile number. Limits apply for the lifetime of this offer; leave blank for no limit.</p>
+        <label className="promo-field">Maximum times per customer<input type="number" min="1" step="1" value={draft.customerMaxUses || ''} onChange={event=>change('customerMaxUses',event.target.value)} placeholder="No limit" /></label>
+        {quantityLimitSupported && <><div className="promo-limit-add"><label className="promo-field">Limit quantity for a product<select value={limitProductId} onChange={event=>setLimitProductId(event.target.value)}><option value="">Choose product</option>{limitProducts.filter(product=>!(draft.customerQuantityLimits || []).some(entry=>entry.productId===product.id)).map(product=><option key={product.id} value={product.id}>{product.name} ({product.unit})</option>)}</select></label><button type="button" disabled={!limitProductId} onClick={()=>{change('customerQuantityLimits',[...(draft.customerQuantityLimits || []),{productId:limitProductId,quantity:''}]);setLimitProductId('');}}>Add product</button></div>
+          {(draft.customerQuantityLimits || []).map(entry=>{const product=limitProducts.find(item=>item.id===entry.productId);return <div className="promo-limit-row" key={entry.productId}><label className="promo-field">{product?.name || 'Unavailable product'} · maximum {product?.unit || 'units'}<input type="number" min="0.001" step="0.001" required value={entry.quantity} onChange={event=>change('customerQuantityLimits',(draft.customerQuantityLimits || []).map(item=>item.productId===entry.productId?{...item,quantity:event.target.value}:item))}/></label><button type="button" aria-label={`Remove limit for ${product?.name || 'product'}`} onClick={()=>change('customerQuantityLimits',(draft.customerQuantityLimits || []).filter(item=>item.productId!==entry.productId))}><Trash2 size={16}/></button></div>;})}
+          <small>Extra quantity is charged at the normal price. The limit uses the product’s stock unit.</small></>}
+        {!quantityLimitSupported && <small>Product quantity limits are available for percentage, flat amount, and product-wise item offers.</small>}
+        <small>When offline, the POS uses the history available on that device; other counters’ sales may not yet be included.</small>
+      </fieldset>
       {draft.template==='tier' && <fieldset className="promo-tiers"><legend>Quantity breaks · per product</legend>{draft.tiers.map((tier,i)=><div key={i}><NumberField label={`Tier ${i+1} minimum quantity`} value={tier.quantity} min={0.01} onChange={v=>change('tiers',draft.tiers.map((t,n)=>n===i?{...t,quantity:v}:t))}/><NumberField label={`Tier ${i+1} discount %`} value={tier.percent} min={0.01} max={100} onChange={v=>change('tiers',draft.tiers.map((t,n)=>n===i?{...t,percent:v}:t))}/><button type="button" aria-label={`Remove tier ${i+1}`} onClick={()=>change('tiers',draft.tiers.filter((_,n)=>n!==i))}><Trash2 size={16}/></button></div>)}<button type="button" onClick={()=>change('tiers',[...draft.tiers,{quantity:'',percent:''}])}><Plus size={16}/> Add tier</button></fieldset>}
       {draft.template==='first' && <p className="promo-help">At POS, enter the customer’s mobile number. Eligibility checks recorded purchases in this store’s available sales history.</p>}
       {['bogo','buy-get','fixed-quantity'].includes(draft.template) && <p className="promo-help">The lowest-priced eligible units receive the reward. Buy/get offers repeat for each complete set.</p>}
       <fieldset className="promo-choice"><legend>Active days</legend><div>{promotionDays.map(day=><button type="button" key={day} aria-pressed={draft.runDays.includes(day)} onClick={()=>change('runDays',draft.runDays.includes(day)?draft.runDays.filter(d=>d!==day):[...draft.runDays,day])}>{day.slice(0,3)}</button>)}</div></fieldset>
-      </div><aside className="promo-preview"><span className="promo-eyebrow">AT A GLANCE</span><Sparkles size={30}/><h3>{draft.name || template.title}</h3><p>{promotionSummary(draft)}</p><dl><div><dt>Availability</dt><dd>{draft.status}</dd></div><div><dt>Days</dt><dd>{draft.runDays.length===7?'Every day':draft.runDays.map(d=>d.slice(0,3)).join(', ') || 'Choose days'}</dd></div><div><dt>Time</dt><dd>{promotionScheduleLabel(draft).time}</dd></div>{(draft.startDate||draft.endDate)&&<div><dt>Dates</dt><dd>{promotionScheduleLabel(draft).dates}</dd></div>}</dl><small>POS automatically applies the best eligible offer during its schedule. One promotion per bill.</small></aside></div>
+      </div><aside className="promo-preview"><span className="promo-eyebrow">AT A GLANCE</span><Sparkles size={30}/><h3>{draft.name || template.title}</h3><p>{promotionSummary(draft)}</p><dl><div><dt>Availability</dt><dd>{draft.status}</dd></div><div><dt>Days</dt><dd>{draft.runDays.length===7?'Every day':draft.runDays.map(d=>d.slice(0,3)).join(', ') || 'Choose days'}</dd></div><div><dt>Time</dt><dd>{promotionScheduleLabel(draft).time}</dd></div>{(draft.startDate||draft.endDate)&&<div><dt>Dates</dt><dd>{promotionScheduleLabel(draft).dates}</dd></div>}</dl><small>Eligible item-price offers can apply to different products. The best offer applies to each item; basket offers are compared separately.</small></aside></div>
       <footer className="promo-editor-footer">{error && <p role="alert">{error}</p>}<button type="button" onClick={close}>Cancel</button><button type="submit" className="promo-primary"><Check size={17}/> {draft.id?'Save changes':'Save offer'}</button></footer>
     </form></div>}
   </section>;

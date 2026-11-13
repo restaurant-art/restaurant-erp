@@ -12,8 +12,12 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Branch, PublicOrder, SharedAppState, SyncOperation
+from .models import ActionOtpChallenge, Branch, PublicOrder, SharedAppState, SyncOperation
 from .attendance_permissions import can_record_manual_attendance, changes_manual_attendance
+from .internal_barcodes import (
+    InternalBarcodeError, assign_internal_barcodes, assigned_short_codes,
+    reject_internal_collision, reserved_short_codes,
+)
 
 
 User = get_user_model()
@@ -24,7 +28,7 @@ GLOBAL_KEYS = {
     "vestora-kds-orders", "vestora-table-orders", "vestora-supplier-orders",
 }
 STORE_PREFIXES = (
-    "purchase-drafts", "purchase-orders",
+    "purchase-drafts", "purchase-orders", "grn-register", "grn-template", "security-controls", "whatsapp-receipts", "pos-drafts", "display-scale",
     "inventory-category-profiles", "inventory-tax-profiles",
     "active-settings", "attendance-employees", "attendance-logs", "attendance-records",
     "attendance-report", "attendance-settings", "finance-bank-accounts", "finance-expenses",
@@ -35,7 +39,7 @@ STORE_PREFIXES = (
     "last-shift-close", "shifts", "shift-history", "leave-requests", "menu-items",
     "menu-setup", "offers", "payroll-attendance", "production-batches", "production-categories",
     "production-wastage", "recipes", "tables", "bill-template", "theme-config",
-    "supplier-documents", "customer-details",
+    "supplier-documents", "customer-details", "customer-master", "customer-credit-settlements",
 )
 ROLE_LABELS = {
     "super_admin": "Super Admin", "owner": "Restaurant Owner",
@@ -125,7 +129,7 @@ def _user_access(user):
     staff = _state_value("vestora-users", []) or []
     roles = _state_value("vestora-custom-roles", []) or []
     email = (user.email or "").lower()
-    linked = next((entry for entry in staff if str(entry.get("email", "")).lower() == email and str(entry.get("status", "Active")).lower() == "active"), None)
+    linked = next((entry for entry in staff if email and str(entry.get("email", "")).lower() == email and str(entry.get("status", "Active")).lower() == "active"), None)
     platform_admin = bool(user.is_superuser or user.user_type == "super_admin")
     assigned_store = str((linked or {}).get("storeId") or "")
     tenant_store_ids = _tenant_directory_store_ids(user, directory)
@@ -133,7 +137,7 @@ def _user_access(user):
         str(store.get("id")) for store in directory
         if platform_admin
         or str(store.get("id")) == assigned_store
-        or str(store.get("adminEmail", "")).lower() == email
+        or (email and str(store.get("adminEmail", "")).lower() == email)
         or (user.restaurant_id is not None and str(store.get("restaurantId", "")) == str(user.restaurant_id))
         or str(store.get("id", "")) in tenant_store_ids
     ]
@@ -164,6 +168,26 @@ def _scope_value(access, key, value):
         item for item in value
         if _can_store(access, item.get("id") if key == "vestora-stores" else item.get("storeId", ""))
     ]
+
+
+def _grn_changes(previous, requested):
+    """Return protected GRN creation/deletion actions represented by a state update."""
+    before = {str(item.get("id")): item for item in previous if isinstance(item, dict) and item.get("id")}
+    after = {str(item.get("id")): item for item in requested if isinstance(item, dict) and item.get("id")}
+    created = any(
+        record_id not in before or (before[record_id].get("deletedAt") and not record.get("deletedAt"))
+        for record_id, record in after.items()
+    )
+    deleted = any(
+        record_id not in after or (not record.get("deletedAt") and after[record_id].get("deletedAt"))
+        for record_id, record in before.items()
+    )
+    return {action for action, changed in (("grn_create", created), ("grn_delete", deleted)) if changed}
+
+
+def _security_controls(store_id):
+    row = SharedAppState.objects.filter(state_key=f"vestora-security-controls-{store_id}").first()
+    return row.state_value if row and isinstance(row.state_value, dict) else {}
 
 
 def _profile(access):
@@ -258,6 +282,14 @@ def cloud_state(request):
             return _json_error("Store access denied", 403)
         if requested_store and not _can_store(access, requested_store):
             return _json_error("Store access denied", 403)
+        from .production_compat import legacy_read_only_keys
+        from .production_models import ProductionSite
+        read_only_keys = set()
+        for store_id in ProductionSite.objects.filter(enabled=True).values_list("store_id", flat=True):
+            if _can_store(access, store_id) and (not requested_store or requested_store == store_id):
+                read_only_keys.update(legacy_read_only_keys(store_id))
+        if key:
+            read_only_keys.intersection_update({key})
         rows = SharedAppState.objects.all()
         if key:
             rows = rows.filter(state_key=key)
@@ -272,7 +304,14 @@ def cloud_state(request):
                 "state_key": row.state_key,
                 "state_value": _strip_secrets(_scope_value(access, row.state_key, row.state_value)),
                 "updated_at": row.updated_at.isoformat(),
+                **({"read_only": True, "read_only_reason": "production_ledger"} if row.state_key in read_only_keys else {}),
             })
+        # Even an absent legacy snapshot must be advertised as read-only.
+        # Otherwise a new browser tries to upload its empty/default array.
+        existing_keys = {row["state_key"] for row in result}
+        for missing_key in sorted(read_only_keys - existing_keys):
+            result.append({"state_key": missing_key, "state_value": [], "updated_at": None,
+                           "read_only": True, "read_only_reason": "production_ledger"})
         return Response(result)
 
     key = request.data.get("key")
@@ -283,6 +322,10 @@ def cloud_state(request):
     manages_staff = access["platform_admin"] or request.user.user_type in ("owner", "restaurant_admin")
     if key in ("vestora-users", "vestora-custom-roles") and not manages_staff:
         return _json_error("Administrator permission required", 403)
+    if key.startswith("vestora-security-controls-") and not manages_staff:
+        return _json_error("Administrator permission required to change OTP controls", 403)
+    if key.startswith("vestora-whatsapp-receipts-") and not manages_staff:
+        return _json_error("Administrator permission required to change WhatsApp receipt settings", 403)
     if "expectedUpdatedAt" not in request.data:
         return _json_error("Refresh this app to save shared data safely", 409)
     try:
@@ -296,6 +339,13 @@ def cloud_state(request):
     }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     actor_id = str(request.user.pk)
     with transaction.atomic():
+        # Serialize legacy balance writes and cutover/stock commands in the same
+        # lock order. A stale client must not race activation or a projection.
+        from .production_models import ProductionSite
+        from django.db.models import F
+        store_id = _state_store(key)
+        if store_id:
+            ProductionSite.objects.filter(store_id=store_id).update(lock_version=F("lock_version") + 1)
         # Claim the mutation before locking or changing the shared row.  The
         # unique constraint makes a concurrent replay wait for the first
         # request to commit, after which get_or_create returns its recorded
@@ -311,6 +361,15 @@ def cloud_state(request):
                 return _json_error("Mutation identifier was already used", 409)
             return Response(operation.result)
 
+        inventory_key = f"vestora-inventory-{store_id}" if store_id else None
+        menu_key = f"vestora-menu-items-{store_id}" if store_id else None
+        menu_codes = reserved_short_codes(requested_value) if key == menu_key else set()
+        if menu_codes:
+            # Inventory allocation and menu barcode changes serialize on the same
+            # inventory row, including stores without a production ledger.
+            inventory, _ = SharedAppState.objects.select_for_update().get_or_create(
+                state_key=inventory_key, defaults={"state_value": []},
+            )
         row = SharedAppState.objects.select_for_update().filter(state_key=key).first()
         expected = request.data.get("expectedUpdatedAt")
         current_version = row.updated_at.isoformat() if row else None
@@ -320,6 +379,70 @@ def cloud_state(request):
             operation.delete()
             return _json_error("Data changed on another device; retry with the latest version", 409)
         value = requested_value
+        from .production_compat import legacy_write_issue
+        issue = legacy_write_issue(key, row.state_value if row else None, value)
+        if issue:
+            operation.delete()
+            return _json_error(issue, 409)
+        try:
+            if key == inventory_key:
+                value = assign_internal_barcodes(value, row.state_value if row else [], _state_value(menu_key, []))
+            elif menu_codes:
+                reject_internal_collision(menu_codes, assigned_short_codes(inventory.state_value))
+        except InternalBarcodeError as error:
+            operation.delete()
+            return _json_error(str(error))
+        if key.startswith("vestora-whatsapp-receipts-"):
+            if not isinstance(value, dict) or not isinstance(value.get("enabled"), bool):
+                operation.delete()
+                return _json_error("WhatsApp receipt setting must be on or off")
+            value = {"enabled": value["enabled"]}
+        if key.startswith("vestora-security-controls-"):
+            if not isinstance(value, dict):
+                operation.delete()
+                return _json_error("OTP controls must be a settings object")
+            normalized_controls = {}
+            for section, default_required in (("trainingMode", True), ("posItemAdd", True), ("posItemDelete", True), ("grnDelete", False)):
+                section_value = value.get(section) if isinstance(value.get(section), dict) else {}
+                required = section_value.get("requireOtp", default_required)
+                phone = section_value.get("recipientPhone", "")
+                if not isinstance(required, bool) or not isinstance(phone, str):
+                    operation.delete()
+                    return _json_error("OTP setting values have an invalid format")
+                normalized_controls[section] = {"requireOtp": required, "recipientPhone": phone[:30].strip()}
+            value = normalized_controls
+        if key.startswith("vestora-grn-register-"):
+            if not isinstance(value, list):
+                operation.delete()
+                return _json_error("GRN register must be a list")
+            store_id = _state_store(key)
+            old_grns = row.state_value if row and isinstance(row.state_value, list) else []
+            changed_actions = _grn_changes(old_grns, value)
+            controls = _security_controls(store_id)
+            required_actions = [
+                action for action, section in (("grn_delete", "grnDelete"),)
+                if action in changed_actions and bool((controls.get(section) or {}).get("requireOtp", False))
+            ]
+            supplied_tokens = request.data.get("approvalTokens", {})
+            if not isinstance(supplied_tokens, dict):
+                supplied_tokens = {}
+            approvals = []
+            for action in required_actions:
+                try:
+                    token_id = uuid.UUID(str(supplied_tokens.get(action, "")))
+                except (ValueError, TypeError, AttributeError):
+                    operation.delete()
+                    return _json_error("WhatsApp approval required for this GRN action", 403)
+                approval = ActionOtpChallenge.objects.select_for_update().filter(
+                    pk=token_id, requested_by=request.user, action=action, store_id=store_id,
+                    consumed_at__isnull=False, grant_used_at__isnull=True, expires_at__gt=timezone.now(),
+                ).first()
+                if not approval:
+                    operation.delete()
+                    return _json_error("WhatsApp approval expired or already used. Request a new code.", 403)
+                approvals.append(approval)
+        else:
+            approvals = []
         if (key.startswith("vestora-attendance-logs-")
                 and not can_record_manual_attendance(access, _state_store(key))
                 and changes_manual_attendance(row.state_value if row else [], value)):
@@ -350,6 +473,9 @@ def cloud_state(request):
             # overwrite the winner or leave a false successful replay entry.
             operation.delete()
             return _json_error("Data changed on another device; retry with the latest version", 409)
+        for approval in approvals:
+            approval.grant_used_at = timezone.now()
+            approval.save(update_fields=("grant_used_at",))
         result = {
             "state_key": row.state_key,
             "state_value": _scope_value(access, key, row.state_value),
@@ -413,6 +539,7 @@ def staff_account(request):
     account.username = email
     account.first_name = name
     account.user_type = ROLE_TYPES.get(role_label, "cashier")
+    account.mobile = str(request.data.get("mobile", ""))[:30]
     account.is_active = str(request.data.get("status", "Active")).lower() == "active"
     if password:
         account.set_password(password)

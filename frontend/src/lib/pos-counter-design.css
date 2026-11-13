@@ -1,0 +1,564 @@
+/* POS presentation only: printed receipts keep their configured layout. */
+@media screen {
+  .pos-page {
+    --pos-ink: var(--theme-text, #16362d);
+    --pos-muted: var(--theme-muted, #6d8078);
+    --pos-surface: var(--theme-surface, #fff);
+    --pos-green: var(--theme-primary, #17604b);
+    --pos-line: color-mix(in srgb, var(--pos-ink) 11%, var(--pos-surface));
+    --pos-soft: color-mix(in srgb, var(--pos-green) 6%, var(--pos-surface));
+    background: color-mix(in srgb, var(--pos-green) 4%, var(--pos-surface));
+    color: var(--pos-ink);
+  }
+  .pos-page.dark {
+    --pos-green: #7acfb0;
+    --pos-on-green: #11271f;
+    background: var(--theme-bg, #0f1413);
+  }
+  .pos-page .pos-screen {
+    grid-template-columns: minmax(0, 1fr) 470px;
+    gap: 18px;
+    padding: 18px 22px;
+  }
+  .pos-page .pos-page-header {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    display: flex;
+    min-height: 86px;
+    gap: 24px;
+    padding: 14px 20px;
+    border: 1px solid var(--pos-line);
+    border-radius: 18px;
+    background: var(--pos-surface);
+    box-shadow: 0 3px 16px rgb(20 50 40 / 3%);
+  }
+  .pos-page .pos-brand-lockup {
+    grid-template-columns: 50px minmax(0, 1fr);
+    min-width: 225px;
+    gap: 12px;
+  }
+  .pos-page .pos-brand-lockup img {
+    width: 50px;
+    height: 50px;
+    padding: 4px;
+    border: 1px solid var(--pos-line);
+    border-radius: 13px;
+    background: white;
+  }
+  .pos-page .pos-brand-lockup p {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 5px;
+    color: var(--pos-green);
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: .06em;
+  }
+  .pos-brand-tag {
+    padding-left: 9px;
+    border-left: 1px solid var(--pos-line);
+    color: var(--pos-muted);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: .1em;
+  }
+  .pos-page .pos-page-header h1 { font-size: 24px; font-weight: 750; letter-spacing: -.04em; }
+  .pos-page .pos-page-actions {
+    width: auto;
+    flex: 1;
+    flex-direction: row;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .pos-page .pos-page-actions button,
+  .pos-page .pos-page-actions > .pill {
+    min-height: 42px;
+    padding: 0 13px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 650;
+    white-space: nowrap;
+  }
+  .pos-page .pos-page-actions .pos-exit-button,
+  .pos-page .pos-page-actions .pos-close-shift {
+    border-color: var(--pos-line);
+    background: var(--pos-surface);
+    color: var(--pos-ink);
+  }
+  .pos-page .pos-page-actions .pos-exit-button:last-child { color: var(--pos-muted); }
+  .pos-page .pos-page-actions .pos-exit-button:hover,
+  .pos-page .pos-page-actions .pos-close-shift:hover { background: var(--pos-soft); border-color: var(--pos-green); color: var(--pos-green); }
+  .pos-page .pos-page-actions .reception-queue-button { background: var(--pos-green); border-color: var(--pos-green); color: var(--pos-on-green, var(--theme-on-primary, white)); }
+  .pos-page .pos-page-actions .pos-network-pill { min-width: 0; border: 0; background: var(--pos-soft); color: var(--pos-green); }
+  .pos-page .pos-page-actions .pos-network-pill.offline { background: #fff0de; color: #a8600f; }
+  .pos-page .pos-page-actions .shift-pill {
+    min-width: 94px;
+    min-height: 44px;
+    gap: 3px;
+    padding: 3px 14px;
+    border: 0;
+    border-left: 1px solid var(--pos-line);
+    border-radius: 0;
+    background: transparent;
+  }
+  .pos-page .pos-page-actions .shift-pill small { color: var(--pos-muted); font-size: 10px; font-weight: 550; }
+  .pos-page .pos-page-actions .shift-pill strong { color: var(--pos-ink); font-size: 15px; font-weight: 750; font-variant-numeric: tabular-nums; }
+  .pos-page .pos-pricing-control {
+    min-width: 130px;
+    gap: 2px;
+    margin: 0 3px 0 0;
+    color: var(--pos-muted);
+    font-size: 10px;
+  }
+  .pos-page .pos-pricing-control select {
+    min-height: 33px;
+    padding: 3px 26px 3px 10px;
+    border-color: var(--pos-line);
+    border-radius: 7px;
+    background: var(--pos-soft);
+    color: var(--pos-ink);
+    font-size: 13px;
+    font-weight: 650;
+  }
+  .pos-page .pos-catalog { gap: 0; }
+  .pos-page .pos-catalog .toolbar { grid-template-columns: minmax(220px, 1fr) auto; gap: 14px; margin: 0 0 22px; }
+  .pos-page .pos-catalog .search {
+    min-height: 56px;
+    gap: 12px;
+    padding: 0 18px;
+    border: 1px solid var(--pos-line);
+    border-radius: 13px;
+    background: var(--pos-surface);
+    color: var(--pos-muted);
+    box-shadow: 0 2px 5px rgb(20 50 40 / 2%);
+  }
+  .pos-page .pos-catalog .search:focus-within { border-color: var(--pos-green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pos-green) 12%, transparent); }
+  .pos-page .pos-catalog .search input { color: var(--pos-ink); font-size: 14px; }
+  .pos-page .pos-catalog .segmented { min-height: 56px; align-items: stretch; padding: 5px; border: 1px solid var(--pos-line); border-radius: 13px; background: var(--pos-surface); }
+  .pos-page .pos-catalog .segmented button { min-height: 44px; padding: 0 18px; background: transparent; color: var(--pos-muted); font-size: 13px; font-weight: 650; border-radius: 9px; }
+  .pos-page .pos-catalog .segmented .selected { background: var(--pos-green); color: var(--pos-on-green, var(--theme-on-primary, white)); box-shadow: 0 3px 7px rgb(16 60 45 / 13%); }
+  .pos-page .catalog-section-head { align-items: center; flex-wrap: wrap; gap: 16px; margin-bottom: 18px; }
+  .pos-page .catalog-section-head > div:first-child { gap: 6px; }
+  .pos-page .catalog-section-head > div:first-child > span { color: var(--pos-muted); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; font-weight: 650; }
+  .pos-page .catalog-section-head > div:first-child > strong { display: flex; align-items: center; gap: 12px; color: var(--pos-ink); font-size: 22px; font-weight: 750; letter-spacing: -.035em; }
+  .pos-page .catalog-section-head strong small { padding: 4px 9px; border: 1px solid var(--pos-line); border-radius: 20px; background: var(--pos-surface); color: var(--pos-muted); font-size: 10px; font-weight: 550; letter-spacing: 0; }
+  .pos-page .catalog-section-head .category-row { gap: 6px; }
+  .pos-page .pos-catalog .chip { min-height: 38px; padding: 0 14px; border: 1px solid transparent; border-radius: 22px; background: transparent; color: var(--pos-muted); font-size: 12px; font-weight: 650; }
+  .pos-page .pos-catalog .chip.active { border-color: var(--pos-line); background: var(--pos-surface); color: var(--pos-green); box-shadow: 0 2px 5px rgb(20 50 40 / 4%); }
+  .pos-page .pos-catalog .chip:hover { background: var(--pos-soft); color: var(--pos-green); }
+  .pos-page .pos-catalog .item-grid { grid-template-columns: repeat(auto-fill, minmax(185px, 1fr)); grid-auto-rows: 230px; gap: 15px; padding: 2px 5px 12px 1px; }
+  .pos-page .pos-catalog .item-card {
+    position: relative;
+    height: 230px;
+    min-height: 230px;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: 104px 16px minmax(36px, 1fr) 30px;
+    align-content: stretch;
+    gap: 7px;
+    padding: 12px 14px 14px;
+    border: 1px solid var(--pos-line);
+    border-radius: 16px;
+    background: var(--pos-surface);
+    box-shadow: 0 3px 8px rgb(20 50 40 / 3%);
+    transition: border-color 150ms, box-shadow 150ms, transform 150ms;
+  }
+  .pos-page .pos-catalog .item-card:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--pos-green) 55%, transparent); background: var(--pos-surface); box-shadow: 0 8px 20px rgb(20 50 40 / 8%); }
+  .pos-page .pos-catalog .item-card.in-cart { border-color: color-mix(in srgb, var(--pos-green) 60%, transparent); }
+  .pos-page .pos-catalog .item-photo { grid-column: 1; grid-row: 1; width: 100%; height: 104px; border-radius: 10px; object-fit: contain; background: var(--pos-soft); box-shadow: none; }
+  .pos-page .pos-catalog .item-card > span:not(.item-offer-price) { grid-column: 1; grid-row: 2; align-self: center; color: var(--pos-muted); font-size: 10px; font-weight: 550; }
+  .pos-page .pos-catalog .item-card > strong { grid-column: 1; grid-row: 3; align-self: start; padding: 0; color: var(--pos-ink); font-size: 15px; line-height: 1.25; font-weight: 700; }
+  .pos-page .pos-catalog .item-card > em,
+  .pos-page .pos-catalog .item-card > .item-offer-price { grid-column: 1; grid-row: 4; align-self: end; padding-right: 30px; color: var(--pos-green); font-size: 19px; font-weight: 750; letter-spacing: -.025em; }
+  .pos-page .pos-catalog .item-card > .item-offer-price { gap: 5px; padding-right: 0; }
+  .pos-page .pos-catalog .item-card .item-offer-price em { font-size: 19px; }
+  .pos-page .pos-catalog .item-card .item-offer-price b { margin: 0 34px 0 auto; padding: 3px 5px; font-size: 8px; }
+  .pos-page .pos-catalog .item-card::after { right: 13px; bottom: 13px; display: grid; place-items: center; width: 29px; height: 29px; border: 1px solid color-mix(in srgb, var(--pos-green) 16%, transparent); border-radius: 9px; background: var(--pos-soft); color: var(--pos-green); font-size: 23px; line-height: 1; }
+  .pos-page .pos-catalog .item-card:hover::after { background: var(--pos-green); color: var(--pos-on-green, var(--theme-on-primary, white)); }
+  .pos-page .item-cart-count { position: absolute; top: 18px; right: 20px; z-index: 1; padding: 4px 8px; border-radius: 20px; background: var(--pos-green); color: var(--pos-on-green, var(--theme-on-primary, white)); font-size: 9px; font-weight: 700; box-shadow: 0 2px 6px rgb(0 0 0 / 10%); }
+  .pos-page .pos-catalog .item-barcode { display: none; }
+  .pos-page .pos-catalog .item-food-stock { position: absolute; top: 18px; left: 20px; padding: 3px 6px; border-radius: 5px; background: var(--pos-surface); font-size: 9px; }
+  .pos-page .pos-catalog .item-card.has-product-offer { border-color: #e6cfaa; }
+  .pos-page .bill-panel {
+    grid-column: 2;
+    grid-row: 2;
+    gap: 0;
+    padding: 0 18px 18px;
+    border: 1px solid var(--pos-line);
+    border-radius: 18px;
+    background: var(--pos-surface);
+    box-shadow: 0 5px 24px rgb(20 50 40 / 5%);
+  }
+  .pos-page .bill-panel-top { flex: 0 0 auto; gap: 10px; min-height: 68px; margin: 0; padding: 14px 0; border-bottom: 1px solid var(--pos-line); }
+  .pos-page .bill-panel-top .panel-head { min-height: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+  .pos-page .bill-panel-top .panel-head h2 { color: var(--pos-ink); font-size: 17px; font-weight: 750; letter-spacing: -.025em; }
+  .pos-page .bill-panel-top .panel-head svg { width: 20px; height: 20px; color: var(--pos-green); }
+  .pos-bill-count { flex: 0 0 auto; padding: 5px 10px; border-radius: 20px; background: var(--pos-soft); color: var(--pos-green); font-size: 11px; font-weight: 650; }
+  .pos-page .bill-panel .bill-paper { display: flex; flex-direction: column; gap: 0; margin: 0; padding: 14px 0 0; border: 0; border-radius: 0; background: transparent; color: var(--pos-ink); overflow-y: auto; scrollbar-width: thin; }
+  .pos-page .bill-panel .bill-customer-details { gap: 9px; margin: 0 0 12px; }
+  .pos-page .bill-panel .bill-customer-field { min-height: 48px; padding: 7px 10px; border-color: var(--pos-line); border-radius: 10px; background: var(--pos-soft); color: var(--pos-green); }
+  .pos-page .bill-panel .bill-customer-input small { font-size: 8px; font-weight: 650; letter-spacing: .045em; color: var(--pos-muted); }
+  .pos-page .bill-panel .bill-customer-input input { margin-top: 4px; color: var(--pos-ink); font-size: 12px; font-weight: 500; }
+  .pos-page .bill-panel .bill-order-details { gap: 7px; margin: 0; padding: 0 0 12px; border-bottom: 1px dashed var(--pos-line); }
+  .pos-page .bill-panel .bill-order-details small { margin-bottom: 5px; color: var(--pos-muted); font-size: 8px; letter-spacing: .04em; font-weight: 600; }
+  .pos-page .bill-panel .bill-order-details strong { color: var(--pos-ink); font-size: 11px; font-weight: 650; }
+  .pos-page .bill-panel .bill-items.scrollable { flex: 1 1 0; height: auto; max-height: none; min-height: 112px; margin: 0; padding: 6px 3px 6px 0; overflow-y: auto; scrollbar-width: thin; scrollbar-gutter: auto; }
+  .pos-page .bill-panel .pos-empty-bill { display: flex; height: 100%; min-height: 110px; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 8px; margin: 0; }
+  .pos-empty-bill > span { display: grid; flex: 0 0 42px; place-items: center; width: 44px; height: 42px; border: 1px solid var(--pos-line); border-radius: 14px; background: var(--pos-soft); color: var(--pos-green); }
+  .pos-empty-bill strong { color: var(--pos-ink); font-size: 14px; font-weight: 650; }
+  .pos-empty-bill small { color: var(--pos-muted); font-size: 11px; }
+  .pos-page .bill-panel .bill-line { min-height: 52px; height: auto; gap: 8px; padding: 8px 6px; border-color: var(--pos-line); border-radius: 7px; font-size: 12px; }
+  .pos-page .bill-panel .bill-line > span { flex: 1; overflow: visible; white-space: normal; line-height: 1.45; }
+  .pos-page .bill-panel .bill-line-product { display: grid; min-width: 0; gap: 2px; }
+  .pos-page .bill-panel .bill-line-product > span { min-width: 0; overflow-wrap: anywhere; }
+  .pos-page .bill-panel .bill-line-product > small { color: var(--pos-muted); font-size: 9px; font-weight: 600; line-height: 1.15; }
+  .pos-page .bill-panel .bill-line.recently-added { background: var(--pos-soft); box-shadow: inset 3px 0 0 var(--pos-green); }
+  .pos-page .bill-panel .qty-tools { gap: 4px; color: var(--pos-ink); }
+  .pos-page .bill-panel .qty-tools button { width: 25px; height: 27px; border-color: var(--pos-line); border-radius: 7px; background: var(--pos-surface); }
+  .pos-page .bill-panel .qty-tools button[title="Remove"] { margin-left: 2px; border-color: transparent; color: #ae685f; background: transparent; }
+  .pos-page .bill-panel .qty-tools > strong { min-width: 60px; margin-left: 3px; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 750; }
+  .pos-line-quantity { min-width: 18px; text-align: center; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .pos-page .bill-panel .totals { flex: 0 0 auto; gap: 7px; margin-top: 0; padding: 13px 0 0; border-top: 1px solid var(--pos-line); font-size: 11px; color: var(--pos-muted); }
+  .pos-page .bill-panel .totals > span > strong { color: var(--pos-ink); font-weight: 650; font-variant-numeric: tabular-nums; }
+  .pos-page .bill-panel .totals > .pos-total-item-count { display: none; }
+  .pos-page .bill-panel .totals > b { align-items: center; margin-top: 5px; padding: 12px 0 10px; border-top: 1px dashed var(--pos-line); color: var(--pos-ink); font-size: 15px; font-weight: 700; }
+  .pos-page .bill-panel .totals > b > strong { font-size: 22px; letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
+  .pos-page .bill-panel .payment-grid { gap: 8px; margin: 12px 0 9px; }
+  .pos-page .bill-panel .payment-grid button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 64px; padding: 8px; border: 1px solid var(--pos-line); border-radius: 11px; background: var(--pos-surface); color: var(--pos-muted); font-size: 11px; font-weight: 650; }
+  .pos-page .bill-panel button.payment-method.active-pay,
+  .pos-page .bill-panel button.payment-method.active-pay:hover { position: relative; border-color: var(--pos-green); background: var(--pos-soft); color: var(--pos-green); box-shadow: inset 0 0 0 1px var(--pos-green); }
+  .pos-page .bill-panel button.payment-method.active-pay::before { position: absolute; top: 3px; right: 6px; margin: 0; font-size: 10px; }
+  .pos-page .bill-panel .bill-actions { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .pos-page .bill-panel .bill-actions > button:not(.primary) { min-height: 34px; gap: 4px; padding: 5px; border-color: var(--pos-line); border-radius: 8px; background: var(--pos-surface); color: var(--pos-muted); font-size: 10px; font-weight: 550; }
+  .pos-page .bill-panel .bill-actions > button:not(.primary):hover { border-color: var(--pos-green); background: var(--pos-soft); color: var(--pos-green); }
+  .pos-page .bill-panel .bill-actions > button.history-action { grid-column: 1 / -1; justify-content: center; min-height: 29px; padding: 3px; border: 0; background: transparent; color: var(--pos-muted); }
+  .pos-page .bill-panel .bill-actions > button:not(.primary) svg { width: 13px; height: 13px; }
+  .pos-page .bill-panel .bill-actions .pos-checkout-button { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 55px; margin-top: 1px; padding: 12px 15px; border: 0; border-radius: 11px; background: var(--pos-green); color: var(--pos-on-green, var(--theme-on-primary, white)); box-shadow: 0 5px 12px color-mix(in srgb, var(--pos-green) 16%, transparent); font-size: 13px; font-weight: 650; }
+  .pos-checkout-button > span,
+  .pos-checkout-button > strong { display: inline-flex; align-items: center; gap: 9px; }
+  .pos-checkout-button > strong { font-size: 17px; font-weight: 750; font-variant-numeric: tabular-nums; }
+  .pos-page .bill-panel .bill-actions .pos-checkout-button:disabled { background: color-mix(in srgb, var(--pos-green) 40%, var(--pos-surface)); color: var(--pos-on-green, var(--theme-on-primary, white)); opacity: 1; box-shadow: none; }
+  .pos-page button:focus-visible { outline: 3px solid color-mix(in srgb, var(--pos-green) 35%, transparent); outline-offset: 3px; }
+  .pos-page .pos-food-stock-alert { margin-bottom: 14px; border-radius: 11px; }
+}
+@media screen and (min-width: 1181px) {
+  .pos-page,
+  .pos-page .pos-screen { height: var(--app-sidebar-viewport-height, 100dvh); min-height: 0; overflow: hidden; }
+  .pos-page .pos-screen { grid-template-rows: auto minmax(0, 1fr); }
+  .pos-page .pos-page-header { position: static; }
+  .pos-page .pos-catalog { grid-column: 1; grid-row: 2; min-height: 0; overflow: hidden; }
+  .pos-page .bill-panel { position: static; height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .pos-page .bill-panel .bill-paper { flex: 1 1 0; min-height: 0; }
+
+  /* Restaurant POS keeps its complete navigation in the left header while
+     the checkout panel begins at the very top of the right column. */
+  .pos-page .restaurant-pos-screen .pos-page-header {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    min-height: 86px;
+  }
+  .pos-page .restaurant-pos-screen .pos-brand-lockup { flex: 0 0 auto; }
+  .pos-page .restaurant-pos-screen .pos-page-actions { min-width: 0; gap: 6px; }
+  .pos-page .restaurant-pos-screen .pos-page-actions button,
+  .pos-page .restaurant-pos-screen .pos-page-actions > .pill { padding-inline: 10px; }
+  .pos-page .restaurant-pos-screen .pos-page-actions .shift-pill { min-width: 78px; padding-inline: 9px; }
+  .pos-page .restaurant-pos-screen .pos-catalog {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .pos-page .restaurant-pos-screen .bill-panel {
+    grid-column: 2;
+    grid-row: 1 / 3;
+    align-self: stretch;
+    height: 100%;
+  }
+}
+
+@media screen and (min-width: 1600px) {
+  .pos-page .restaurant-pos-screen .pos-page-header { gap: 16px; }
+  .pos-page .restaurant-pos-screen .pos-brand-lockup { min-width: 205px; }
+  .pos-page .restaurant-pos-screen .pos-page-actions { flex-wrap: nowrap; }
+  .pos-page .restaurant-pos-screen .pos-pricing-control { min-width: 118px; }
+}
+@media screen and (min-width: 1181px) and (max-width: 1440px) {
+  .pos-page .pos-screen { grid-template-columns: minmax(0, 1fr) 420px; gap: 14px; padding: 14px; }
+  .pos-page .pos-page-header { gap: 14px; padding: 12px 14px; }
+  .pos-page .pos-brand-lockup { min-width: 190px; }
+  .pos-page .pos-page-actions { gap: 6px; }
+  .pos-page .pos-page-actions button { padding: 0 9px; }
+  .pos-page .pos-page-actions .shift-pill { min-width: 76px; padding-inline: 9px; }
+  .pos-page .pos-catalog .toolbar { grid-template-columns: 1fr; gap: 10px; margin-bottom: 16px; }
+  .pos-page .pos-catalog .segmented { justify-content: stretch; }
+  .pos-page .pos-catalog .segmented button { flex: 1; }
+}
+@media screen and (max-width: 1180px) {
+  .pos-page .pos-screen { grid-template-columns: minmax(0, 1fr) 390px; gap: 14px; padding: 14px; }
+  .pos-page .pos-page-header { position: static; flex-wrap: wrap; gap: 16px; }
+  .pos-page .pos-brand-lockup { width: auto; }
+  .pos-page .pos-page-actions { overflow: visible; flex-wrap: wrap; }
+  .pos-page .pos-catalog { grid-column: 1; grid-row: 2; }
+  .pos-page .pos-catalog .toolbar { grid-template-columns: 1fr; }
+  .pos-page .pos-catalog .segmented { justify-content: stretch; }
+  .pos-page .pos-catalog .segmented button { flex: 1; padding-inline: 10px; }
+  .pos-page .catalog-section-head .category-row { justify-content: flex-start; }
+  .pos-page .bill-panel { position: sticky; top: 14px; align-self: start; height: auto; min-height: 700px; display: flex; flex-direction: column; }
+  .pos-page .bill-panel .bill-paper { flex: 1; min-height: 380px; }
+  .pos-page .bill-panel .bill-items.scrollable { flex: 1 1 auto; min-height: 170px; max-height: 340px; }
+}
+@media screen and (max-width: 760px) {
+  .pos-page .pos-screen { grid-template-columns: 1fr; padding: 10px; gap: 15px; }
+  .pos-page .pos-page-header { flex-direction: column; align-items: stretch; padding: 14px; border-radius: 14px; }
+  .pos-page .pos-brand-lockup { min-width: 0; width: 100%; }
+  .pos-page .pos-page-actions { flex: none; width: 100%; justify-content: flex-start; gap: 7px; }
+  .pos-page .pos-page-actions .shift-pill { padding-inline: 9px; }
+  .pos-page .pos-page-actions .pos-network-pill { margin-left: auto; }
+  .pos-page .pos-catalog .item-grid { grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); gap: 10px; }
+  .pos-page .catalog-section-head { align-items: flex-start; }
+  .pos-page .catalog-section-head > div:first-child > strong { font-size: 20px; }
+  .pos-page .pos-catalog .chip { min-height: 35px; padding-inline: 11px; }
+  .pos-page .bill-panel { grid-column: 1; grid-row: 3; position: static; min-height: 700px; border-radius: 14px; padding-inline: 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pos-page .pos-catalog .item-card { transition: none; }
+}
+@media print {
+  .pos-bill-count,
+  .pos-line-quantity { display: none; }
+  .bill-line-product { display: grid; gap: 1px; }
+  .bill-line-product > small { color: #000; font-size: 8px; font-weight: 600; }
+}
+
+/* Keep the checkout summary compact so six cart lines are visible at once. */
+@media screen and (min-width: 1181px) {
+  .pos-page .bill-panel { padding-bottom: 12px; }
+  .pos-page .bill-panel-top { min-height: 52px; padding-block: 9px; }
+  .pos-page .bill-panel .bill-paper {
+    min-height: 0;
+    padding-top: 8px;
+    overflow: hidden;
+  }
+  .pos-page .bill-panel .bill-customer-details { gap: 6px; margin-bottom: 7px; }
+  .pos-page .bill-panel .bill-customer-field { min-height: 40px; padding: 5px 8px; }
+  .pos-page .bill-panel .bill-customer-input input { margin-top: 2px; font-size: 11px; }
+  .pos-page .bill-panel .bill-order-details { gap: 4px; padding-bottom: 7px; }
+  .pos-page .bill-panel .bill-order-details small { margin-bottom: 2px; }
+  .pos-page .bill-panel .bill-items.scrollable {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    padding-block: 4px;
+    overflow-y: auto;
+  }
+  .pos-page .bill-panel .bill-line { min-height: 38px; gap: 6px; padding: 5px 4px; line-height: 1.2; }
+  .pos-page .bill-panel .bill-line > span { line-height: 1.2; }
+  .pos-page .bill-panel .bill-line-product { gap: 1px; }
+  .pos-page .bill-panel .bill-line-product > small { font-size: 8px; }
+  .pos-page .bill-panel .qty-tools { gap: 3px; }
+  .pos-page .bill-panel .qty-tools button { width: 23px; height: 24px; }
+  .pos-page .bill-panel .qty-tools > strong { min-width: 48px; margin-left: 1px; font-size: 11px; }
+  .pos-page .bill-panel .totals { gap: 3px; padding-top: 7px; font-size: 10px; line-height: 1.2; }
+  .pos-page .bill-panel .totals > b { margin-top: 3px; padding: 7px 0 4px; font-size: 13px; }
+  .pos-page .bill-panel .totals > b > strong { font-size: 18px; }
+  .pos-page .bill-panel .bill-actions { gap: 6px; margin-top: 5px; }
+  .pos-page .bill-panel .bill-actions > button:not(.primary) { min-height: 30px; }
+  .pos-page .bill-panel .bill-actions > button.history-action { min-height: 25px; }
+  .pos-page .bill-panel .bill-actions .pos-checkout-button { min-height: 46px; padding-block: 9px; }
+}
+
+@media screen {
+  .pos-page .restaurant-pos-screen {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-page-header {
+    min-height: 64px;
+    gap: 12px;
+    padding: 8px 12px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-brand-lockup {
+    min-width: 0;
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-brand-lockup img {
+    width: 40px;
+    height: 40px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-brand-lockup p {
+    margin-bottom: 3px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-page-header h1 {
+    font-size: 20px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-page-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-page-actions button,
+  .pos-page .restaurant-pos-screen .pos-page-actions > .pill {
+    min-height: 36px;
+    padding-inline: 9px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-pricing-control {
+    min-width: 92px;
+    margin-right: 0;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-catalog .toolbar {
+    gap: 8px;
+    margin-bottom: 9px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-catalog .search {
+    min-height: 44px;
+    padding-inline: 12px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-catalog .segmented {
+    min-height: 44px;
+    padding: 3px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-catalog .segmented button {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 36px;
+    padding-inline: 10px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-food-stock-alert {
+    align-items: center;
+    margin: 0 0 9px;
+    padding: 6px 9px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-food-stock-alert div {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 10px;
+  }
+
+  .pos-page .restaurant-pos-screen .catalog-section-head {
+    gap: 6px 12px;
+    margin-bottom: 8px;
+  }
+
+  .pos-page .restaurant-pos-screen .catalog-section-head > div:first-child > span {
+    display: none;
+  }
+
+  .pos-page .restaurant-pos-screen .catalog-section-head > div:first-child > strong {
+    flex-wrap: wrap;
+    gap: 7px;
+    font-size: 19px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-catalog .chip {
+    min-height: 34px;
+    padding-inline: 11px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-catalog .item-grid {
+    grid-auto-rows: minmax(184px, max-content);
+    gap: 10px;
+    padding: 2px 3px 8px 1px;
+    align-content: start;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-catalog .item-card {
+    height: auto;
+    min-height: 184px;
+    grid-template-rows: 80px auto minmax(33px, 1fr) 29px;
+    gap: 5px;
+    padding: 9px 10px 10px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-catalog .item-photo {
+    height: 80px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-catalog .item-card > strong {
+    overflow-wrap: anywhere;
+    font-size: 14px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-catalog .item-card::after {
+    right: 10px;
+    bottom: 10px;
+  }
+
+  .pos-page .restaurant-pos-screen .item-food-stock {
+    top: 13px;
+    left: 14px;
+  }
+
+  .pos-page .restaurant-pos-screen .item-cart-count {
+    top: 13px;
+    right: 14px;
+  }
+
+  .pos-page .restaurant-pos-screen .bill-panel:has(.pos-empty-bill) {
+    align-self: start;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .pos-page .restaurant-pos-screen .bill-panel:has(.pos-empty-bill) .bill-paper,
+  .pos-page .restaurant-pos-screen .bill-panel:has(.pos-empty-bill) .bill-items.scrollable {
+    flex: 0 0 auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .pos-page .restaurant-pos-screen .bill-panel .pos-empty-bill {
+    height: auto;
+    min-height: 0;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px 9px;
+    padding: 8px 6px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-empty-bill > span {
+    flex-basis: 30px;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+  }
+
+  .pos-page .restaurant-pos-screen .pos-empty-bill > span svg {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+@media screen and (min-width: 1181px) {
+  .pos-page .restaurant-pos-screen {
+    grid-template-columns: minmax(0, 1fr) clamp(330px, 28vw, 465px);
+  }
+
+  .pos-page .restaurant-pos-screen .pos-catalog .toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, max-content);
+  }
+}
+
+@media screen and (max-width: 420px) {
+  .pos-page .restaurant-pos-screen .pos-catalog .segmented button {
+    padding-inline: 5px;
+    font-size: 12px;
+  }
+}

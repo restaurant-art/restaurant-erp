@@ -112,6 +112,62 @@ class TenantModel(TimeStampedModel):
         abstract = True
 
 
+class GateVisit(TimeStampedModel):
+    """A security movement, independent of inventory and financial postings."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    store_id = models.CharField(max_length=100, db_index=True)
+    vehicle_number = models.CharField(max_length=40)
+    vehicle_type = models.CharField(max_length=40)
+    driver_name = models.CharField(max_length=160)
+    driver_phone = models.CharField(max_length=30, blank=True)
+    supplier_name = models.CharField(max_length=180, blank=True)
+    purpose = models.CharField(max_length=80)
+    material = models.TextField(blank=True)
+    quantity = models.DecimalField(max_digits=16, decimal_places=3, null=True, blank=True)
+    unit = models.CharField(max_length=40, blank=True)
+    remarks = models.TextField(blank=True)
+    entered_at = models.DateTimeField(default=timezone.now, db_index=True)
+    entered_by = models.ForeignKey('User', on_delete=models.PROTECT, related_name='gate_entries')
+    status = models.CharField(max_length=24, default='INSIDE', db_index=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['store_id', 'vehicle_number'], condition=models.Q(status__in=['INSIDE', 'PENDING_APPROVAL']), name='gate_one_active_vehicle_per_store')]
+        indexes = [models.Index(fields=['store_id', 'status', 'entered_at'], name='gate_visit_store_status_idx')]
+
+
+class GateBill(TimeStampedModel):
+    visit = models.ForeignKey(GateVisit, on_delete=models.PROTECT, related_name='bills')
+    number = models.CharField(max_length=120)
+    bill_date = models.DateField(null=True, blank=True)
+    amount = models.DecimalField(max_digits=16, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(0)])
+
+
+class GateExit(TimeStampedModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    visit = models.OneToOneField(GateVisit, on_delete=models.PROTECT, related_name='exit')
+    purpose = models.CharField(max_length=80)
+    material = models.TextField(blank=True)
+    document_number = models.CharField(max_length=120, blank=True)
+    amount = models.DecimalField(max_digits=16, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(0)])
+    quantity = models.DecimalField(max_digits=16, decimal_places=3, null=True, blank=True)
+    unit = models.CharField(max_length=40, blank=True)
+    destination = models.CharField(max_length=240, blank=True)
+    waste_type = models.CharField(max_length=80, blank=True)
+    remarks = models.TextField(blank=True)
+    requested_by = models.ForeignKey('User', on_delete=models.PROTECT, related_name='gate_exit_requests')
+    approved_by = models.ForeignKey('User', on_delete=models.PROTECT, related_name='gate_exit_approvals', null=True, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    exited_by = models.ForeignKey('User', on_delete=models.PROTECT, related_name='gate_exits', null=True, blank=True)
+    exited_at = models.DateTimeField(null=True, blank=True)
+
+
+class GateAudit(TimeStampedModel):
+    visit = models.ForeignKey(GateVisit, on_delete=models.PROTECT, related_name='gate_audit')
+    actor = models.ForeignKey('User', on_delete=models.PROTECT)
+    action = models.CharField(max_length=40)
+    detail = models.JSONField(default=dict)
+
+
 class SubscriptionPlan(TimeStampedModel):
     name = models.CharField(max_length=80, unique=True)
     monthly_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -435,6 +491,36 @@ class ReportExport(TenantModel):
     requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
 
 
+class PineCloudPayment(TimeStampedModel):
+    """Durable payment intent; never stores credentials or raw provider responses."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    store_id = models.CharField(max_length=100)
+    bill_id = models.CharField(max_length=120)
+    payment_key = models.CharField(max_length=150)
+    amount_paise = models.PositiveIntegerField()
+    sequence = models.PositiveIntegerField(default=1)
+    config_identity = models.CharField(max_length=64)
+    # A unique nullable lock also prevents two counters using one EDC at once.
+    active_terminal = models.CharField(max_length=64, unique=True, null=True)
+    provider_reference = models.CharField(max_length=80, blank=True)
+    status = models.CharField(max_length=24, default="uploading")
+    receipt = models.JSONField(default=dict)
+    requested_by = models.ForeignKey(User, on_delete=models.PROTECT)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("store_id", "payment_key"), name="pine_payment_key_unique")]
+
+
+class PineBillPrintJob(TimeStampedModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    store_id = models.CharField(max_length=100)
+    bill_id = models.CharField(max_length=120)
+    status = models.CharField(max_length=20, default="claimed")
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("store_id", "bill_id"), name="pine_bill_print_once")]
+
+
 class SharedAppState(models.Model):
     """Shared business state stored in the AWS PostgreSQL database."""
 
@@ -444,6 +530,55 @@ class SharedAppState(models.Model):
 
     class Meta:
         db_table = "vestora_shared_app_state"
+
+
+class TrainingOtpChallenge(models.Model):
+    """Short-lived, single-use WhatsApp verification for POS practice access."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    requested_by = models.ForeignKey(User, on_delete=models.CASCADE)
+    cashier_email = models.EmailField()
+    store_id = models.CharField(max_length=100)
+    code_digest = models.CharField(max_length=64)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=("requested_by", "cashier_email", "store_id", "created_at"), name="core_traini_request_5eaa2e_idx")]
+
+
+class ActionOtpChallenge(models.Model):
+    """Short-lived WhatsApp approval for protected store actions such as GRN changes."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    requested_by = models.ForeignKey(User, on_delete=models.CASCADE)
+    action = models.CharField(max_length=32)
+    store_id = models.CharField(max_length=100)
+    recipient_phone = models.CharField(max_length=16)
+    code_digest = models.CharField(max_length=64)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    grant_used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=("requested_by", "action", "store_id", "created_at"), name="core_action_otp_req_idx")]
+
+
+class WhatsAppBillDispatch(models.Model):
+    """Single dispatch record per store and bill, preventing duplicate sends."""
+
+    store_id = models.CharField(max_length=100)
+    bill_id = models.CharField(max_length=120)
+    status = models.CharField(max_length=20, default="sending")
+    message_id = models.CharField(max_length=255, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("store_id", "bill_id"), name="core_whatsapp_bill_unique")]
 
 
 class SyncOperation(models.Model):
@@ -483,3 +618,39 @@ class PublicOrder(models.Model):
     class Meta:
         db_table = "vestora_public_orders"
         ordering = ("-created_at",)
+
+
+# Imported after the legacy entities to keep their schema and history intact.
+from .production_models import (  # noqa: E402,F401
+    ProductionSite, KitchenLocation, KitchenItem, KitchenRecipe, KitchenTransaction,
+    ProductionBatch, KitchenLot, KitchenBalance, KitchenMovement, KitchenOrder,
+    KitchenOrderLine, KitchenReservation, KitchenFulfillment, KitchenCount,
+)
+
+
+class BarcodeLabelSettings(models.Model):
+    store_id = models.CharField(max_length=100, primary_key=True)
+    settings = models.JSONField(default=dict)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class BarcodePrintJob(models.Model):
+    id = models.UUIDField(primary_key=True, editable=False)
+    store_id = models.CharField(max_length=100)
+    branch_name = models.CharField(max_length=250)
+    actor = models.ForeignKey(User, null=True, on_delete=models.SET_NULL)
+    actor_name = models.CharField(max_length=250)
+    source = models.CharField(max_length=12)
+    purchase_reference = models.CharField(max_length=180, blank=True)
+    action = models.CharField(max_length=5)
+    status = models.CharField(max_length=24, default="prepared")
+    copies = models.PositiveSmallIntegerField(default=1)
+    label_count = models.PositiveIntegerField()
+    labels = models.JSONField()
+    settings = models.JSONField()
+    request_hash = models.CharField(max_length=64)
+    reprint_of = models.ForeignKey("self", null=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["store_id", "-created_at"], name="barcode_job_store_date")]

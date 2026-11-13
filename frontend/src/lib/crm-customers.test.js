@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { billCustomerTypes, buildCustomerRows, mergeCustomerEdits } from './crm-customers.js';
+import { billCustomerTypes, buildCustomerRows, mergeCustomerEdits, normalizeCustomerStore } from './crm-customers.js';
 test('classifies retail, wholesale, online and older item pricing metadata', () => {
   assert.deepEqual(billCustomerTypes({}), ['Retail']);
   assert.deepEqual(billCustomerTypes({pricingMode:'Wholesale'}), ['Wholesale']);
@@ -31,4 +31,11 @@ test('editing/deleting under a filter leaves hidden customers and old overrides 
   const deleted=mergeCustomerEdits(overrides,visible,[]);
   assert.equal(buildCustomerRows(bills,deleted).length,1);
   assert.equal(buildCustomerRows(bills,deleted)[0][0],'Sam Ltd');
+});
+
+test('customer store retains and deduplicates wallet ledger entries alongside credit settlements', () => {
+  const walletEntry = { id: 'WAL-1', customerKey: '9876543210', direction: 'credit', amount: 3 };
+  const store = normalizeCustomerStore({ settlements: [{ id: 'SET-1', amount: 10 }], walletEntries: [walletEntry, walletEntry] });
+  assert.equal(store.settlements.length, 1);
+  assert.deepEqual(store.walletEntries, [walletEntry]);
 });
