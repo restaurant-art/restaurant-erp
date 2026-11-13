@@ -8,6 +8,7 @@ export const salesReportGroups = [
   { title: "Sales & billing", reports: [
     ["Daily sales", "Bills, payments, GST, discounts, and daily totals.", ReceiptText, "green"],
     ["Item-wise sales", "Products sold, quantities, selling rates, and sales values.", PackageSearch, "blue"],
+    ["Category-wise sales", "Gross and net sales, discounts, refunds, and GST by product or menu category.", BarChart3, "green"],
     ["Hourly sales", "Sales and bill counts by time of day.", Clock, "violet"],
     ["GST", "Recorded sales tax and taxable amounts.", Percent, "amber"],
     ["Cashier closing", "Shift closing balances and cash variances.", History, "blue"],

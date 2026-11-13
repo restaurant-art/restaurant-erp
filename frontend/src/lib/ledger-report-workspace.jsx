@@ -14,11 +14,13 @@ import {
   X,
 } from "lucide-react";
 import { buildLedgerAccountReport, defaultLedgerReportDates, filterLedgerReportAccounts, ledgerReportAccountOptions, ledgerReportDatePreset } from "./ledger-report.js";
+import { ReportColumnControls, useReportColumns } from "./report-columns.jsx";
+import { projectReportTable, quoteReportCsv } from "./report-columns.js";
 import "./ledger-report-workspace.css";
 
 const money = (value) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(Number(value || 0));
 const displayDate = (value) => value ? new Date(`${value}T12:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
-const csvCell = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+const ledgerColumns = ["Date", "Transaction type", "Party", "Details", "Reference", "Debit", "Credit", "Running balance"];
 
 export function LedgerReportWorkspace({ data, notify, onBack, initialAccount = "" }) {
   const initialDates = useMemo(() => defaultLedgerReportDates(), []);
@@ -32,6 +34,8 @@ export function LedgerReportWorkspace({ data, notify, onBack, initialAccount = "
   const filteredAccountOptions = useMemo(() => filterLedgerReportAccounts(accountOptions, accountQuery), [accountOptions, accountQuery]);
   const datesAreValid = !filters.from || !filters.to || filters.from <= filters.to;
   const report = useMemo(() => filters.account && datesAreValid ? buildLedgerAccountReport(data.ledgerRows, filters) : null, [data, filters, datesAreValid]);
+  const columnSelection = useReportColumns("finance:ledger", ledgerColumns);
+  const visibleColumns = columnSelection.indices;
   const update = (name, value) => setFilters((current) => ({ ...current, [name]: value }));
   const selectPreset = (preset) => setFilters((current) => ({ ...current, ...ledgerReportDatePreset(preset) }));
   const clearFilters = () => setFilters((current) => ({ ...current, party: "", transactionType: "All", direction: "All", minimum: "", maximum: "" }));
@@ -86,14 +90,16 @@ export function LedgerReportWorkspace({ data, notify, onBack, initialAccount = "
   }, [filters.account]);
   const download = () => {
     if (!report) return;
+    const table = projectReportTable(ledgerColumns, report.rows.map((entry) =>
+      [entry.date, entry.transactionType, entry.party, entry.details, entry.reference, entry.debit, entry.credit, entry.balance]), visibleColumns);
     const rows = [
       ["Ledger account", report.account],
       ["Period", `${report.from || "Beginning"} to ${report.to || "Today"}`],
       [],
-      ["Date", "Transaction type", "Party", "Details", "Reference", "Debit", "Credit", "Running balance"],
-      ...report.rows.map((entry) => [entry.date, entry.transactionType, entry.party, entry.details, entry.reference, entry.debit, entry.credit, entry.balance]),
+      table.columns,
+      ...table.rows,
     ];
-    const blob = new Blob(["\ufeff", rows.map((row) => row.map(csvCell).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob(["\ufeff", rows.map((row) => row.map(quoteReportCsv).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -180,8 +186,18 @@ export function LedgerReportWorkspace({ data, notify, onBack, initialAccount = "
       {report && <section className="ledger-report-results">
         <div className="ledger-report-summary-head"><div><span>LEDGER ACCOUNT</span><h3>{report.account}</h3><p>{displayDate(report.from)} to {displayDate(report.to)}</p></div><em>{report.rows.length} {report.rows.length === 1 ? "transaction" : "transactions"}</em></div>
         <div className="ledger-report-metrics"><article><span>Opening balance</span><strong>{money(report.openingBalance)}</strong></article><article><span>Total debits</span><strong className="debit">{money(report.totalDebit)}</strong></article><article><span>Total credits</span><strong className="credit">{money(report.totalCredit)}</strong></article><article><span>Closing balance</span><strong>{money(report.closingBalance)}</strong></article></div>
-        <div className="ledger-report-table-wrap"><table className="ledger-report-table"><thead><tr><th>#</th><th>Date</th><th>Transaction type</th><th>Party / details</th><th>Reference</th><th>Debit</th><th>Credit</th><th>Running balance</th></tr></thead><tbody>{report.rows.map((entry, index) => <tr key={`${entry.date}-${entry.reference}-${index}`}><td>{index + 1}</td><td>{displayDate(entry.date)}</td><td><span className="ledger-type-pill">{entry.transactionType}</span></td><td><strong>{entry.party}</strong>{entry.details && entry.details !== entry.party && <small>{entry.details}</small>}</td><td>{entry.reference}</td><td className="numeric debit">{entry.debit ? money(entry.debit) : "—"}</td><td className="numeric credit">{entry.credit ? money(entry.credit) : "—"}</td><td className="numeric"><strong>{money(entry.balance)}</strong></td></tr>)}
-          {!report.rows.length && <tr><td colSpan="8"><div className="ledger-no-records"><FileSearch size={28} /><h3>No transactions match these filters</h3><p>Change the date range or clear the optional filters. The report will update automatically.</p></div></td></tr>}</tbody><tfoot><tr><td colSpan="5">Period totals</td><td className="numeric">{money(report.totalDebit)}</td><td className="numeric">{money(report.totalCredit)}</td><td className="numeric">{money(report.closingBalance)}</td></tr></tfoot></table></div>
+        <ReportColumnControls label="Ledger transactions" columns={ledgerColumns} selection={columnSelection} />
+        <div className="ledger-report-table-wrap"><table className="ledger-report-table">
+          <thead><tr><th scope="col">#</th>{visibleColumns.map((index) => <th key={index} scope="col" className={index >= 5 ? "numeric" : ""}>{ledgerColumns[index]}</th>)}</tr></thead>
+          <tbody>{report.rows.map((entry, index) => {
+            const cells = [displayDate(entry.date), <span className="ledger-type-pill">{entry.transactionType}</span>, <strong>{entry.party}</strong>,
+              entry.details || "—", entry.reference, entry.debit ? money(entry.debit) : "—", entry.credit ? money(entry.credit) : "—", <strong>{money(entry.balance)}</strong>];
+            return <tr key={`${entry.date}-${entry.reference}-${index}`}><td>{index + 1}</td>{visibleColumns.map((column) =>
+              <td key={column} className={column === 5 ? "numeric debit" : column === 6 ? "numeric credit" : column === 7 ? "numeric" : ""}>{cells[column]}</td>)}</tr>;
+          })}
+          {!report.rows.length && <tr><td colSpan={visibleColumns.length + 1}><div className="ledger-no-records"><FileSearch size={28} /><h3>No transactions match these filters</h3><p>Change the date range or clear the optional filters. The report will update automatically.</p></div></td></tr>}</tbody>
+          <tfoot><tr><td>Total</td>{visibleColumns.map((index) => <td key={index} className={index >= 5 ? "numeric" : ""}>{index >= 5 ? money([report.totalDebit, report.totalCredit, report.closingBalance][index - 5]) : ""}</td>)}</tr></tfoot>
+        </table></div>
       </section>}
     </div>
   </section>;

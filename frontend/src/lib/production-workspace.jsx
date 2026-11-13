@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, FileDown } from "lucide-react";
 import { loadKitchen, kitchenCommand, setupKitchen, loadKitchenReport, loadBatchProfit, reliableKitchenCommand, pendingKitchenCommand, resumeKitchenCommand } from "./production-api.js";
 import { ProductionReportsHub } from "./production-reports-hub.jsx";
 import "./production-workspace.css";
@@ -7,6 +7,10 @@ import { isProductEnabled } from "./product-availability.js";
 import { newProductionRecipe, productionRecipePayload, loadProductionRecipeDraft, saveProductionRecipeDraft } from "./production-recipe-editor.js";
 import { inventoryStockRows, decorateInventoryStockRows, filterInventoryStockRows, inventoryCountPhysical } from "./inventory-stock-list.js";
 import { InventoryProductTable } from "./inventory-product-table.jsx";
+import { ReportColumnControls, useReportColumns } from "./report-columns.jsx";
+import { projectReportTable, quoteReportCsv } from "./report-columns.js";
+import { reportCategoryResolver } from "./sales-by-category.js";
+import { kitchenServingCategory, servingCategoryRows } from "./production-category-report.js";
 
 const today = () => new Date().toLocaleDateString("en-CA");
 const fmt = (value, digits = 3) => Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: digits });
@@ -136,7 +140,7 @@ function SearchSelect({ id, label, value, onChange, options, placeholder = "Clic
   </div>;
 }
 function Qty({ value, onChange, ...props }) { return <input type="number" min="0" step="any" value={value ?? ""} onChange={(e) => onChange(e.target.value)} {...props} />; }
-function Table({ columns, rows, empty = "No records yet." }) { return <div className="kp-table"><table><thead><tr>{columns.map((c) => <th key={c}>{c}</th>)}</tr></thead><tbody>{rows.length ? rows.map((row, index) => <tr key={index}>{row.map((cell, i) => <td key={i}>{cell}</td>)}</tr>) : <tr><td colSpan={columns.length}>{empty}</td></tr>}</tbody></table></div>; }
+function Table({ columns, rows, empty = "No records yet.", hasActions = false }) { return <div className="kp-table"><table><thead><tr>{columns.map((c) => <th key={c} scope="col">{c}</th>)}{hasActions && <th scope="col" className="report-action-cell">Details</th>}</tr></thead><tbody>{rows.length ? rows.map((row, index) => <tr key={index}>{row.map((cell, i) => <td key={i} className={hasActions && i === columns.length ? "report-action-cell" : undefined}>{cell}</td>)}</tr>) : <tr><td colSpan={columns.length + Number(hasActions)}>{empty}</td></tr>}</tbody></table></div>; }
 function Card({ title, subtitle, children }) { return <section className="kp-card"><div className="kp-card-head"><h3>{title}</h3>{subtitle && <p>{subtitle}</p>}</div>{children}</section>; }
 
 function Components({ label, items, rows, setRows, outputs = false, actual = false, suggestions = [] }) {
@@ -820,24 +824,27 @@ function servingCostEstimates(data, location, unpricedLots) {
   }).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function servedProfitByMenuItem(sales, unpricedLots) {
+function servedProfitByMenuItem(sales, unpricedLots, categoryOf) {
   const items = new Map();
   for (const sale of sales) {
-    const row = items.get(sale.menu) || { name: sale.menu, quantity: 0, sales: 0, cost: 0, incomplete: false };
+    const category = categoryOf(sale);
+    const key = JSON.stringify([sale.menu, category.toLowerCase()]);
+    const row = items.get(key) || { name: sale.menu, category, quantity: 0, sales: 0, cost: 0, incomplete: false };
     row.quantity += Number(sale.quantity);
     row.sales += Number(sale.net_menu_value);
     row.cost += Number(sale.food_cost);
     row.incomplete ||= sale.cost_incomplete || (sale.components || []).some((component) =>
       !(Number(component.cost) > 0) || unpricedLots.has(String(component.lot)));
-    items.set(sale.menu, row);
+    items.set(key, row);
   }
   return [...items.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function ProductionCostByItem({ batches }) {
+function ProductionCostByItem({ batches, day }) {
   return <>
     <h4>Production cost by item</h4>
-    <Table columns={["Prepared item", "Made", "Batches", "Recorded production cost", "Average unit cost"]}
+    <ReportTable columns={["Prepared item", "Made", "Batches", "Recorded production cost", "Average unit cost"]}
+      day={day} exportName="production-cost-by-item"
       empty="No completed production batches for this date."
       rows={productionCostByItem(batches).map((row) => {
         const unit = row.unit === "g" ? "kg" : row.unit === "ml" ? "litre" : row.unit;
@@ -849,8 +856,9 @@ function ProductionCostByItem({ batches }) {
   </>;
 }
 
-function KitchenCostProfitReport({ data, result, day }) {
+function KitchenCostProfitReport({ data, result, day, categoryOfServing }) {
   const [selectedLocation, setLocation] = useState("");
+  const [category, setCategory] = useState("");
   const location = selectedLocation || String((data.locations.find((entry) => entry.name === "Kitchen") || data.locations[0])?.id || "");
   const unpricedLots = new Set();
   for (const batch of [...(data.batches || []), ...result.batches]) {
@@ -859,32 +867,38 @@ function KitchenCostProfitReport({ data, result, day }) {
       if (unpricedInputs || !(Number(output.cost) > 0)) unpricedLots.add(String(output.lot));
     }
   }
+  const categoryOfItem = reportCategoryResolver(data.menu, data.inventory);
   const estimates = servingCostEstimates(data, location, unpricedLots).map((row) => {
     const profit = row.cost == null || row.netPrice == null ? null : row.netPrice - row.cost;
     const portion = row.prepared ? row.portion || "—" : "Set up prepared serving";
     return [row.name, portion, row.prepared && row.cost == null ? "Cost needed" : reportMoney(row.cost),
-      reportMoney(row.netPrice), reportMoney(profit), reportMargin(profit == null || !(row.netPrice > 0) ? null : profit / row.netPrice * 100)];
+      reportMoney(row.netPrice), reportMoney(profit), reportMargin(profit == null || !(row.netPrice > 0) ? null : profit / row.netPrice * 100),
+      categoryOfItem({ id: row.key, name: row.name })];
   });
-  const served = servedProfitByMenuItem(result.sales, unpricedLots).map((row) => {
+  const served = servedProfitByMenuItem(result.sales, unpricedLots, categoryOfServing).map((row) => {
     const profit = row.incomplete ? null : row.sales - row.cost;
     return [row.name, fmt(row.quantity), row.incomplete ? "Cost pending" : rupees(row.cost),
       reportMoney(row.incomplete || !row.quantity ? null : row.cost / row.quantity), rupees(row.sales), reportMoney(profit),
-      reportMargin(profit == null || !(row.sales > 0) ? null : profit / row.sales * 100)];
+      reportMargin(profit == null || !(row.sales > 0) ? null : profit / row.sales * 100), row.category];
   });
+  const categories = [...new Set([...estimates.map((row) => row.at(-1)), ...served.map((row) => row.at(-1)), category].filter(Boolean))];
+  const filterCategory = (rows) => category ? rows.filter((row) => row.at(-1) === category) : rows;
 
   return <>
     <h4>Estimated cost &amp; profit per serving</h4>
     <p className="kp-help">Uses current usable stock costs and menu prices before tax, discounts and refunds.</p>
     <div className="kp-toolbar">
       <Field label="Serving cost location"><Select value={location} onChange={setLocation} options={data.locations} /></Field>
+      <ReportCategoryFilter value={category} onChange={setCategory} categories={categories} />
     </div>
-    <ReportTable columns={["Menu item", "Portion", "Cost per serving", "Price ex. tax", "Gross food profit", "Margin"]}
-      empty="Save a prepared serving in Servings to see its estimated cost and profit."
-      rows={estimates} day={day} exportName="serving-cost-estimates" />
+    <ReportTable columns={["Menu item", "Portion", "Cost per serving", "Price ex. tax", "Gross food profit", "Margin", "Category"]}
+      empty={category ? "No serving estimates match this category." : "Save a prepared serving in Servings to see its estimated cost and profit."}
+      rows={filterCategory(estimates)} day={day} exportName="serving-cost-estimates" />
     <h4>Gross food profit by served item</h4>
     <p className="kp-help">Uses the saved menu value excluding tax and the posted food cost for the selected business date.</p>
-    <ReportTable columns={["Menu item", "Served", "Food cost", "Cost per serving", "Menu value ex. tax", "Gross food profit", "Margin"]}
-      empty="No fulfilled servings for this date." rows={served} day={day} exportName="served-food-cost" />
+    <ReportTable columns={["Menu item", "Served", "Food cost", "Cost per serving", "Menu value ex. tax", "Gross food profit", "Margin", "Category"]}
+      empty={category ? "No fulfilled servings match this category." : "No fulfilled servings for this date."}
+      rows={filterCategory(served)} day={day} exportName="served-food-cost" />
   </>;
 }
 
@@ -907,12 +921,35 @@ function PendingBilledServings({ orders, bills, day }) {
   return <>
     <h4>POS bills awaiting kitchen service</h4>
     <p className="kp-help">Complete the served quantities in KDS to record consumption and food cost.</p>
-    <Table columns={["POS bill", "Menu item", "Portions awaiting service"]} rows={rows} />
+    <ReportTable columns={["POS bill", "Menu item", "Portions awaiting service"]} rows={rows} day={day} exportName="pending-billed-servings" />
   </>;
 }
 
 const reportMoney = (value) => value == null ? "—" : rupees(value);
 const reportMargin = (value) => value == null ? "—" : `${fmt(value, 2)}%`;
+
+function ReportCategoryFilter({ value, onChange, categories }) {
+  return <Field label="Category"><Select value={value} onChange={onChange} placeholder="All categories"
+    options={[...categories].sort((a, b) => a.localeCompare(b)).map((name) => ({ id: name, name }))} /></Field>;
+}
+
+function ServingCategoryProfitReport({ sales, categoryOf, day }) {
+  const [category, setCategory] = useState("");
+  const groups = servingCategoryRows(sales, categoryOf);
+  const categories = [...new Set([...groups.map((row) => row.category), category].filter(Boolean))];
+  const rows = groups.filter((row) => !category || row.category === category).map((row) => {
+    const profit = row.incomplete ? null : row.value - row.cost;
+    return [row.category, fmt(row.quantity), rupees(row.value), row.incomplete ? "Cost pending" : rupees(row.cost),
+      reportMoney(row.incomplete || !row.quantity ? null : row.cost / row.quantity),
+      reportMoney(profit), reportMargin(profit == null || !(row.value > 0) ? null : profit / row.value * 100)];
+  });
+  return <>
+    <p className="kp-help">Uses posted kitchen servings and saved menu values excluding tax. Food profit is before discounts, refunds and operating expenses.</p>
+    <div className="kp-toolbar"><ReportCategoryFilter value={category} onChange={setCategory} categories={categories} /></div>
+    <ReportTable columns={["Category", "Portions served", "Menu value ex. GST", "Food cost", "Cost per serving", "Gross food profit", "Margin"]}
+      rows={rows} day={day} exportName="serving-category-profitability" empty="No fulfilled servings match this date and category." />
+  </>;
+}
 
 function BatchProfitReport({ storeId, reportRefresh, initialDay }) {
   const [day, setDay] = useState(() => initialDay || today());
@@ -929,22 +966,17 @@ function BatchProfitReport({ storeId, reportRefresh, initialDay }) {
     return () => { active = false; };
   }, [storeId, day, reportRefresh]);
   const selected = batches?.find((batch) => batch.id === selectedId) ?? batches?.[0];
-  const exportBatches = () => downloadKitchenCsv("batch-profit", day, batches.map((batch) => ({
-    "Production date": batch.production_date, "Batch reference": batch.reference, "Recipe": batch.recipe,
-    "Status": batch.status, "Production cost": batch.production_cost, "Net sales ex. GST": batch.net_sales,
-    "Cost used for profit": batch.food_cost, "Gross profit": batch.gross_profit, "Margin %": batch.margin_pct,
-  })));
   return <>
     <Card title="Batch profitability" subtitle="Review sales to date for the batches made on the selected production date. Net sales exclude GST and reflect recorded discounts and refunds.">
       <div className="kp-toolbar">
         <Field label="Production date"><input type="date" value={day} onChange={(event) => setDay(event.target.value)} /></Field>
-        {batches?.length > 0 && <button type="button" className="kp-quiet" onClick={exportBatches}>Export batches CSV</button>}
       </div>
       {error && <p className="kp-error" role="alert">{error}</p>}
       {day && !batches && !error && <p role="status">Loading batch sales…</p>}
-      {batches && <Table columns={["Batch", "Status", "Production cost", "Net sales ex. GST", "Cost used for profit", "Gross profit", "Margin", ""]}
+      {batches && <ReportTable columns={["Batch", "Recipe", "Production date", "Status", "Production cost", "Net sales ex. GST", "Cost used for profit", "Gross profit", "Margin"]}
+        day={day} exportName="batch-profit" hasActions
         empty="No posted batches for this production date."
-        rows={batches.map((batch) => [<>{batch.reference}<small>{batch.recipe}</small></>, batch.status,
+        rows={batches.map((batch) => [batch.reference, batch.recipe, batch.production_date, batch.status,
           batch.production_cost == null ? "Cost pending" : reportMoney(batch.production_cost),
           batch.sales_pending ? "Allocation pending" : reportMoney(batch.net_sales),
           batch.cost_pending ? "Cost pending" : reportMoney(batch.food_cost),
@@ -955,7 +987,8 @@ function BatchProfitReport({ storeId, reportRefresh, initialDay }) {
     </Card>
     {selected && <Card title={`${selected.reference} · ${selected.recipe}`}>
       <h4>Batch output</h4>
-      <Table columns={["Prepared item", "Made", "Sold", "Remaining", "Awaiting bill", "Other use", "Production cost", "Cost rate"]}
+      <ReportTable columns={["Prepared item", "Made", "Sold", "Remaining", "Awaiting bill", "Other use", "Production cost", "Cost rate"]}
+        day={day} exportName={`batch-output-${selected.reference}`} tableKey="batch-profit-output"
         rows={selected.outputs.map((output) => {
           const costUnit = ({ g: "kg", ml: "litre" })[output.unit] || output.unit;
           const factor = costUnit === output.unit ? 1 : 1000;
@@ -964,10 +997,11 @@ function BatchProfitReport({ storeId, reportRefresh, initialDay }) {
             output.production_cost == null ? "—" : `${rupees(output.production_cost * factor / output.produced)} / ${costUnit}`];
         })} />
       <h4>Servings sold from this batch</h4>
-      <Table columns={["Menu item", "Portions from batch", "Avg. billed rate incl. GST", "Cost per portion", "Cost of sales", "Net sales ex. GST", "Gross food profit", "Margin"]}
+      <ReportTable columns={["Menu item", "Portions from batch", "Avg. billed rate incl. GST", "Net rate per portion", "Cost per portion", "Cost of sales", "Net sales ex. GST", "Gross food profit", "Margin"]}
+        day={day} exportName={`batch-servings-${selected.reference}`} tableKey="batch-profit-servings"
         empty="No saved POS sales with posted stock consumption for this batch."
         rows={selected.servings.map((serving) => [serving.name, serving.portions == null ? "—" : fmt(serving.portions, 3),
-          <>{reportMoney(serving.average_rate)}{serving.net_rate != null && <small>{rupees(serving.net_rate)} net per portion</small>}</>,
+          reportMoney(serving.average_rate), reportMoney(serving.net_rate),
           reportMoney(serving.cost_per_portion),
           serving.food_cost == null ? "Cost pending" : reportMoney(serving.food_cost),
           serving.net_sales == null ? "Allocation pending" : reportMoney(serving.net_sales),
@@ -977,28 +1011,26 @@ function BatchProfitReport({ storeId, reportRefresh, initialDay }) {
   </>;
 }
 
-function downloadKitchenCsv(name, day, rows) {
-  const keys = Object.keys(rows[0] || {});
-  const cell = (value) => {
-    const text = typeof value === "object" && value != null ? JSON.stringify(value) : String(value ?? "");
-    const escaped = /^[=+@-]/.test(text) && !/^-?\d+(\.\d+)?$/.test(text) ? `'${text}` : text;
-    return `"${escaped.replaceAll('"', '""')}"`;
-  };
-  const csv = [keys, ...rows.map((row) => keys.map((key) => row[key]))].map((row) => row.map(cell).join(",")).join("\n");
-  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+function downloadKitchenCsv(name, day, { columns, rows }) {
+  const csv = [columns, ...rows].map((row) => row.map(quoteReportCsv).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }));
   const link = document.createElement("a");
   link.href = url;
-  link.download = `uvpro-${name}-${day}.csv`;
+  link.download = `uvpro-${name.replace(/[^a-z\d-]+/gi, "-")}-${day}.csv`;
   link.click();
   URL.revokeObjectURL(url);
 }
 
-function ReportTable({ columns, rows, day, exportName, empty }) {
+function ReportTable({ columns, rows, day, exportName, tableKey = exportName, empty, hasActions = false }) {
+  const selection = useReportColumns(`production:${tableKey}`, columns);
+  const table = projectReportTable(columns, rows, selection.indices);
   return <>
-    <Table columns={columns} rows={rows} empty={empty} />
-    {rows.length > 0 && <button type="button" className="kp-quiet" onClick={() => downloadKitchenCsv(
-      exportName, day, rows.map((row) => Object.fromEntries(columns.map((column, index) => [column, row[index]]))),
-    )}>Export CSV</button>}
+    <ReportColumnControls columns={columns} selection={selection} label={tableKey.replaceAll("-", " ")}>
+      <button type="button" className="report-columns-export" disabled={!rows.length} onClick={() => downloadKitchenCsv(exportName, day, table)}>
+        <FileDown size={16} aria-hidden="true" /> Export CSV
+      </button>
+    </ReportColumnControls>
+    <Table columns={table.columns} rows={hasActions ? table.rows.map((row, index) => [...row, rows[index].at(-1)]) : table.rows} empty={empty} hasActions={hasActions} />
   </>;
 }
 
@@ -1014,7 +1046,7 @@ function DailyProductionReport({ batches, day }) {
   return <>
     <ReportTable columns={["Batch", "Recipe", "Actual output", "Status", "Batch cost"]} rows={rows}
       day={day} exportName="production" empty="No batches for this date." />
-    <ProductionCostByItem batches={batches} />
+    <ProductionCostByItem batches={batches} day={day} />
   </>;
 }
 
@@ -1105,10 +1137,13 @@ function Reports({ name, data, storeId, salesLedger, reportRefresh }) {
     }).catch((error) => { if (active) setError(error.message); });
     return () => { active = false; };
   }, [storeId, day, reportRefresh]);
+  const categoryOf = result && ["Food Cost Report", "Serving category profitability"].includes(name)
+    ? kitchenServingCategory(data.menu, data.inventory, data.orders, salesLedger) : null;
   const content = result && {
     "Daily Production": <DailyProductionReport batches={result.batches} day={day} />,
     "Ingredient Consumption": <IngredientConsumptionReport batches={result.batches} day={day} />,
-    "Food Cost Report": <KitchenCostProfitReport data={data} result={result} day={day} />,
+    "Food Cost Report": <KitchenCostProfitReport data={data} result={result} day={day} categoryOfServing={categoryOf} />,
+    "Serving category profitability": <ServingCategoryProfitReport sales={result.sales} categoryOf={categoryOf} day={day} />,
     "Serving & component consumption": <ServingConsumptionReport sales={result.sales} orders={data.orders} bills={salesLedger} day={day} />,
     "Wastage Report": <WastageReport usage={result.usage} dispositions={result.dispositions} day={day} />,
     "Finished Goods Stock": <FinishedGoodsReport closing={result.closing} items={data.items} day={day} />,

@@ -35,6 +35,7 @@ export const roleAccessSections = [
     { id: "report:Daily Production", label: "Daily Production", group: "Production reports" },
     { id: "report:Ingredient Consumption", label: "Ingredient Consumption", group: "Production reports" },
     { id: "report:Food Cost Report", label: "Food Cost Report", group: "Production reports" },
+    { id: "report:Serving category profitability", label: "Serving category profitability", group: "Production reports" },
     { id: "report:Batch profitability", label: "Batch profitability", group: "Production reports" },
     { id: "report:Serving & component consumption", label: "Serving & component consumption", group: "Production reports" },
     { id: "report:Wastage Report", label: "Wastage Report", group: "Production reports" },
@@ -76,6 +77,7 @@ export const roleAccessSections = [
   { id: "reports", label: "Reports", options: [
     { id: "Daily sales", label: "Daily sales" },
     { id: "Item-wise sales", label: "Item-wise sales" },
+    { id: "Category-wise sales", label: "Category-wise sales" },
     { id: "Hourly sales", label: "Hourly sales" },
     { id: "Branch comparison", label: "Branch comparison" },
     { id: "Inventory valuation", label: "Inventory valuation" },

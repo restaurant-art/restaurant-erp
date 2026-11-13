@@ -27,6 +27,7 @@ import { ReportsWorkspace } from "./reports-workspace.jsx";
 import { buildFinanceReport, financeReportGroups, financeReportNames, postedSaleReference, saleDate, summarizeFinanceReport } from "./finance-reports.js";
 import { defaultLedgerReportDates, ledgerReportDatePreset } from "./ledger-report.js";
 import { LedgerReportWorkspace } from "./ledger-report-workspace.jsx";
+import { quoteReportCsv, spreadsheetText } from "./report-columns.js";
 import { loadPostedSaleCosts } from "./production-api.js";
 import "./finance-reports-hub.css";
 
@@ -54,7 +55,6 @@ const icons = {
 
 const reportTone = (icon) => ["tax", "trend", "analysis"].includes(icon) ? "amber" : ["bank", "cash", "balance"] .includes(icon) ? "blue" : ["vendor", "customer", "trade"] .includes(icon) ? "violet" : "green";
 const safeFileName = (value) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-const quoteCsv = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
 const reportDescription = (name) => financeReportGroups.flatMap((group) => group.reports).find(([reportName]) => reportName === name)?.[1] || "Live financial records and totals for your selected period.";
 
 export function FinanceReportsHub({ data, storeId, notify, reportRequest = null }) {
@@ -139,14 +139,14 @@ export function FinanceReportsHub({ data, storeId, notify, reportRequest = null 
     setFromDate(dates.from);
     setToDate(dates.to);
   };
-  const exportReport = (type) => {
+  const exportReport = (type, table) => {
     if (["PDF", "Print"].includes(type)) {
       window.print();
       return;
     }
     const delimiter = type === "Excel" ? "\t" : ",";
-    const rows = [report.columns, ...filteredRecords.map((record) => record.cells)];
-    const content = rows.map((values) => values.map((value) => type === "Excel" ? String(value ?? "") : quoteCsv(value)).join(delimiter)).join("\r\n");
+    const rows = [table.columns, ...table.rows];
+    const content = rows.map((values) => values.map((value) => type === "Excel" ? spreadsheetText(value).replace(/[\t\r\n]/g, " ") : quoteReportCsv(value)).join(delimiter)).join("\r\n");
     const extension = type === "Excel" ? "xls" : "csv";
     const blob = new Blob(["\ufeff", content], { type: type === "Excel" ? "application/vnd.ms-excel;charset=utf-8" : "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -165,6 +165,7 @@ export function FinanceReportsHub({ data, storeId, notify, reportRequest = null 
   if (selectedReport && report) return <div className="finance-report-detail">
     <ReportsWorkspace
       selectedReport={selectedReport}
+      columnScope="finance"
       reports={financeReportNames}
       onSelectReport={selectReport}
       onBack={() => setSelectedReport("")}

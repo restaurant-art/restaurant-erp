@@ -142,6 +142,8 @@ import { calculatePosRoundOff } from "./lib/pos-round-off.js";
 import { resolvePosItemMrp } from "./lib/pos-item-mrp.js";
 import { ReportsWorkspace } from "./lib/reports-workspace.jsx";
 import { SalesReportsHub, salesReportNames } from "./lib/sales-reports-hub.jsx";
+import { categorySalesRows, reportCategoryResolver, salesBillLines } from "./lib/sales-by-category.js";
+import { quoteReportCsv, spreadsheetText } from "./lib/report-columns.js";
 import { ProductionReportsHub, productionReportNames } from "./lib/production-reports-hub.jsx";
 import { FinanceReportsHub } from "./lib/finance-reports-hub.jsx";
 import { financeReportNames } from "./lib/finance-reports.js";
@@ -2793,7 +2795,7 @@ function AuthenticatedApp() {
         ? <FlyerDesign key={activeStore.id} storeId={activeStore.id} brand={activeStore.name} canManage={canManage} notify={notify} />
         : <PromotionsWorkspace key={activeStore.id} storeId={activeStore.id} productItems={productItems} notify={notify} canManage={canManage} initialOffers={localOfferCatalog} canAccessOption={(option) => canAccessRoleOption("offers", option)} />,
   finance: <Finance notify={notify} canManageAll={canManage} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} storeId={activeStore.id} view={financeView} reportRequest={financeReportRequest} />,
-    reports: <Reports notify={notify} storeId={activeStore.id} salesLedger={scopedSalesLedger} voidLedger={scopedVoidLedger} refundLedger={scopedRefundLedger} lastShiftClose={lastShiftClose} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} activeView={reportView} onReportChange={setReportView} availableReports={reports.filter((name) => canAccessRoleOption("reports", name))} availableFinanceReports={hasFinanceReportAccess ? financeReportNames : []} availableProductionReports={availableProductionReports} onOpenFinanceReport={openFinanceReport} onOpenProductionReport={openProductionReport} />,
+    reports: <Reports notify={notify} storeId={activeStore.id} salesLedger={scopedSalesLedger} voidLedger={scopedVoidLedger} refundLedger={scopedRefundLedger} lastShiftClose={lastShiftClose} reportMenu={productItems} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} activeView={reportView} onReportChange={setReportView} availableReports={reports.filter((name) => canAccessRoleOption("reports", name))} availableFinanceReports={hasFinanceReportAccess ? financeReportNames : []} availableProductionReports={availableProductionReports} onOpenFinanceReport={openFinanceReport} onOpenProductionReport={openProductionReport} />,
     mis: <MISReports salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} notify={notify} />,
     admin: <Admin notify={notify} users={users} setUsers={setUsers} currentUser={currentUser} canManageAll={canManageAll} canManageStore={canManage} stores={stores} activeStore={activeStore} activeView={adminView} onViewChange={openAdminView} customRoles={customRoles} setCustomRoles={setCustomRoles} />,
     settings: <SettingsView notify={notify} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} billingPrinter={billingPrinter} setBillingPrinter={setBillingPrinter} canManage={canManage} canManageAll={canManageAll} activeStore={activeStore} setStores={setStores} menuItems={productItems} themeConfig={{ ...themeConfig, mode: dark ? "Dark" : "Light" }} setThemeConfig={setThemeConfig} setDark={setDark} displayScale={displayScale} setDisplayScale={(value) => setThemeConfig((current) => ({ ...current, displayScale: value }))} />,
@@ -13833,14 +13835,16 @@ function OffersPromotions({ notify, canManage, storeId, productItems = [], activ
   );
 }
 
-function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastShiftClose, comparisonStores = [], comparisonSalesLedger = [], activeView = "Sales reports", onReportChange, availableReports = reports, availableFinanceReports = [], availableProductionReports = [], onOpenFinanceReport, onOpenProductionReport }) {
+function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastShiftClose, reportMenu, comparisonStores = [], comparisonSalesLedger = [], activeView = "Sales reports", onReportChange, availableReports = reports, availableFinanceReports = [], availableProductionReports = [], onOpenFinanceReport, onOpenProductionReport }) {
   const [selectedReport, setSelectedReport] = useState(activeView);
   const [range, setRange] = useState("Today");
   const [reportSearch, setReportSearch] = useState("");
   const [reportDate, setReportDate] = useState("");
   const [reportFilter, setReportFilter] = useState("All");
+  const [reportCategory, setReportCategory] = useState("");
   const [reportInventory] = useBusinessState(`vestora-inventory-${storeId}`, () => stripUntouchedDefaultRecords(loadStoredArray(`vestora-inventory-${storeId}`), defaultInventoryItems, ["updatedAt"]));
   const [reportRecipes] = useBusinessState(`vestora-recipes-${storeId}`, () => stripUntouchedDefaultRecords(loadStoredArray(`vestora-recipes-${storeId}`), defaultRecipes, ["changedAt", "changedBy"]));
+  const categoryOf = useMemo(() => reportCategoryResolver(reportMenu, reportInventory), [reportMenu, reportInventory]);
 
   useEffect(() => {
     if (reports.includes(activeView) || activeView === "Sales reports") setSelectedReport(activeView);
@@ -13848,6 +13852,7 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
 
   useEffect(() => {
     setReportFilter("All");
+    setReportCategory("");
   }, [selectedReport]);
 
   function selectReport(name, message = true) {
@@ -13855,6 +13860,7 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     setSelectedReport(name);
     setReportSearch("");
     setReportFilter("All");
+    setReportCategory("");
     onReportChange?.(name);
     window.scrollTo(0, 0);
     if (message) notify(`${name} report opened`);
@@ -13886,16 +13892,26 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     .sort(([a], [b]) => b.localeCompare(a));
   const dateRows = dailySummaries
     .map(([date, summary]) => [reportDateLabel(date), summary.orders, formatMoney(summary.sales), formatMoney(summary.tax), formatMoney(summary.discount)]);
-  const dailySaleRows = rangeLedger.map((bill) => [
-    bill.id,
-    formatDateTime(bill.createdAt),
-    bill.orderType,
-    bill.itemCount || 0,
-    bill.payment,
-    formatMoney(Number(bill.tax || 0)),
-    formatMoney(Number(bill.discount || 0)),
-    formatMoney(Number(bill.total || 0)),
-  ]);
+  const dailyColumns = ["Bill", "Date and time", "Billing type", "Qty", "Payment", "GST", "Discount", "Total"];
+  const dailyDetails = selectedReport === "Daily sales" ? rangeLedger.map((bill) => ({ bill, lines: salesBillLines(bill) })) : [];
+  const dailyTaxRates = [...new Set([...inventoryGstRateOptions, ...dailyDetails.flatMap(({ lines }) => lines.map((line) => line.rate).filter((rate) => rate != null))])].sort((a, b) => a - b);
+  const optionalDailyColumns = ["Customer", "Subtotal", "Taxable value", ...dailyTaxRates.flatMap((rate) => [`Taxable @ ${rate}%`, `GST @ ${rate}%`])];
+  const dailyMoneyColumns = [5, 6, 7, ...optionalDailyColumns.slice(1).map((_, index) => index + 9)];
+  const dailySaleRows = dailyDetails.map(({ bill, lines }) => {
+    const byRate = new Map();
+    for (const { rate, sales, tax } of lines) {
+      if (rate == null) continue;
+      const amounts = byRate.get(rate) || { sales: 0, tax: 0 };
+      amounts.sales += sales;
+      amounts.tax += tax;
+      byRate.set(rate, amounts);
+    }
+    return [bill.id, formatDateTime(bill.createdAt), bill.orderType, bill.itemCount || 0, bill.payment,
+      Number(bill.tax || 0), Number(bill.discount || 0), Number(bill.total || 0),
+      bill.customerName || "Walk-in", lines.reduce((sum, line) => sum + line.gross, 0) / 100,
+      lines.reduce((sum, line) => sum + line.sales, 0) / 100,
+      ...dailyTaxRates.flatMap((rate) => ["sales", "tax"].map((field) => byRate.has(rate) ? byRate.get(rate)[field] / 100 : null))];
+  });
   const paymentRows = Object.entries(paymentGroups).map(([payment, summary]) => [payment, summary.orders, formatMoney(summary.sales), formatMoney(summary.tax)]);
   const orderRows = Object.entries(orderGroups).map(([type, summary]) => [type, summary.orders, summary.items, formatMoney(summary.sales)]);
   const hourlyRows = Object.entries(hourGroups).sort(([a], [b]) => a.localeCompare(b)).map(([hour, summary]) => [hour, summary.orders, formatMoney(summary.sales)]);
@@ -13907,6 +13923,7 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     item.qty,
     formatMoney(Number(item.price || 0)),
     formatMoney(Number(item.price || 0) * Number(item.qty || 0)),
+    categoryOf(item),
   ])).sort((a, b) => String(b[0]).localeCompare(String(a[0])));
   const inventoryValuationRows = reportInventory.map((item) => {
     const stock = Number(item.stock || 0);
@@ -13916,7 +13933,7 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
       item.sku || "-",
       item.hsnCode || "-",
       item.department || "-",
-      item.category || "-",
+      categoryOf(item),
       item.subcategory || "-",
       item.gstRate === null || item.gstRate === undefined || item.gstRate === "" ? "-" : `${Number(item.gstRate)}%`,
       stock.toLocaleString("en-IN", { maximumFractionDigits: 3 }),
@@ -13937,6 +13954,7 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     return {
       date: reportDateLabel(localDateKey(bill.createdAt)),
       item: item.name,
+      category: categoryOf(item),
       quantity,
       sales,
       recipeCost,
@@ -13952,6 +13970,7 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     row.quantity,
     row.recipeCost === null ? row.status : formatPreciseMoney(row.recipeCost),
     row.foodCost === null ? "-" : formatPreciseMoney(row.foodCost),
+    row.category,
   ]);
   const menuProfitRows = recipeSalesRows.map((row) => [
     row.date,
@@ -13961,11 +13980,17 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     row.foodCost === null ? row.status : formatPreciseMoney(row.foodCost),
     row.grossProfit === null ? "-" : formatPreciseMoney(row.grossProfit),
     row.margin === null ? "-" : `${row.margin.toFixed(1)}%`,
+    row.category,
   ]);
   const latestRows = rangeLedger.slice(0, 10).map((bill) => [bill.id, reportDateLabel(localDateKey(bill.createdAt)), bill.orderType, bill.payment, formatMoney(bill.total || 0)]);
   const closeVariance = Number(lastShiftClose?.variance || 0);
   const rangeVoids = voidLedger.filter((entry) => reportDate ? isOnReportDate(entry.createdAt, reportDate) : isInReportRange(entry.createdAt, range));
   const rangeRefunds = refundLedger.filter((entry) => reportDate ? isOnReportDate(entry.createdAt, reportDate) : isInReportRange(entry.createdAt, range));
+  const categoryMoneyColumns = [3, 4, 5, 6, 7];
+  const categoryRows = selectedReport === "Category-wise sales" ? categorySalesRows(rangeLedger, rangeRefunds, salesLedger, categoryOf)
+    .map((row) => [row.category, row.bills.size, row.lines, ...[row.gross, row.discount, row.refunds, row.tax, row.sales]
+      .map((value) => value / 100), [...row.quantities].sort(([a], [b]) => a.localeCompare(b))
+        .map(([unit, quantity]) => `${quantity.toLocaleString("en-IN", { maximumFractionDigits: 6 })} ${unit}`).join(" · ") || "—"]) : [];
   const refundTotal = rangeRefunds.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
   const refundTax = rangeRefunds.reduce((sum, entry) => {
     if (Number.isFinite(Number(entry.taxAmount))) return sum + Number(entry.taxAmount);
@@ -14041,13 +14066,14 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     lastShiftClose.varianceNote || "No variance note",
   ]] : [["No shift close saved yet", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]];
   const reportTables = {
-    "Daily sales": { columns: ["Bill", "Date and time", "Billing type", "Qty", "Payment", "GST", "Discount", "Total"], rows: dailySaleRows.length ? dailySaleRows : [["No POS sales found for this range", "", "", "", "", "", "", ""]] },
+    "Daily sales": { columns: [...dailyColumns, ...optionalDailyColumns], rows: dailySaleRows, defaultHidden: optionalDailyColumns, money: dailyMoneyColumns },
     "Hourly sales": { columns: ["Hour", "Bills", "Sales"], rows: hourlyRows },
     GST: { columns: ["Date", "Bills", "Taxable value", "GST", "Total"], rows: gstRows },
-    "Item-wise sales": { columns: ["Date", "Bill", "Billing type", "Item", "Qty sold", "Rate", "Sales"], rows: itemRows.length ? itemRows : [["No item sales found for this range", "", "", "", "", "", ""]] },
+    "Item-wise sales": { columns: ["Date", "Bill", "Billing type", "Item", "Qty sold", "Rate", "Sales", "Category"], rows: itemRows },
+    "Category-wise sales": { columns: ["Category", "Bills", "Item lines", "Gross sales incl. GST", "Discounts incl. GST", "Refunds incl. GST", "GST after refunds", "Net sales ex. GST", "Qty billed by unit"], rows: categoryRows, defaultHidden: ["Item lines"], money: categoryMoneyColumns },
     "Inventory valuation": { columns: ["Item", "SKU", "HSN code", "Department", "Category", "Sub-category", "GST", "Stock", "Unit", "Unit cost", "Stock value"], rows: inventoryValuationRows.length ? inventoryValuationRows : [["No inventory items found", "", "", "", "", "", "", "", "", "", ""]] },
-    "Food cost analysis": { columns: ["Date", "Item", "Qty sold", "Recipe cost / unit", "Total food cost"], rows: foodCostRows.length ? foodCostRows : [["No POS sales found for this range", "", "", "", ""]] },
-    "Menu profitability": { columns: ["Date", "Item", "Qty sold", "Net sales", "Food cost", "Gross profit", "Margin"], rows: menuProfitRows.length ? menuProfitRows : [["No POS sales found for this range", "", "", "", "", "", ""]] },
+    "Food cost analysis": { columns: ["Date", "Item", "Qty sold", "Recipe cost / unit", "Total food cost", "Category"], rows: foodCostRows },
+    "Menu profitability": { columns: ["Date", "Item", "Qty sold", "Net sales", "Food cost", "Gross profit", "Margin", "Category"], rows: menuProfitRows },
     Payroll: { columns: ["Period", "Bills handled", "Service sales"], rows: [["Current range", ledgerOrders, formatMoney(ledgerSales)]] },
     "Cashier closing": { columns: ["Closed at", "Opening", "Cash sales", "Expected cash", "Counted cash", "UPI sales", "Entered UPI", "Card sales", "Entered card", "Meal Pass", "Coupon", "Sodexo", "Gift voucher", "Cash/UPI/card variance", "Note"], rows: shiftCloseRows },
     "Void and refund": { columns: ["Type", "ID", "Time", "Bill / item", "Qty", "Payment / billing", "Amount", "Reason"], rows: voidRefundRows.length ? voidRefundRows : [["No void or refund entries", "", "", "", "", "", "", ""]] },
@@ -14060,6 +14086,7 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     "Hourly sales": { label: "Hour", column: 0 },
     GST: { label: "Report date", column: 0 },
     "Item-wise sales": { label: "Item", column: 3 },
+    "Category-wise sales": { label: "Category", column: 0 },
     "Inventory valuation": { label: "Item", column: 0 },
     "Food cost analysis": { label: "Item", column: 1 },
     "Menu profitability": { label: "Item", column: 1 },
@@ -14071,8 +14098,12 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
   };
   const currentFilter = reportFilterConfig[selectedReport] || { label: "Filter", column: 0 };
   const reportDataRows = activeTable.rows.filter((row) => !(String(row[0]).startsWith("No ") && row.slice(1).every((cell) => cell === "")));
-  const reportFilterOptions = Array.from(new Set(reportDataRows.map((row) => String(row[currentFilter.column] ?? "")).filter(Boolean))).sort((first, second) => first.localeCompare(second));
-  const filteredReportRows = reportDataRows
+  const categoryColumn = currentFilter.label === "Category" ? -1 : activeTable.columns.indexOf("Category");
+  const categoryOptions = categoryColumn < 0 ? undefined : [...new Set([reportCategory, ...reportDataRows.map((row) => row[categoryColumn])].filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const categoryFilteredRows = reportDataRows.filter((row) => categoryColumn < 0 || !reportCategory || row[categoryColumn] === reportCategory);
+  const reportFilterOptions = [...new Set([reportFilter === "All" ? "" : reportFilter,
+    ...categoryFilteredRows.map((row) => String(row[currentFilter.column] ?? ""))].filter(Boolean))].sort((first, second) => first.localeCompare(second));
+  const filteredReportRows = categoryFilteredRows
     .filter((row) => reportFilter === "All" || String(row[currentFilter.column] ?? "") === reportFilter)
     .filter((row) => row.join(" ").toLowerCase().includes(reportSearch.toLowerCase()));
   const visibleReportRows = filteredReportRows;
@@ -14082,10 +14113,12 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
   };
   const sumVisibleColumn = (column) => filteredReportRows.reduce((sum, row) => sum + displayAmountToNumber(row[column]), 0);
   const reportColumnTotals = {
-    "Daily sales": { 0: "TOTAL", 5: formatMoney(sumVisibleColumn(5)), 6: formatMoney(sumVisibleColumn(6)), 7: formatMoney(sumVisibleColumn(7)) },
+    "Daily sales": { 0: "TOTAL", ...Object.fromEntries(dailyMoneyColumns
+      .map((index) => [index, formatPreciseMoney(sumVisibleColumn(index))])) },
     "Hourly sales": { 0: "TOTAL", 1: sumVisibleColumn(1), 2: formatMoney(sumVisibleColumn(2)) },
     GST: { 0: "TOTAL", 1: sumVisibleColumn(1), 2: formatMoney(sumVisibleColumn(2)), 3: formatMoney(sumVisibleColumn(3)), 4: formatMoney(sumVisibleColumn(4)) },
     "Item-wise sales": { 3: "TOTAL", 4: sumVisibleColumn(4), 6: formatMoney(sumVisibleColumn(6)) },
+    "Category-wise sales": { 0: "TOTAL", 2: sumVisibleColumn(2), ...Object.fromEntries(categoryMoneyColumns.map((index) => [index, formatPreciseMoney(sumVisibleColumn(index))])) },
     "Inventory valuation": { 0: "TOTAL", 10: formatPreciseMoney(sumVisibleColumn(10)) },
     "Food cost analysis": { 1: "TOTAL", 2: sumVisibleColumn(2), 4: formatPreciseMoney(sumVisibleColumn(4)) },
     "Menu profitability": { 1: "TOTAL", 3: formatPreciseMoney(sumVisibleColumn(3)), 4: formatPreciseMoney(sumVisibleColumn(4)), 5: formatPreciseMoney(sumVisibleColumn(5)) },
@@ -14096,12 +14129,13 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     "Supplier outstanding": { 0: "TOTAL", 1: sumVisibleColumn(1), 2: formatMoney(sumVisibleColumn(2)) },
   }[selectedReport] || { 0: "TOTAL" };
 
-  function downloadReport(format) {
-    const rows = [activeTable.columns, ...visibleReportRows];
-    const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n");
+  function downloadReport(format, table) {
+    const excel = format === "Excel";
+    const csv = [table.columns, ...table.rows].map((row) => row.map((value) =>
+      excel ? spreadsheetText(value).replace(/[\t\r\n]/g, " ") : quoteReportCsv(value)).join(excel ? "\t" : ",")).join("\r\n");
     const extension = format === "Excel" ? "xls" : "csv";
     const type = format === "Excel" ? "application/vnd.ms-excel" : "text/csv";
-    const blob = new Blob([csv], { type });
+    const blob = new Blob(["\ufeff", csv], { type });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -14113,9 +14147,9 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     notify(`${selectedReport} ${format} downloaded`);
   }
 
-  function handleReportAction(action) {
+  function handleReportAction(action, table) {
     if (action === "CSV" || action === "Excel") {
-      downloadReport(action);
+      downloadReport(action, table);
       return;
     }
     if (action === "Print" || action === "PDF") {
@@ -14129,6 +14163,9 @@ function Reports({ notify, storeId, salesLedger, voidLedger, refundLedger, lastS
     onBack={() => selectReport("Sales reports", false)} backLabel="Back to sales reports"
     range={range} onRangeChange={setRange} reportDate={reportDate} onDateChange={setReportDate}
     search={reportSearch} onSearchChange={setReportSearch} filter={reportFilter} onFilterChange={setReportFilter}
+    category={reportCategory} categoryOptions={categoryOptions} onCategoryChange={(value) => { setReportCategory(value); setReportFilter("All"); }}
+    defaultHiddenColumns={activeTable.defaultHidden}
+    formatCell={(value, index) => value != null && activeTable.money?.includes(index) ? formatPreciseMoney(value) : value}
     filterLabel={currentFilter.label} filterOptions={reportFilterOptions} columns={activeTable.columns}
     rows={visibleReportRows} columnTotals={reportColumnTotals} onAction={handleReportAction} bills={salesLedger} refunds={refundLedger} />;
 }

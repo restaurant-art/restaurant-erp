@@ -6,6 +6,7 @@ export const productionReportCatalog = [
   ["Daily Production", "Batches made, output quantities, and production cost.", ClipboardList, "green"],
   ["Ingredient Consumption", "Actual ingredients used and their cost by batch.", Boxes, "blue"],
   ["Food Cost Report", "Estimated and posted serving costs, gross profit, and margin.", ChefHat, "violet"],
+  ["Serving category profitability", "Portions served, posted food costs, and gross food margin by menu category.", TrendingUp, "amber"],
   ["Batch profitability", "Actual sales, serving rates, cost, and margin by batch.", TrendingUp, "green"],
   ["Serving & component consumption", "Servings posted, ingredients used, and bills awaiting service.", ReceiptText, "violet"],
   ["Wastage Report", "Waste, other stock usage, transfers, and serving dispositions.", Trash2, "rose"],
