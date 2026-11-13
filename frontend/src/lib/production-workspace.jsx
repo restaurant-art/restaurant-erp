@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { loadKitchen, kitchenCommand, setupKitchen, loadKitchenReport, reliableKitchenCommand, pendingKitchenCommand, resumeKitchenCommand } from "./production-api.js";
+import { loadKitchen, kitchenCommand, setupKitchen, loadKitchenReport, loadBatchProfit, reliableKitchenCommand, pendingKitchenCommand, resumeKitchenCommand } from "./production-api.js";
 import "./production-workspace.css";
 import { isProductEnabled } from "./product-availability.js";
 import { newProductionRecipe, productionRecipePayload, loadProductionRecipeDraft, saveProductionRecipeDraft } from "./production-recipe-editor.js";
@@ -173,7 +173,8 @@ export function InventoryStockCount(props) {
   return <ProductionWorkspace {...props} activeView="Stock count" countContext="inventory" />;
 }
 
-export function ProductionWorkspace({ storeId, notify = () => {}, activeView = "Production", onViewChange, countContext = "production", salesLedger = [] }) {
+export function ProductionWorkspace({ storeId, notify = () => {}, activeView = "Production", onViewChange,
+  activeReport = "Production reports", onReportChange, canViewBatchProfit = false, countContext = "production", salesLedger = [] }) {
   const { data, error, reload } = useKitchen(storeId);
   const [tab, setTab] = useState(navMap[activeView] || activeView);
   const [busy, setBusy] = useState(false);
@@ -209,6 +210,7 @@ export function ProductionWorkspace({ storeId, notify = () => {}, activeView = "
   if (!data) return <section className="screen kitchen-workspace"><h2>Production & prepared stock</h2><p role="status">{error || "Loading the kitchen ledger…"}</p><button onClick={() => reload().catch(() => {})}>Retry</button></section>;
   if (!data.configured) return <section className="screen kitchen-workspace"><Card title="Set up the production ledger" subtitle="Choose the existing branch for this store. Setup preserves legacy data and starts with an opening reconciliation."><SetupBranch data={data} storeId={storeId} reload={reload} /></Card></section>;
   const can = (action) => data.capabilities.includes(countCommand(action));
+  const batchProfitOpen = canViewBatchProfit && activeReport === "Batch profitability";
   return <section className="screen kitchen-workspace" aria-busy={busy}>
     <header className="kp-heading"><div><span className="kp-eyebrow">{inventoryCount ? "INVENTORY" : "KITCHEN OPERATIONS"} · {data.branch}</span><h2>{inventoryCount ? "Inventory items" : "Production & prepared stock"}</h2><p>{inventoryCount ? "View Product Master items, edit stock quantities, or take a full stock count." : "Actual batch yields. Independent serving portions. One stock ledger."}</p></div><button className="kp-quiet" onClick={() => { reload().catch(() => {}); if (tab === "Reports") setReportRefresh((revision) => revision + 1); }}>Refresh</button></header>
     {!data.enabled && <div className="kp-banner">Opening reconciliation is in progress. Production posting and serving will start after activation. <button onClick={() => go("Setup")}>Review setup</button></div>}
@@ -225,7 +227,18 @@ export function ProductionWorkspace({ storeId, notify = () => {}, activeView = "
       {tab === "Service" && <ServiceEntry data={data} run={run} can={can} />}
       {tab === "Usage" && <UsageEntry data={data} run={run} can={can} />}
       {tab === "Stock count" && (inventoryCount ? <InventoryItemsBrowser data={data} run={run} can={can} storeId={storeId} /> : <ClosingEntry data={data} run={run} can={can} storeId={storeId} scope={countContext} />)}
-      {tab === "Reports" && <Reports data={data} storeId={storeId} salesLedger={salesLedger} reportRefresh={reportRefresh} />}
+      {tab === "Reports" && <>
+        {canViewBatchProfit && <div className="kp-tabs kp-report-tabs" role="group" aria-label="Production reports">
+          <button type="button" className={!batchProfitOpen ? "active" : ""} aria-pressed={!batchProfitOpen}
+            onClick={() => onReportChange?.("Production reports")}>Daily reports</button>
+          <button type="button" className={batchProfitOpen ? "active" : ""} aria-pressed={batchProfitOpen}
+            onClick={() => onReportChange?.("Batch profitability")}>Batch profitability</button>
+        </div>}
+        {batchProfitOpen
+          ? <BatchProfitReport storeId={storeId} reportRefresh={reportRefresh}
+              initialDay={data.batches.find((batch) => batch.status === "posted")?.date} />
+          : <Reports data={data} storeId={storeId} salesLedger={salesLedger} reportRefresh={reportRefresh} />}
+      </>}
       {tab === "Setup" && <Setup data={data} run={run} can={can} />}
     </fieldset>
     <Effects preview={preview} />
@@ -888,6 +901,88 @@ function PendingBilledServings({ orders, bills, day }) {
   </Card>;
 }
 
+const reportMoney = (value) => value == null ? "—" : rupees(value);
+const reportMargin = (value) => value == null ? "—" : `${fmt(value, 2)}%`;
+
+function BatchProfitReport({ storeId, reportRefresh, initialDay }) {
+  const [day, setDay] = useState(() => initialDay || today());
+  const [batches, setBatches] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    setBatches(null);
+    setError("");
+    if (day) loadBatchProfit(storeId, day).then(({ batches }) => {
+      if (active) setBatches(batches);
+    }).catch((error) => { if (active) setError(error.message); });
+    return () => { active = false; };
+  }, [storeId, day, reportRefresh]);
+  const selected = batches?.find((batch) => batch.id === selectedId) ?? batches?.[0];
+  const exportBatches = () => downloadKitchenCsv("batch-profit", day, batches.map((batch) => ({
+    "Production date": batch.production_date, "Batch reference": batch.reference, "Recipe": batch.recipe,
+    "Status": batch.status, "Production cost": batch.production_cost, "Net sales ex. GST": batch.net_sales,
+    "Cost used for profit": batch.food_cost, "Gross profit": batch.gross_profit, "Margin %": batch.margin_pct,
+  })));
+  return <>
+    <Card title="Batch profitability" subtitle="Review sales to date for the batches made on the selected production date. Net sales exclude GST and reflect recorded discounts and refunds.">
+      <div className="kp-toolbar">
+        <Field label="Production date"><input type="date" value={day} onChange={(event) => setDay(event.target.value)} /></Field>
+        {batches?.length > 0 && <button type="button" className="kp-quiet" onClick={exportBatches}>Export batches CSV</button>}
+      </div>
+      {error && <p className="kp-error" role="alert">{error}</p>}
+      {day && !batches && !error && <p role="status">Loading batch sales…</p>}
+      {batches && <Table columns={["Batch", "Status", "Production cost", "Net sales ex. GST", "Cost used for profit", "Gross profit", "Margin", ""]}
+        empty="No posted batches for this production date."
+        rows={batches.map((batch) => [<>{batch.reference}<small>{batch.recipe}</small></>, batch.status,
+          batch.production_cost == null ? "Cost pending" : reportMoney(batch.production_cost),
+          batch.sales_pending ? "Allocation pending" : reportMoney(batch.net_sales),
+          batch.cost_pending ? "Cost pending" : reportMoney(batch.food_cost),
+          reportMoney(batch.gross_profit), reportMargin(batch.margin_pct),
+          <button type="button" className="kp-quiet" aria-pressed={selected?.id === batch.id}
+            aria-label={`View ${batch.reference} breakdown`} onClick={() => setSelectedId(batch.id)}>View breakdown</button>])} />}
+      {batches?.length > 0 && <p className="kp-help">For a fully sold batch, gross profit uses the total production cost plus any extra serving costs. For a batch still in stock, it uses the posted cost of the portions sold.</p>}
+    </Card>
+    {selected && <Card title={`${selected.reference} · ${selected.recipe}`}>
+      <h4>Batch output</h4>
+      <Table columns={["Prepared item", "Made", "Sold", "Remaining", "Awaiting bill", "Other use", "Production cost", "Cost rate"]}
+        rows={selected.outputs.map((output) => {
+          const costUnit = ({ g: "kg", ml: "litre" })[output.unit] || output.unit;
+          const factor = costUnit === output.unit ? 1 : 1000;
+          return [output.name, ...["produced", "sold", "remaining", "awaiting_billing", "other_use"].map((key) => `${fmt(output[key], 6)} ${output.unit}`),
+            output.production_cost == null ? "Cost pending" : reportMoney(output.production_cost),
+            output.production_cost == null ? "—" : `${rupees(output.production_cost * factor / output.produced)} / ${costUnit}`];
+        })} />
+      <h4>Servings sold from this batch</h4>
+      <Table columns={["Menu item", "Portions from batch", "Avg. billed rate incl. GST", "Cost per portion", "Cost of sales", "Net sales ex. GST", "Gross food profit", "Margin"]}
+        empty="No saved POS sales with posted stock consumption for this batch."
+        rows={selected.servings.map((serving) => [serving.name, serving.portions == null ? "—" : fmt(serving.portions, 3),
+          <>{reportMoney(serving.average_rate)}{serving.net_rate != null && <small>{rupees(serving.net_rate)} net per portion</small>}</>,
+          reportMoney(serving.cost_per_portion),
+          serving.food_cost == null ? "Cost pending" : reportMoney(serving.food_cost),
+          serving.net_sales == null ? "Allocation pending" : reportMoney(serving.net_sales),
+          reportMoney(serving.gross_profit), reportMargin(serving.margin_pct)])} />
+      {selected.servings.length > 0 && <p className="kp-help">When a serving uses stock from several batches, its sales value is shared in proportion to each batch’s posted cost.</p>}
+    </Card>}
+  </>;
+}
+
+function downloadKitchenCsv(name, day, rows) {
+  const keys = Object.keys(rows[0] || {});
+  const cell = (value) => {
+    const text = typeof value === "object" && value != null ? JSON.stringify(value) : String(value ?? "");
+    const escaped = /^[=+@-]/.test(text) ? `'${text}` : text;
+    return `"${escaped.replaceAll('"', '""')}"`;
+  };
+  const csv = [keys, ...rows.map((row) => keys.map((key) => row[key]))].map((row) => row.map(cell).join(",")).join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `uvpro-${name}-${day}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function Reports({ data, storeId, salesLedger, reportRefresh }) {
   const [day, setDay] = useState(today()); const [result, setResult] = useState(null); const [error, setError] = useState("");
   useEffect(() => {
@@ -899,7 +994,7 @@ function Reports({ data, storeId, salesLedger, reportRefresh }) {
     }).catch((error) => { if (active) setError(error.message); });
     return () => { active = false; };
   }, [storeId, day, reportRefresh]);
-  const download = (name, rows) => { const keys = Object.keys(rows[0] || {}); const cell = (v) => { let s = typeof v === "object" ? JSON.stringify(v) : String(v ?? ""); if (/^[=+@-]/.test(s)) s = `'${s}`; return `"${s.replaceAll('"', '""')}"`; }; const blob = new Blob([[keys, ...rows.map((r) => keys.map((k) => r[k]))].map((r) => r.map(cell).join(",")).join("\n")], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `uvpro-${name}-${day}.csv`; a.click(); URL.revokeObjectURL(url); };
+  const download = (name, rows) => downloadKitchenCsv(name, day, rows);
   return <><div className="kp-toolbar"><Field label="Business date"><input type="date" value={day} onChange={(e) => setDay(e.target.value)} /></Field>{result && <><button className="kp-quiet" onClick={() => download("closing", result.closing)}>Export closing CSV</button><button className="kp-quiet" onClick={() => download("component-consumption", result.sales)}>Export servings CSV</button><button className="kp-quiet" onClick={() => download("production", result.batches)}>Export batches CSV</button><button className="kp-quiet" onClick={() => download("usage", result.usage)}>Export usage CSV</button></>}</div>{error && <p role="alert">{error}</p>}{result && <>
     <PendingBilledServings orders={data.orders} bills={salesLedger} day={day} />
     <KitchenCostProfitReport data={data} result={result} />

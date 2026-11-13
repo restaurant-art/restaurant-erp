@@ -19,6 +19,7 @@ async function request(path, options = {}) {
 export const loadKitchen = (storeId, order = "") => request(kitchenPath(storeId, order ? `?order=${encodeURIComponent(order)}` : ""));
 const checkoutStock = (storeId, order = "") => request(kitchenPath(storeId, `?view=checkout&order=${encodeURIComponent(order)}`));
 export const loadKitchenReport = (storeId, day, batch = "") => request(kitchenPath(storeId, `reports/?date=${encodeURIComponent(day)}${batch ? `&batch=${encodeURIComponent(batch)}` : ""}`));
+export const loadBatchProfit = (storeId, day) => request(kitchenPath(storeId, `reports/?view=batch-profit&date=${encodeURIComponent(day)}`));
 export const loadPostedSaleCosts = (storeId, references) => request(kitchenPath(storeId, "sale-costs/"), {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ references }),
 });

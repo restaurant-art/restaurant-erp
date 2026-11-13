@@ -1,11 +1,12 @@
 import React, { useState } from "react";
-import { ArrowUpRight, Boxes, ChefHat, ClipboardList, PackageCheck, Search, Trash2, X } from "lucide-react";
+import { ArrowUpRight, Boxes, ChefHat, ClipboardList, PackageCheck, Search, TrendingUp, Trash2, X } from "lucide-react";
 import "./production-reports-hub.css";
 
 export const productionReportCatalog = [
   ["Daily Production", "Production batches, quantities, status, and material cost.", ClipboardList, "green"],
   ["Ingredient Consumption", "Ingredients used across production and their total cost.", Boxes, "blue"],
   ["Food Cost Report", "Recipe cost, selling price, gross profit, and margin.", ChefHat, "violet"],
+  ["Batch profitability", "Production cost, actual POS rates, sales, and margins by batch.", TrendingUp, "green"],
   ["Wastage Report", "Recorded wastage, reasons, quantities, and approval status.", Trash2, "amber"],
   ["Finished Goods Stock", "Available finished goods, quantities, and production cost.", PackageCheck, "rose"],
 ];

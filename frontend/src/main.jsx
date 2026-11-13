@@ -2776,7 +2776,10 @@ function AuthenticatedApp() {
       : inventoryView === "stock-count"
       ? <InventoryStockCount key={`${activeStore.id}-inventory-stock-count`} storeId={activeStore.id} notify={notify} cloudStateReady={cloudStateReady} />
       : <Inventory key={activeStore.id} storeId={activeStore.id} store={activeStore} notify={notify} canManageAll={canManage} cloudStateReady={cloudStateReady} activeView={inventoryView} createProductRequest={inventoryCreateProductRequest} filterRequest={inventoryFilterRequest} onViewChange={openInventoryView} />}</BarcodeProvider>,
-    production: <ProductionWorkspace key={activeStore.id} storeId={activeStore.id} salesLedger={scopedSalesLedger} notify={notify} activeView={productionView} onViewChange={(view) => setProductionView(({ Production: "Planning", Stock: "Food Stock" })[view] || view)} />,
+    production: <ProductionWorkspace key={activeStore.id} storeId={activeStore.id} salesLedger={scopedSalesLedger} notify={notify} activeView={productionView}
+      activeReport={productionReportView} onReportChange={setProductionReportView}
+      canViewBatchProfit={canAccessRoleOption("production", "report:Batch profitability")}
+      onViewChange={(view) => setProductionView(({ Production: "Planning", Stock: "Food Stock" })[view] || view)} />,
     "item-stock": <ProductionWorkspace key={activeStore.id} storeId={activeStore.id} notify={notify} activeView="Stock" />,
     crm: <CRM notify={notify} canManageAll={canManage} storeId={activeStore.id} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} activeView={crmView} />,
     attendance: <AttendanceModule key={activeStore.id} notify={notify} activeStore={activeStore} stores={stores} users={users} canManualAttendance={canManualAttendance} canManage={canManage} canManageAll={canManageAll} activeView={attendanceView} onViewChange={setAttendanceView} onOpenAdmin={() => openAdminView("create")} />,

@@ -35,6 +35,7 @@ export const roleAccessSections = [
     { id: "report:Daily Production", label: "Daily Production", group: "Production reports" },
     { id: "report:Ingredient Consumption", label: "Ingredient Consumption", group: "Production reports" },
     { id: "report:Food Cost Report", label: "Food Cost Report", group: "Production reports" },
+    { id: "report:Batch profitability", label: "Batch profitability", group: "Production reports" },
     { id: "report:Wastage Report", label: "Wastage Report", group: "Production reports" },
     { id: "report:Finished Goods Stock", label: "Finished Goods Stock", group: "Production reports" },
   ] },

@@ -11,6 +11,7 @@ from rest_framework.response import Response
 
 from .models import Branch, SharedAppState
 from .production_access import CAPABILITIES, allowed_branches, require_access
+from .production_batch_sales import batch_sales_report
 from .production_cutover import review  # registers cutover commands
 from . import production_purchase  # registers the existing purchase bridge
 from .production_domain import fail, quantity
@@ -155,6 +156,8 @@ def reports(request, store_id):
         day = date.fromisoformat(request.query_params.get("date", timezone.localdate().isoformat()))
     except ValueError:
         fail("Choose a valid report date.")
+    if request.query_params.get("view") == "batch-profit":
+        return Response({"batches": batch_sales_report(site, day)})
     data = report(site, day, request.query_params.get("location"))
     if request.query_params.get("batch"):
         data["trace"] = trace(site, request.query_params["batch"])
