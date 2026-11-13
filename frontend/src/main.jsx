@@ -1491,6 +1491,7 @@ function AuthenticatedApp() {
   const [financeNavOpen, setFinanceNavOpen] = useState(false);
   const [financeView, setFinanceView] = useState(() => initialWorkspaceLocation.financeView || "Expenses");
   const [reportNavOpen, setReportNavOpen] = useState(() => initialWorkspaceLocation.active === "reports"
+    || (initialWorkspaceLocation.active === "production" && initialWorkspaceLocation.productionView === "Reports")
     || (initialWorkspaceLocation.active === "finance" && initialWorkspaceLocation.financeView === "Finance Reports"));
   const [reportView, setReportView] = useState(() => reports.includes(initialWorkspaceLocation.reportView) ? "Sales reports" : initialWorkspaceLocation.reportView || "Sales reports");
   const [financeReportRequest, setFinanceReportRequest] = useState(null);
@@ -1775,6 +1776,9 @@ function AuthenticatedApp() {
   };
   const allowedModuleIds = roleAccessMap[currentRoleLabel] || roleModuleAccess.Cashier;
   const hasFinanceReportAccess = canAccessRoleOption("finance", "Finance Reports");
+  const availableProductionReports = allowedModuleIds.includes("production")
+    ? productionReportNames.filter((report) => canAccessRoleOption("production", `report:${report}`))
+    : [];
   const visibleModules = modules.filter((module) => allowedModuleIds.includes(module.id) || (module.id === "reports" && hasFinanceReportAccess));
   const activeModuleAllowed = visibleModules.some((module) => module.id === active)
     && (active !== "reports" || allowedModuleIds.includes("reports"));
@@ -1891,6 +1895,7 @@ function AuthenticatedApp() {
   }
 
   function openProductionReport(report) {
+    setReportNavOpen(true);
     setProductionReportView(report);
     openProductionView("Reports");
   }
@@ -2777,8 +2782,7 @@ function AuthenticatedApp() {
       ? <InventoryStockCount key={`${activeStore.id}-inventory-stock-count`} storeId={activeStore.id} notify={notify} cloudStateReady={cloudStateReady} />
       : <Inventory key={activeStore.id} storeId={activeStore.id} store={activeStore} notify={notify} canManageAll={canManage} cloudStateReady={cloudStateReady} activeView={inventoryView} createProductRequest={inventoryCreateProductRequest} filterRequest={inventoryFilterRequest} onViewChange={openInventoryView} />}</BarcodeProvider>,
     production: <ProductionWorkspace key={activeStore.id} storeId={activeStore.id} salesLedger={scopedSalesLedger} notify={notify} activeView={productionView}
-      activeReport={productionReportView} onReportChange={setProductionReportView}
-      canViewBatchProfit={canAccessRoleOption("production", "report:Batch profitability")}
+      activeReport={productionReportView} onReportChange={openProductionReport} availableReports={availableProductionReports}
       onViewChange={(view) => setProductionView(({ Production: "Planning", Stock: "Food Stock" })[view] || view)} />,
     "item-stock": <ProductionWorkspace key={activeStore.id} storeId={activeStore.id} notify={notify} activeView="Stock" />,
     crm: <CRM notify={notify} canManageAll={canManage} storeId={activeStore.id} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} activeView={crmView} />,
@@ -2789,7 +2793,7 @@ function AuthenticatedApp() {
         ? <FlyerDesign key={activeStore.id} storeId={activeStore.id} brand={activeStore.name} canManage={canManage} notify={notify} />
         : <PromotionsWorkspace key={activeStore.id} storeId={activeStore.id} productItems={productItems} notify={notify} canManage={canManage} initialOffers={localOfferCatalog} canAccessOption={(option) => canAccessRoleOption("offers", option)} />,
   finance: <Finance notify={notify} canManageAll={canManage} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} storeId={activeStore.id} view={financeView} reportRequest={financeReportRequest} />,
-    reports: <Reports notify={notify} storeId={activeStore.id} salesLedger={scopedSalesLedger} voidLedger={scopedVoidLedger} refundLedger={scopedRefundLedger} lastShiftClose={lastShiftClose} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} activeView={reportView} onReportChange={setReportView} availableReports={reports.filter((name) => canAccessRoleOption("reports", name))} availableFinanceReports={hasFinanceReportAccess ? financeReportNames : []} availableProductionReports={productionReportNames.filter((report) => canAccessRoleOption("production", `report:${report}`))} onOpenFinanceReport={openFinanceReport} onOpenProductionReport={openProductionReport} />,
+    reports: <Reports notify={notify} storeId={activeStore.id} salesLedger={scopedSalesLedger} voidLedger={scopedVoidLedger} refundLedger={scopedRefundLedger} lastShiftClose={lastShiftClose} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} activeView={reportView} onReportChange={setReportView} availableReports={reports.filter((name) => canAccessRoleOption("reports", name))} availableFinanceReports={hasFinanceReportAccess ? financeReportNames : []} availableProductionReports={availableProductionReports} onOpenFinanceReport={openFinanceReport} onOpenProductionReport={openProductionReport} />,
     mis: <MISReports salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} notify={notify} />,
     admin: <Admin notify={notify} users={users} setUsers={setUsers} currentUser={currentUser} canManageAll={canManageAll} canManageStore={canManage} stores={stores} activeStore={activeStore} activeView={adminView} onViewChange={openAdminView} customRoles={customRoles} setCustomRoles={setCustomRoles} />,
     settings: <SettingsView notify={notify} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} billingPrinter={billingPrinter} setBillingPrinter={setBillingPrinter} canManage={canManage} canManageAll={canManageAll} activeStore={activeStore} setStores={setStores} menuItems={productItems} themeConfig={{ ...themeConfig, mode: dark ? "Dark" : "Light" }} setThemeConfig={setThemeConfig} setDark={setDark} displayScale={displayScale} setDisplayScale={(value) => setThemeConfig((current) => ({ ...current, displayScale: value }))} />,
@@ -2957,7 +2961,8 @@ function AuthenticatedApp() {
             }
             if (item.id === "reports") {
               const financeReportActive = activeModule === "finance" && financeView === "Finance Reports";
-              const reportsActive = activeModule === "reports" || financeReportActive;
+              const productionReportActive = activeModule === "production" && productionView === "Reports";
+              const reportsActive = activeModule === "reports" || financeReportActive || productionReportActive;
               return (
                 <div className="sidebar-admin-group" key={item.id}>
                   <button className={reportsActive ? "nav active" : "nav"} onClick={() => { if (!reportsActive) { if (allowedModuleIds.includes("reports")) openModule("reports"); else openFinanceView("Finance Reports"); } setReportNavOpen((open) => reportsActive ? !open : true); }} title={item.label} aria-expanded={sidebarOpen && reportNavOpen}>
@@ -2966,7 +2971,7 @@ function AuthenticatedApp() {
                   </button>
                   {sidebarOpen && reportNavOpen && <div className="sidebar-subnav report-sidebar-subnav">
                     {reports.some((name) => canAccessRoleOption("reports", name)) && <button className={activeModule === "reports" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openReportView("Sales reports")}><BadgeIndianRupee size={15} /> Sales reports</button>}
-                    {canAccessRoleOption("reports", "Production reports") && <button className={activeModule === "production" && productionView === "Reports" ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionReport("Production reports")}><DatabaseZap size={15} /> Production reports</button>}
+                    {allowedModuleIds.includes("production") && canAccessRoleOption("reports", "Production reports") && <button className={productionReportActive ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openProductionReport("Production reports")}><DatabaseZap size={15} /> Production reports</button>}
                     {hasFinanceReportAccess && <button className={financeReportActive ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => openFinanceView("Finance Reports")}><FileBarChart size={15} /> Finance reports</button>}
                   </div>}
                 </div>

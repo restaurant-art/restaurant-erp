@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowLeft } from "lucide-react";
 import { loadKitchen, kitchenCommand, setupKitchen, loadKitchenReport, loadBatchProfit, reliableKitchenCommand, pendingKitchenCommand, resumeKitchenCommand } from "./production-api.js";
+import { ProductionReportsHub } from "./production-reports-hub.jsx";
 import "./production-workspace.css";
 import { isProductEnabled } from "./product-availability.js";
 import { newProductionRecipe, productionRecipePayload, loadProductionRecipeDraft, saveProductionRecipeDraft } from "./production-recipe-editor.js";
@@ -174,7 +176,7 @@ export function InventoryStockCount(props) {
 }
 
 export function ProductionWorkspace({ storeId, notify = () => {}, activeView = "Production", onViewChange,
-  activeReport = "Production reports", onReportChange, canViewBatchProfit = false, countContext = "production", salesLedger = [] }) {
+  activeReport = "Production reports", onReportChange, availableReports = [], countContext = "production", salesLedger = [] }) {
   const { data, error, reload } = useKitchen(storeId);
   const [tab, setTab] = useState(navMap[activeView] || activeView);
   const [busy, setBusy] = useState(false);
@@ -206,11 +208,17 @@ export function ProductionWorkspace({ storeId, notify = () => {}, activeView = "
     } catch (err) { setMessage(err.message); onError?.(err); return null; }
     finally { flight.current = false; setBusy(false); }
   };
-  const go = (next) => { setTab(next); onViewChange?.(next); setPreview(null); setMessage(""); };
+  const go = (next) => {
+    setTab(next);
+    if (next === "Reports") onReportChange?.("Production reports");
+    else onViewChange?.(next);
+    setPreview(null);
+    setMessage("");
+  };
   if (!data) return <section className="screen kitchen-workspace"><h2>Production & prepared stock</h2><p role="status">{error || "Loading the kitchen ledger…"}</p><button onClick={() => reload().catch(() => {})}>Retry</button></section>;
   if (!data.configured) return <section className="screen kitchen-workspace"><Card title="Set up the production ledger" subtitle="Choose the existing branch for this store. Setup preserves legacy data and starts with an opening reconciliation."><SetupBranch data={data} storeId={storeId} reload={reload} /></Card></section>;
   const can = (action) => data.capabilities.includes(countCommand(action));
-  const batchProfitOpen = canViewBatchProfit && activeReport === "Batch profitability";
+  const selectedReport = availableReports.includes(activeReport) ? activeReport : null;
   return <section className="screen kitchen-workspace" aria-busy={busy}>
     <header className="kp-heading"><div><span className="kp-eyebrow">{inventoryCount ? "INVENTORY" : "KITCHEN OPERATIONS"} · {data.branch}</span><h2>{inventoryCount ? "Inventory items" : "Production & prepared stock"}</h2><p>{inventoryCount ? "View Product Master items, edit stock quantities, or take a full stock count." : "Actual batch yields. Independent serving portions. One stock ledger."}</p></div><button className="kp-quiet" onClick={() => { reload().catch(() => {}); if (tab === "Reports") setReportRefresh((revision) => revision + 1); }}>Refresh</button></header>
     {!data.enabled && <div className="kp-banner">Opening reconciliation is in progress. Production posting and serving will start after activation. <button onClick={() => go("Setup")}>Review setup</button></div>}
@@ -227,18 +235,18 @@ export function ProductionWorkspace({ storeId, notify = () => {}, activeView = "
       {tab === "Service" && <ServiceEntry data={data} run={run} can={can} />}
       {tab === "Usage" && <UsageEntry data={data} run={run} can={can} />}
       {tab === "Stock count" && (inventoryCount ? <InventoryItemsBrowser data={data} run={run} can={can} storeId={storeId} /> : <ClosingEntry data={data} run={run} can={can} storeId={storeId} scope={countContext} />)}
-      {tab === "Reports" && <>
-        {canViewBatchProfit && <div className="kp-tabs kp-report-tabs" role="group" aria-label="Production reports">
-          <button type="button" className={!batchProfitOpen ? "active" : ""} aria-pressed={!batchProfitOpen}
-            onClick={() => onReportChange?.("Production reports")}>Daily reports</button>
-          <button type="button" className={batchProfitOpen ? "active" : ""} aria-pressed={batchProfitOpen}
-            onClick={() => onReportChange?.("Batch profitability")}>Batch profitability</button>
-        </div>}
-        {batchProfitOpen
-          ? <BatchProfitReport storeId={storeId} reportRefresh={reportRefresh}
-              initialDay={data.batches.find((batch) => batch.status === "posted")?.date} />
-          : <Reports data={data} storeId={storeId} salesLedger={salesLedger} reportRefresh={reportRefresh} />}
-      </>}
+      {tab === "Reports" && (!selectedReport
+        ? <ProductionReportsHub availableReports={availableReports} onSelect={onReportChange} />
+        : <>
+          <button type="button" className="kp-quiet kp-report-back" onClick={() => onReportChange?.("Production reports")}>
+            <ArrowLeft size={16} aria-hidden="true" /> Back to production reports
+          </button>
+          {selectedReport === "Batch profitability"
+            ? <BatchProfitReport storeId={storeId} reportRefresh={reportRefresh}
+                initialDay={data.batches.find((batch) => batch.status === "posted")?.date} />
+            : <Reports key={selectedReport} name={selectedReport} data={data} storeId={storeId}
+                salesLedger={salesLedger} reportRefresh={reportRefresh} />}
+        </>)}
       {tab === "Setup" && <Setup data={data} run={run} can={can} />}
     </fieldset>
     <Effects preview={preview} />
@@ -826,7 +834,22 @@ function servedProfitByMenuItem(sales, unpricedLots) {
   return [...items.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function KitchenCostProfitReport({ data, result }) {
+function ProductionCostByItem({ batches }) {
+  return <>
+    <h4>Production cost by item</h4>
+    <Table columns={["Prepared item", "Made", "Batches", "Recorded production cost", "Average unit cost"]}
+      empty="No completed production batches for this date."
+      rows={productionCostByItem(batches).map((row) => {
+        const unit = row.unit === "g" ? "kg" : row.unit === "ml" ? "litre" : row.unit;
+        const factor = ["g", "ml"].includes(row.unit) ? 1000 : 1;
+        return [row.name, `${fmt(row.quantity)} ${row.unit}`, row.batches.size,
+          row.incomplete ? "Cost pending" : rupees(row.cost),
+          row.incomplete || !row.quantity ? "—" : `${rupees(row.cost / row.quantity * factor)} / ${unit}`];
+      })} />
+  </>;
+}
+
+function KitchenCostProfitReport({ data, result, day }) {
   const [selectedLocation, setLocation] = useState("");
   const location = selectedLocation || String((data.locations.find((entry) => entry.name === "Kitchen") || data.locations[0])?.id || "");
   const unpricedLots = new Set();
@@ -836,47 +859,32 @@ function KitchenCostProfitReport({ data, result }) {
       if (unpricedInputs || !(Number(output.cost) > 0)) unpricedLots.add(String(output.lot));
     }
   }
-  const production = productionCostByItem(result.batches);
-  const estimates = servingCostEstimates(data, location, unpricedLots);
-  const served = servedProfitByMenuItem(result.sales, unpricedLots);
-  const showMoney = (amount) => amount == null ? "—" : rupees(amount);
-  const margin = (profit, sales) => profit == null || !(sales > 0) ? "—" : `${fmt(profit / sales * 100, 1)}%`;
+  const estimates = servingCostEstimates(data, location, unpricedLots).map((row) => {
+    const profit = row.cost == null || row.netPrice == null ? null : row.netPrice - row.cost;
+    const portion = row.prepared ? row.portion || "—" : "Set up prepared serving";
+    return [row.name, portion, row.prepared && row.cost == null ? "Cost needed" : reportMoney(row.cost),
+      reportMoney(row.netPrice), reportMoney(profit), reportMargin(profit == null || !(row.netPrice > 0) ? null : profit / row.netPrice * 100)];
+  });
+  const served = servedProfitByMenuItem(result.sales, unpricedLots).map((row) => {
+    const profit = row.incomplete ? null : row.sales - row.cost;
+    return [row.name, fmt(row.quantity), row.incomplete ? "Cost pending" : rupees(row.cost),
+      reportMoney(row.incomplete || !row.quantity ? null : row.cost / row.quantity), rupees(row.sales), reportMoney(profit),
+      reportMargin(profit == null || !(row.sales > 0) ? null : profit / row.sales * 100)];
+  });
 
   return <>
-    <Card title="Production cost by item" subtitle="Posted output and its recorded batch cost for the selected business date.">
-      <Table columns={["Prepared item", "Made", "Batches", "Recorded production cost", "Average unit cost"]}
-        empty="No completed production batches for this date."
-        rows={production.map((row) => {
-          const unit = row.unit === "g" ? "kg" : row.unit === "ml" ? "litre" : row.unit;
-          const factor = ["g", "ml"].includes(row.unit) ? 1000 : 1;
-          return [row.name, `${fmt(row.quantity)} ${row.unit}`, row.batches.size,
-            <>{rupees(row.cost)}{row.incomplete && <small>Some costs are zero or missing</small>}</>,
-            row.incomplete || !row.quantity ? "—" : `${rupees(row.cost / row.quantity * factor)} / ${unit}`];
-        })} />
-    </Card>
-    <Card title="Estimated cost & profit per serving" subtitle="Uses current usable stock costs at the selected location and current menu prices before tax, discounts and refunds.">
-      <div className="kp-toolbar">
-        <Field label="Serving cost location"><Select value={location} onChange={setLocation} options={data.locations} /></Field>
-      </div>
-      <Table columns={["Menu item", "Portion", "Cost per serving", "Price ex. tax", "Gross food profit", "Margin"]}
-        empty="Save a prepared serving in Servings to see its estimated cost and profit."
-        rows={estimates.map((row) => {
-          const profit = row.cost == null || row.netPrice == null ? null : row.netPrice - row.cost;
-          const portion = row.prepared ? row.portion || "—" : "Set up prepared serving";
-          return [row.name, portion, row.prepared && row.cost == null ? "Cost needed" : showMoney(row.cost),
-            showMoney(row.netPrice), showMoney(profit), margin(profit, row.netPrice)];
-        })} />
-    </Card>
-    <Card title="Gross food profit by served item" subtitle="For the selected business date. Saved menu value excluding tax minus posted food cost. Discounts, refunds and operating expenses are excluded.">
-      <Table columns={["Menu item", "Served", "Food cost", "Cost per serving", "Menu value ex. tax", "Gross food profit", "Margin"]}
-        empty="No fulfilled servings for this date."
-        rows={served.map((row) => {
-          const profit = row.incomplete ? null : row.sales - row.cost;
-          return [row.name, fmt(row.quantity), <>{rupees(row.cost)}{row.incomplete && <small>Some costs are zero or missing</small>}</>,
-            showMoney(row.incomplete || !row.quantity ? null : row.cost / row.quantity),
-            rupees(row.sales), showMoney(profit), margin(profit, row.sales)];
-        })} />
-    </Card>
+    <h4>Estimated cost &amp; profit per serving</h4>
+    <p className="kp-help">Uses current usable stock costs and menu prices before tax, discounts and refunds.</p>
+    <div className="kp-toolbar">
+      <Field label="Serving cost location"><Select value={location} onChange={setLocation} options={data.locations} /></Field>
+    </div>
+    <ReportTable columns={["Menu item", "Portion", "Cost per serving", "Price ex. tax", "Gross food profit", "Margin"]}
+      empty="Save a prepared serving in Servings to see its estimated cost and profit."
+      rows={estimates} day={day} exportName="serving-cost-estimates" />
+    <h4>Gross food profit by served item</h4>
+    <p className="kp-help">Uses the saved menu value excluding tax and the posted food cost for the selected business date.</p>
+    <ReportTable columns={["Menu item", "Served", "Food cost", "Cost per serving", "Menu value ex. tax", "Gross food profit", "Margin"]}
+      empty="No fulfilled servings for this date." rows={served} day={day} exportName="served-food-cost" />
   </>;
 }
 
@@ -896,9 +904,11 @@ function PendingBilledServings({ orders, bills, day }) {
     }
   }
   if (!rows.length) return null;
-  return <Card title="POS bills awaiting kitchen service" subtitle="These bills are recorded in POS. Complete the served quantities in KDS to record consumption and food cost.">
+  return <>
+    <h4>POS bills awaiting kitchen service</h4>
+    <p className="kp-help">Complete the served quantities in KDS to record consumption and food cost.</p>
     <Table columns={["POS bill", "Menu item", "Portions awaiting service"]} rows={rows} />
-  </Card>;
+  </>;
 }
 
 const reportMoney = (value) => value == null ? "—" : rupees(value);
@@ -971,7 +981,7 @@ function downloadKitchenCsv(name, day, rows) {
   const keys = Object.keys(rows[0] || {});
   const cell = (value) => {
     const text = typeof value === "object" && value != null ? JSON.stringify(value) : String(value ?? "");
-    const escaped = /^[=+@-]/.test(text) ? `'${text}` : text;
+    const escaped = /^[=+@-]/.test(text) && !/^-?\d+(\.\d+)?$/.test(text) ? `'${text}` : text;
     return `"${escaped.replaceAll('"', '""')}"`;
   };
   const csv = [keys, ...rows.map((row) => keys.map((key) => row[key]))].map((row) => row.map(cell).join(",")).join("\n");
@@ -983,8 +993,109 @@ function downloadKitchenCsv(name, day, rows) {
   URL.revokeObjectURL(url);
 }
 
-function Reports({ data, storeId, salesLedger, reportRefresh }) {
-  const [day, setDay] = useState(today()); const [result, setResult] = useState(null); const [error, setError] = useState("");
+function ReportTable({ columns, rows, day, exportName, empty }) {
+  return <>
+    <Table columns={columns} rows={rows} empty={empty} />
+    {rows.length > 0 && <button type="button" className="kp-quiet" onClick={() => downloadKitchenCsv(
+      exportName, day, rows.map((row) => Object.fromEntries(columns.map((column, index) => [column, row[index]]))),
+    )}>Export CSV</button>}
+  </>;
+}
+
+function DailyProductionReport({ batches, day }) {
+  const statuses = { posted: "Completed", draft: "Draft", aborted: "Aborted" };
+  const rows = batches.map((batch) => [
+    batch.reference,
+    batch.recipe.name,
+    (batch.actual?.outputs || []).map((output) => `${output.name} · ${fmt(output.quantity, 6)} ${output.unit}`).join(", ") || "—",
+    statuses[batch.status] || batch.status,
+    batch.status === "draft" ? "—" : batchHasUnpricedInputs(batch) ? "Cost pending" : reportMoney(batch.actual?.total_cost),
+  ]);
+  return <>
+    <ReportTable columns={["Batch", "Recipe", "Actual output", "Status", "Batch cost"]} rows={rows}
+      day={day} exportName="production" empty="No batches for this date." />
+    <ProductionCostByItem batches={batches} />
+  </>;
+}
+
+function IngredientConsumptionReport({ batches, day }) {
+  const rows = batches.flatMap((batch) => {
+    const costs = new Map();
+    for (const allocation of batch.actual?.allocations || []) {
+      const item = costs.get(allocation.item) || { cost: 0, incomplete: false };
+      const cost = Number(allocation.cost || 0);
+      item.cost += cost;
+      item.incomplete ||= allocation.cost_incomplete ?? !(cost > 0);
+      costs.set(allocation.item, item);
+    }
+    return (batch.actual?.inputs || []).filter((input) => Number(input.quantity) > 0).map((input) => {
+      const cost = costs.get(input.item);
+      return [batch.reference, batch.recipe.name, input.name, `${fmt(input.quantity, 6)} ${input.unit}`,
+        cost && !cost.incomplete ? rupees(cost.cost) : "Cost pending"];
+    });
+  });
+  return <ReportTable columns={["Batch", "Recipe", "Ingredient", "Quantity used", "Posted cost"]} rows={rows}
+    day={day} exportName="ingredient-consumption" empty="No production ingredients used on this date." />;
+}
+
+function ServingConsumptionReport({ sales, orders, bills, day }) {
+  return <>
+    <PendingBilledServings orders={orders} bills={bills} day={day} />
+    <p className="kp-help">Food cost uses posted inventory costs and saved serving quantities. Food margin uses the saved menu price excluding tax.</p>
+    <ReportTable day={day} exportName="component-consumption"
+      empty="No kitchen service posted for this date. Use KDS to complete the portions already served."
+      columns={["Fulfillment", "Order / serving", "Qty", "Food cost", "Menu value ex. tax", "Food margin before discount", "Consumed allocations"]}
+      rows={sales.map((sale) => [sale.fulfillment, `${sale.order} / ${sale.menu} v${sale.recipe_version}`, fmt(sale.quantity),
+        sale.cost_incomplete ? "Cost pending" : rupees(sale.food_cost), rupees(sale.net_menu_value),
+        reportMoney(sale.food_margin_before_discount), sale.components.map((component) =>
+          `Item ${component.item} · ${fmt(component.quantity)} · lot ${component.lot} · movement ${component.movement}`).join(", ")])} />
+  </>;
+}
+
+function WastageReport({ usage, dispositions, day }) {
+  return <>
+    <h4>Waste, other usage &amp; transfers</h4>
+    <ReportTable columns={["Source", "Category", "Quantity", "Value", "Reason"]} day={day} exportName="usage"
+      rows={usage.map((row) => [row.transaction__source, row.category.replaceAll("_", " "), fmt(row.quantity), rupees(row.value), row.transaction__reason])} />
+    <h4>Served food dispositions</h4>
+    <ReportTable columns={["Source", "Outcome", "Reason"]} day={day} exportName="serving-dispositions"
+      rows={dispositions.map((row) => [row.source, row.result.outcome.replaceAll("_", " "), row.reason])} />
+  </>;
+}
+
+function FinishedGoodsReport({ closing, items, day }) {
+  const [finishedOnly, setFinishedOnly] = useState(true);
+  const finishedItems = new Set(items.filter((item) => item.kind === "prepared").map((item) => item.id));
+  const stock = finishedOnly ? closing.filter((row) => finishedItems.has(row.item)) : closing;
+  return <>
+    <div className="kp-toolbar">
+      <Field label="Stock items"><select value={finishedOnly ? "finished" : "all"} onChange={(event) => setFinishedOnly(event.target.value === "finished")}>
+        <option value="finished">Finished goods</option><option value="all">All stock items</option>
+      </select></Field>
+    </div>
+    <ReportTable columns={["Item", "Batch", "Location", "Unit", "Opening", "Receipts", "Issues", "Expected closing", "Closing value"]}
+      day={day} exportName="closing" empty="No matching stock records for this date."
+      rows={stock.map((row) => [row.name, row.reference, row.location, row.unit, fmt(row.opening, 6),
+        fmt(row.receipts, 6), fmt(row.issues, 6), fmt(row.closing, 6), rupees(row.closing_value)])} />
+    {stock.length > 0 && <details><summary>Movement categories</summary>
+      {stock.map((row) => <p key={row.balance}>{row.name} · {row.reference} · {row.location} · {Object.entries(row.categories).map(([category, quantity]) =>
+        `${category.replaceAll("_", " ")} ${fmt(quantity)} ${row.unit}`).join(" · ") || "No movement on this date"}</p>)}
+    </details>}
+  </>;
+}
+
+function StockCountReport({ counts, day }) {
+  const rows = counts.filter((count) => new Date(count.cutoff).toLocaleDateString("en-CA") === day).flatMap((count) =>
+    count.physical.map((physical) => [count.id, new Date(count.cutoff).toLocaleString(), physical.balance,
+      fmt(physical.expected_at_observation, 6), fmt(physical.quantity, 6), fmt(physical.variance, 6), count.adjustment_id || "Unposted"]));
+  return <ReportTable columns={["Count", "Cutoff", "Balance", "Expected at observation", "Physical", "Variance", "Adjustment"]}
+    day={day} exportName="stock-count" rows={rows} empty="No physical counts for this date." />;
+}
+
+function Reports({ name, data, storeId, salesLedger, reportRefresh }) {
+  const [day, setDay] = useState(today());
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
   useEffect(() => {
     let active = true;
     setResult(null);
@@ -994,15 +1105,21 @@ function Reports({ data, storeId, salesLedger, reportRefresh }) {
     }).catch((error) => { if (active) setError(error.message); });
     return () => { active = false; };
   }, [storeId, day, reportRefresh]);
-  const download = (name, rows) => downloadKitchenCsv(name, day, rows);
-  return <><div className="kp-toolbar"><Field label="Business date"><input type="date" value={day} onChange={(e) => setDay(e.target.value)} /></Field>{result && <><button className="kp-quiet" onClick={() => download("closing", result.closing)}>Export closing CSV</button><button className="kp-quiet" onClick={() => download("component-consumption", result.sales)}>Export servings CSV</button><button className="kp-quiet" onClick={() => download("production", result.batches)}>Export batches CSV</button><button className="kp-quiet" onClick={() => download("usage", result.usage)}>Export usage CSV</button></>}</div>{error && <p role="alert">{error}</p>}{result && <>
-    <PendingBilledServings orders={data.orders} bills={salesLedger} day={day} />
-    <KitchenCostProfitReport data={data} result={result} />
-    <Card title="Daily stock reconciliation" subtitle="Expected closing = opening + posted receipts − posted issues. Carry-forward keeps the original batch identity and value."><Table columns={["Item / batch", "Location", "Opening", "Receipts", "Issues", "Expected closing", "Value"]} rows={result.closing.map((r) => [`${r.name} / ${r.reference} (${r.unit})`, r.location, fmt(r.opening), fmt(r.receipts), fmt(r.issues), fmt(r.closing), rupees(r.closing_value)])} /><details><summary>Movement categories</summary>{result.closing.map((r) => <p key={r.balance}>{r.name}: {Object.entries(r.categories).map(([k, v]) => `${k.replaceAll("_", " ")} ${fmt(v)} ${r.unit}`).join(" · ")}</p>)}</details></Card>
-    <Card title="Serving & component consumption" subtitle="Food cost uses posted inventory costs and saved serving quantities. Margin uses the menu price excluding tax, before discounts, refunds and operating expenses."><Table empty="No kitchen service posted for this date. Use KDS to complete the portions already served." columns={["Fulfillment", "Order / serving", "Qty", "Food cost", "Menu value ex. tax", "Food margin before discount", "Consumed allocations"]} rows={result.sales.map((s) => [s.fulfillment, `${s.order} / ${s.menu} v${s.recipe_version}`, fmt(s.quantity), s.cost_incomplete ? "Cost pending" : rupees(s.food_cost), rupees(s.net_menu_value), s.food_margin_before_discount == null ? "—" : rupees(s.food_margin_before_discount), s.components.map((c) => `item ${c.item}: ${fmt(c.quantity)} · lot ${c.lot} · movement ${c.movement}`).join("; ")])} /></Card>
-    <Card title="Waste, other usage & transfers"><Table columns={["Source", "Category", "Quantity", "Value", "Reason"]} rows={result.usage.map((r) => [r.transaction__source, r.category, fmt(r.quantity), rupees(r.value), r.transaction__reason])} /><Table columns={["Consumed-food disposition", "Outcome", "Reason"]} rows={result.dispositions.map((r) => [r.source, r.result.outcome, r.reason])} /></Card>
-    <Card title="Expected versus physical closing"><Table columns={["Count", "Cutoff", "Balance", "Expected at observation", "Physical", "Variance", "Adjustment"]} rows={result.counts.flatMap((c) => c.physical.map((p) => [c.id, new Date(c.cutoff).toLocaleString(), p.balance, fmt(p.expected_at_observation), fmt(p.quantity), fmt(p.variance), c.adjustment_id || "Unposted"]))} /></Card>
-  </>}</>;
+  const content = result && {
+    "Daily Production": <DailyProductionReport batches={result.batches} day={day} />,
+    "Ingredient Consumption": <IngredientConsumptionReport batches={result.batches} day={day} />,
+    "Food Cost Report": <KitchenCostProfitReport data={data} result={result} day={day} />,
+    "Serving & component consumption": <ServingConsumptionReport sales={result.sales} orders={data.orders} bills={salesLedger} day={day} />,
+    "Wastage Report": <WastageReport usage={result.usage} dispositions={result.dispositions} day={day} />,
+    "Finished Goods Stock": <FinishedGoodsReport closing={result.closing} items={data.items} day={day} />,
+    "Stock count reconciliation": <StockCountReport counts={result.counts} day={day} />,
+  }[name];
+  return <Card title={name}>
+    <div className="kp-toolbar"><Field label="Business date"><input type="date" value={day} onChange={(event) => setDay(event.target.value)} /></Field></div>
+    {error && <p className="kp-error" role="alert">{error}</p>}
+    {day && !result && !error && <p role="status">Loading report…</p>}
+    {content}
+  </Card>;
 }
 
 function Setup({ data, run, can }) {

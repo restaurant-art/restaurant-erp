@@ -1,30 +1,21 @@
-import React, { useState } from "react";
-import { ArrowUpRight, Boxes, ChefHat, ClipboardList, PackageCheck, Search, TrendingUp, Trash2, X } from "lucide-react";
-import "./production-reports-hub.css";
+import React from "react";
+import { Boxes, ChefHat, ClipboardCheck, ClipboardList, PackageCheck, ReceiptText, TrendingUp, Trash2 } from "lucide-react";
+import { ReportDirectory } from "./report-directory.jsx";
 
 export const productionReportCatalog = [
-  ["Daily Production", "Production batches, quantities, status, and material cost.", ClipboardList, "green"],
-  ["Ingredient Consumption", "Ingredients used across production and their total cost.", Boxes, "blue"],
-  ["Food Cost Report", "Recipe cost, selling price, gross profit, and margin.", ChefHat, "violet"],
-  ["Batch profitability", "Production cost, actual POS rates, sales, and margins by batch.", TrendingUp, "green"],
-  ["Wastage Report", "Recorded wastage, reasons, quantities, and approval status.", Trash2, "amber"],
-  ["Finished Goods Stock", "Available finished goods, quantities, and production cost.", PackageCheck, "rose"],
+  ["Daily Production", "Batches made, output quantities, and production cost.", ClipboardList, "green"],
+  ["Ingredient Consumption", "Actual ingredients used and their cost by batch.", Boxes, "blue"],
+  ["Food Cost Report", "Estimated and posted serving costs, gross profit, and margin.", ChefHat, "violet"],
+  ["Batch profitability", "Actual sales, serving rates, cost, and margin by batch.", TrendingUp, "green"],
+  ["Serving & component consumption", "Servings posted, ingredients used, and bills awaiting service.", ReceiptText, "violet"],
+  ["Wastage Report", "Waste, other stock usage, transfers, and serving dispositions.", Trash2, "rose"],
+  ["Finished Goods Stock", "Opening stock, receipts, issues, and closing value.", PackageCheck, "blue"],
+  ["Stock count reconciliation", "Compare expected stock with physical counts and posted adjustments.", ClipboardCheck, "amber"],
 ];
 export const productionReportNames = productionReportCatalog.map(([name]) => name);
 
 export function ProductionReportsHub({ availableReports, onSelect }) {
-  const [query, setQuery] = useState("");
-  const visible = productionReportCatalog.filter(([name, description]) =>
-    availableReports.includes(name) && `${name} ${description}`.toLowerCase().includes(query.trim().toLowerCase()));
-  return <section className="production-reports-hub" aria-label="Production reports">
-    <header className="production-reports-hub-head">
-      <div><span>PRODUCTION CENTRE</span><h2>Production reports</h2><p>Choose a report to review production, ingredient use, food cost, wastage, or finished stock.</p></div>
-      <label className="production-reports-hub-search"><Search size={18} /><input aria-label="Find a production report" type="search" placeholder="Find a report…" value={query} onChange={(event) => setQuery(event.target.value)} />{query && <button type="button" aria-label="Clear production report search" onClick={() => setQuery("")}><X size={16} /></button>}</label>
-    </header>
-    <div className="production-reports-hub-subhead"><h3>All production reports</h3><span>{visible.length} of {availableReports.length} reports</span></div>
-    {visible.length ? <div className="production-reports-hub-grid">{visible.map(([name, description, Icon, tone]) =>
-      <button type="button" key={name} className={`production-reports-hub-card tone-${tone}`} onClick={() => onSelect(name)}>
-        <span className="production-reports-hub-icon"><Icon size={22} /></span><strong>{name}</strong><small>{description}</small><span className="production-reports-hub-open">View report <ArrowUpRight size={17} /></span>
-      </button>)}</div> : <div className="production-reports-hub-empty"><Search size={28} /><h3>No reports found</h3><p>{query ? "Try another report name." : "No production reports are available for your role."}</p>{query && <button type="button" onClick={() => setQuery("")}>Clear search</button>}</div>}
-  </section>;
+  const reports = productionReportCatalog.filter(([name]) => availableReports.includes(name));
+  return <ReportDirectory title="Production reports" description="Review production batches, serving costs, sales margins, and stock."
+    groups={[{ title: "Kitchen operations", reports }]} onSelect={onSelect} />;
 }

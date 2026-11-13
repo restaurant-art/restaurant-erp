@@ -37,6 +37,7 @@
 .kp-toolbar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:18px 0; }
 .kp-toolbar > select { max-width:350px; }
 .kp-toolbar .kp-field { margin:0; min-width:200px; }
+.kitchen-workspace .kp-report-back { display:inline-flex; align-items:center; gap:8px; margin-bottom:16px; }
 .kp-count-modes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:18px 0; }
 .kitchen-workspace .kp-count-modes button { display:flex; flex-direction:column; align-items:flex-start; gap:4px; text-align:left; padding:16px; color:#244939; background:#f8fbf9; border:1px solid #d3e2d8; }
 .kitchen-workspace .kp-count-modes button.selected { background:#e5f3eb; border-color:#185c40; box-shadow:0 0 0 2px #185c4020; }
