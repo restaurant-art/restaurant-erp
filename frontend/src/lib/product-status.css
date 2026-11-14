@@ -1,0 +1,7 @@
+.inventory-product-enabled,.inventory-product-disabled { display:inline-flex; align-items:center; width:auto; height:auto; min-width:0; padding:3px 8px; border-radius:999px; margin:4px 0 4px 6px; font-size:11px; font-weight:650; line-height:1.4; white-space:nowrap; }
+.inventory-product-enabled { background:#e5f3eb; color:#1c6348; }
+.inventory-product-disabled { background:#f0f1f3; color:#626975; }
+.inventory-row-actions .product-disable-action,.kitchen-workspace .product-disable-action { border:1px solid #d9dfe2; border-radius:7px; color:#58646a; background:#fff; padding:8px 12px; width:auto; height:auto; font-size:12px; }
+.inventory-row-actions .product-enable-action,.kitchen-workspace .product-enable-action { border:1px solid #1b7051; border-radius:7px; color:#fff; background:#1b7051; padding:8px 12px; width:auto; height:auto; font-size:12px; }
+.kp-inventory-list-tools .kp-field:nth-child(2) { flex:0 1 170px; }
+@media(max-width:700px) { .kp-inventory-list-tools { flex-wrap:wrap; } .kp-inventory-list-tools .kp-field { flex-basis:100%; max-width:none; } .kp-inventory-list-tools .kp-field:nth-child(2) { flex-basis:170px; } }

@@ -19,6 +19,29 @@ or role-management privileges. Only the migration task can read the RDS-managed
 master secret. Database connections fetch the current secret when connecting
 and verify the RDS TLS certificate using the trust store in the image.
 
+### Meta WhatsApp
+
+Use the CloudFormation **Meta WhatsApp** parameters to configure the web service.
+Store the Cloud API access token as the plain secret value in AWS Secrets Manager,
+then set `MetaWhatsAppSecretArn`, `MetaWhatsAppPhoneNumberId`, and
+`MetaWhatsAppApiVersion`. The phone number ID is the one shown for the sender
+in Meta. Update the web service after changing the secret so new tasks pick it up.
+
+- For staff OTP, set `MetaWhatsAppOtpTemplateName` and
+  `MetaWhatsAppOtpTemplateLanguage` to the approved Authentication template
+  and language on that account. Use the Copy Code button. Leave the template
+  name blank until it is active. In UVPRO, choose the staff recipient in
+  **Settings → OTP & access controls**.
+- For customer bills, set `MetaWhatsAppBillStoreId` to the branch ID shown in
+  **Stores and branches**. Set the receipt template name and language to match
+  Meta. The Utility template uses eight body variables in this order: store,
+  invoice reference, items, subtotal, discount, GST, total, and payment method.
+  In UVPRO, enable **Settings → WhatsApp bill receipts** and select the send
+  time. POS uses the mobile number saved on each bill.
+
+For customer delivery, use a production WhatsApp sender. A Meta test number is
+for registered test recipients.
+
 ## Before deployment
 
 You need:

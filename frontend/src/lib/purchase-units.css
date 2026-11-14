@@ -1,0 +1,159 @@
+.purchase-sheet-help { margin-top: -6px; color: #60736a; font-size: 12px; line-height: 1.5; }
+.purchase-sheet-scroll {
+  max-width: 100%;
+  max-height: 52vh;
+  min-height: 150px;
+  overflow: auto;
+  border: 1px solid #cbdad3;
+  border-radius: 6px;
+  background: #fff;
+  scrollbar-width: thin;
+  scrollbar-color: #92b3a4 #edf3ef;
+}
+.purchase-sheet-scroll:focus-visible { outline: 2px solid #3b8b75; outline-offset: 2px; }
+.purchase-sheet-scroll:has(.purchase-item-dropdown) { padding-bottom: 170px; }
+.purchase-sheet-scroll:has(.purchase-gst-options) { padding-bottom: 140px; }
+.purchase-entry-modal .purchase-entry-sheet {
+  width: 100%;
+  min-width: 1200px;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+  color: #10231f;
+}
+.purchase-entry-sheet .sheet-number { width: 30px; }
+.purchase-entry-sheet .sheet-item { width: auto; }
+.purchase-entry-sheet .sheet-unit { width: 156px; }
+.purchase-entry-sheet .sheet-quantity { width: 74px; }
+.purchase-entry-sheet .sheet-price { width: 92px; }
+.purchase-entry-sheet .sheet-discount { width: 62px; }
+.purchase-entry-sheet .sheet-tax { width: 68px; }
+.purchase-entry-sheet .sheet-net { width: 108px; }
+.purchase-entry-sheet .sheet-total { width: 112px; }
+.purchase-entry-sheet .sheet-action { width: 36px; }
+.purchase-entry-modal .purchase-entry-sheet th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: 9px 7px;
+  border-right: 1px solid #d8e4dd;
+  border-bottom: 1px solid #bccfc3;
+  background: #eaf2ed;
+  color: #36584b;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+.purchase-entry-modal .purchase-entry-sheet .purchase-line-card {
+  display: table-row;
+  position: static;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+}
+.purchase-entry-modal .purchase-entry-sheet td {
+  padding: 5px 6px;
+  height: 55px;
+  border-right: 1px solid #e1e9e4;
+  border-bottom: 1px solid #d8e4dd;
+  vertical-align: top;
+  white-space: normal;
+  background: inherit;
+}
+.purchase-entry-modal .purchase-entry-sheet tr:nth-child(even) { background: #f8fbf9; }
+.purchase-entry-modal .purchase-entry-sheet .purchase-line-card:focus-within { background: #f0f8f3; }
+.purchase-entry-modal .purchase-entry-sheet .purchase-sheet-number { padding-top: 15px; color: #688275; text-align: center; }
+.purchase-entry-sheet .purchase-item-picker,
+.purchase-entry-sheet .purchase-item-combobox,
+.purchase-entry-sheet .purchase-gst-select { display: block; min-width: 0; }
+.purchase-entry-sheet .purchase-item-combobox > label,
+.purchase-entry-sheet .purchase-gst-select > span,
+.purchase-entry-sheet .purchase-sheet-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.purchase-entry-modal .purchase-entry-sheet input,
+.purchase-entry-modal .purchase-entry-sheet select,
+.purchase-entry-modal .purchase-entry-sheet .purchase-gst-trigger {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  box-shadow: none;
+}
+.purchase-entry-modal .purchase-entry-sheet input:hover,
+.purchase-entry-modal .purchase-entry-sheet select:hover,
+.purchase-entry-modal .purchase-entry-sheet .purchase-gst-trigger:hover { border-color: #b9cfc2; background: #fff; }
+.purchase-entry-modal .purchase-entry-sheet input:focus,
+.purchase-entry-modal .purchase-entry-sheet select:focus,
+.purchase-entry-modal .purchase-entry-sheet .purchase-gst-trigger:focus { border-color: #267957; outline: 2px solid #267957; outline-offset: -1px; background: #fff; }
+.purchase-entry-sheet input[type="number"] { appearance: textfield; text-align: right; font-variant-numeric: tabular-nums; }
+.purchase-entry-sheet input::-webkit-inner-spin-button,
+.purchase-entry-sheet input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+.purchase-entry-sheet .purchase-pack-cell { display: grid; grid-template-columns: minmax(0, 1fr) 58px; gap: 3px; }
+.purchase-entry-modal .purchase-entry-sheet .purchase-pack-cell input,
+.purchase-entry-modal .purchase-entry-sheet .purchase-pack-cell select { border-color: #d2dfd7; background: #fff; }
+.purchase-entry-sheet .purchase-pack-unit { display: flex; align-items: center; color: #60736a; font-size: 11px; }
+.purchase-entry-sheet .purchase-pack-inline { display: grid; grid-template-columns: minmax(0, 1fr) 60px 20px; align-items: center; gap: 3px; margin-top: 3px; color: #60736a; font-size: 10px; }
+.purchase-entry-sheet .purchase-pack-inline input { border-color: #d2dfd7; background: #fff; }
+.purchase-entry-sheet .purchase-pack-inline > span:last-child { text-align: right; }
+.purchase-entry-sheet .purchase-pack-fixed { display: block; padding: 8px 4px; color: #7b8f84; }
+.purchase-entry-sheet small { display: block; color: #708078; font-size: 10px; font-weight: 400; line-height: 1.4; }
+.purchase-entry-sheet td > small { padding: 0 5px; text-align: right; }
+.purchase-entry-sheet .purchase-item-picker > small { margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 10px; }
+.purchase-entry-sheet .purchase-sheet-net,
+.purchase-entry-sheet .purchase-sheet-total { text-align: right; font-variant-numeric: tabular-nums; }
+.purchase-entry-sheet .purchase-sheet-net strong,
+.purchase-entry-sheet .purchase-sheet-total strong { display: block; padding: 8px 4px 2px; color: #17604b; font-size: 12px; white-space: nowrap; }
+.purchase-entry-sheet .purchase-sheet-total > small { color: #9a692c; font-size: 9px; }
+.purchase-entry-modal .purchase-entry-sheet .purchase-remove-line { width: 24px; height: 30px; margin-top: 1px; border: 0; background: transparent; color: #a85e49; }
+.purchase-entry-modal .purchase-entry-sheet .purchase-remove-line:hover { background: #ffebe5; }
+.purchase-entry-modal .purchase-entry-sheet .purchase-sheet-message td { height: auto; padding: 7px 12px; background: #fff7e8; color: #81581f; font-size: 12px; }
+.purchase-entry-sheet .purchase-item-dropdown { min-width: 240px; z-index: 20; }
+.purchase-entry-sheet .purchase-item-dropdown [role="listbox"] { max-height: 160px; }
+.purchase-entry-sheet .purchase-gst-options { max-height: 140px; z-index: 20; }
+.purchase-entry-sheet .purchase-new-item-fields { margin: 0; }
+.dark .purchase-sheet-scroll { background: #17332d; border-color: #365347; }
+.dark .purchase-entry-modal .purchase-entry-sheet { color: #dce9e5; }
+.dark .purchase-entry-modal .purchase-entry-sheet th { background: #214438; color: #c8e5d6; border-color: #365347; }
+.dark .purchase-entry-modal .purchase-entry-sheet td { border-color: #365347; }
+.dark .purchase-entry-modal .purchase-entry-sheet .purchase-line-card { background: #17332d; }
+.dark .purchase-entry-modal .purchase-entry-sheet tr:nth-child(even) { background: #193a30; }
+.dark .purchase-entry-modal .purchase-entry-sheet .purchase-line-card:focus-within { background: #21483a; }
+.dark .purchase-entry-sheet .purchase-pack-inline input { background: #17332d; color: #dce9e5; border-color: #365347; }
+.dark .purchase-entry-modal .purchase-entry-sheet input:hover,
+.dark .purchase-entry-modal .purchase-entry-sheet select:hover,
+.dark .purchase-entry-modal .purchase-entry-sheet input:focus,
+.dark .purchase-entry-modal .purchase-entry-sheet select:focus,
+.dark .purchase-entry-modal .purchase-entry-sheet .purchase-gst-trigger:focus,
+.dark .purchase-entry-modal .purchase-entry-sheet .purchase-pack-cell input,
+.dark .purchase-entry-modal .purchase-entry-sheet .purchase-pack-cell select { background: #17332d; color: #dce9e5; }
+.dark .purchase-entry-sheet .purchase-sheet-net strong,
+.dark .purchase-entry-sheet .purchase-sheet-total strong { color: #b5dec9; }
+.dark .purchase-sheet-help,
+.dark .purchase-entry-sheet small { color: #abc1b4; }
+@media (max-width: 700px) {
+  .purchase-sheet-scroll { max-height: 58vh; }
+  .purchase-entry-modal .purchase-entry-sheet input,
+  .purchase-entry-modal .purchase-entry-sheet select,
+  .purchase-entry-modal .purchase-entry-sheet .purchase-gst-trigger { height: 36px; }
+}

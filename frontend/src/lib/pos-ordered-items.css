@@ -1,0 +1,66 @@
+@media screen {
+  .pos-page .pos-catalog.erp-order-workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .pos-page .erp-order-workspace .toolbar { flex: 0 0 auto; grid-template-columns: minmax(0, 1fr); margin-bottom: 14px; }
+  .erp-ordered-items { display: flex; flex: 1 1 0; flex-direction: column; min-height: 0; border: 1px solid var(--pos-line); border-radius: 16px; background: var(--pos-surface); overflow: hidden; }
+  .erp-ordered-head { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 20px; border-bottom: 1px solid var(--pos-line); }
+  .erp-ordered-head > div { display: flex; align-items: center; gap: 10px; color: var(--pos-green); }
+  .erp-ordered-head h2 { margin: 0; color: var(--pos-ink); font-size: 16px; font-weight: 750; }
+  .erp-ordered-head > span { padding: 6px 10px; border-radius: 20px; background: var(--pos-soft); color: var(--pos-green); font-size: 11px; font-weight: 650; white-space: nowrap; }
+  .erp-ordered-scroll { flex: 1 1 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+  .erp-ordered-table { width: 100%; min-width: 640px; border-collapse: separate; border-spacing: 0; table-layout: auto; font-size: 13px; color: var(--pos-ink); }
+  .erp-ordered-table thead th { position: sticky; top: 0; z-index: 1; background: var(--pos-soft); color: var(--pos-muted); padding: 12px; border-bottom: 1px solid var(--pos-line); text-align: left; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+  .erp-ordered-table tbody td { padding: 13px 12px; border-bottom: 1px solid var(--pos-line); vertical-align: middle; background: transparent; }
+  .erp-ordered-table tbody tr:hover, .erp-ordered-table tbody tr.is-recent { background: var(--pos-soft); }
+  .erp-ordered-table .erp-line-number { width: 35px; color: var(--pos-muted); font-size: 11px; }
+  .erp-ordered-table .erp-product-name { width: 100%; min-width: 150px; }
+  .erp-product-name strong { display: block; font-weight: 650; overflow-wrap: anywhere; }
+  .erp-product-name small { display: block; margin-top: 4px; color: var(--pos-muted); font-size: 10px; overflow-wrap: anywhere; }
+  .erp-product-unit { color: var(--pos-muted); font-size: 12px; }
+  .erp-product-unit .unit-conversion-action { display: block; margin: 5px 0 0; white-space: nowrap; }
+  .erp-ordered-table .erp-number { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .erp-ordered-table .erp-quantity-heading { text-align: center; }
+  .erp-order-quantity { display: flex; align-items: center; justify-content: center; gap: 7px; white-space: nowrap; }
+  .erp-order-quantity span { min-width: 28px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .erp-order-quantity button, .erp-remove-item { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--pos-line); border-radius: 8px; background: var(--pos-surface); color: var(--pos-green); }
+  .erp-order-quantity button:disabled { opacity: .4; cursor: default; }
+  .erp-order-quantity button:not(:disabled):hover { border-color: var(--pos-green); background: var(--pos-soft); }
+  .erp-remove-item { color: #b44337; border-color: transparent; background: transparent; }
+  .erp-remove-item:hover { background: #fff0ed; border-color: #f2c2b9; }
+  .erp-line-amount strong { font-weight: 750; }
+  .erp-line-amount del { display: block; color: var(--pos-muted); font-size: 10px; }
+  .erp-unit-price del, .erp-unit-price strong, .erp-unit-price small { display: block; }
+  .erp-unit-price del, .erp-unit-price small { color: var(--pos-muted); font-size: 10px; }
+  .erp-unit-price strong { font-weight: 750; }
+  .erp-ordered-empty { flex: 1; display: flex; min-height: 180px; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 28px; text-align: center; color: var(--pos-muted); }
+  .erp-ordered-empty svg { color: var(--pos-green); }
+  .erp-ordered-empty strong { color: var(--pos-ink); font-size: 15px; }
+  .erp-ordered-empty span { font-size: 12px; }
+  .erp-ordered-footer { flex: 0 0 auto; padding: 11px 20px; border-top: 1px solid var(--pos-line); color: var(--pos-muted); font-size: 10px; }
+  .erp-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+
+@media screen and (max-width: 1180px) {
+  .erp-ordered-items { flex: 0 1 auto; }
+  .erp-ordered-scroll { flex: 0 1 auto; max-height: 520px; }
+}
+@media screen and (max-width: 760px) {
+  .erp-ordered-head { padding: 14px; }
+  .erp-ordered-head h2 { font-size: 15px; }
+  .erp-ordered-footer { padding-inline: 14px; }
+}
+@media print { .erp-ordered-items { display: none !important; } }
+
+/* ERP keeps items in the order table on screen, but retains receipt print data. */
+@media screen {
+  .pos-page .bill-panel.erp-bill-summary { align-self: start; height: auto; min-height: 0; }
+  .pos-page .bill-panel.erp-bill-summary .bill-paper { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+  .pos-page .bill-panel.erp-bill-summary .erp-receipt-items { display: none !important; }
+  .pos-page .bill-panel.erp-bill-summary .totals { margin-top: 12px; gap: 12px; font-size: 13px; }
+}
+
+/* Keep checkout visible while the bill details scroll on desktop. */
+@media screen and (min-width: 1181px) {
+  .pos-page .bill-panel.erp-bill-summary { align-self: stretch; height: 100%; }
+  .pos-page .bill-panel.erp-bill-summary .bill-paper { flex: 1 1 0; min-height: 0; }
+  .pos-page .bill-panel.erp-bill-summary .bill-actions { flex: 0 0 auto; }
+}

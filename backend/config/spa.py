@@ -22,4 +22,7 @@ def spa(request, path=""):
     if not candidate.is_file():
         raise Http404("Frontend build is not installed")
     content_type, _ = mimetypes.guess_type(candidate.name)
-    return FileResponse(candidate.open("rb"), content_type=content_type or "application/octet-stream")
+    response = FileResponse(candidate.open("rb"), content_type=content_type or "application/octet-stream")
+    if candidate.name in {"index.html", "service-worker.js"}:
+        response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response

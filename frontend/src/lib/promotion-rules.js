@@ -1,3 +1,5 @@
+import { applyCustomerPromotionLimits } from './promotion-customer-limits.js';
+
 export const promotionTemplates = [
   { id: 'percent', title: '% off items', group: 'Price & basket', icon: 'percent', description: 'Take a percentage off selected products.', example: '10% off your chosen items' },
   { id: 'flat', title: 'Flat amount off items', group: 'Price & basket', icon: 'money', description: 'Reduce the price of each eligible unit.', example: '₹20 off each eligible unit' },
@@ -94,6 +96,10 @@ export function validatePromotion(offer) {
   if (offer.template === 'product-discounts' && (!offer.productDiscounts?.length || !offer.productDiscounts.every(line => line.itemId && String(line.offerPrice ?? '').trim() !== '' && Number.isFinite(Number(line.offerPrice)) && Number(line.offerPrice) >= 0) || new Set(offer.productDiscounts.map(line => String(line.itemId))).size !== offer.productDiscounts.length)) return 'Choose products and enter a valid offer rate for each one.';
   if (offer.template === 'tier' && (!offer.tiers?.length || !offer.tiers.every(t => num(t.quantity) > 0 && Number.isFinite(num(t.quantity)) && num(t.percent) > 0 && num(t.percent) <= 100) || new Set(offer.tiers.map(t => num(t.quantity))).size !== offer.tiers.length)) return 'Enter unique positive quantity thresholds and discounts between 0 and 100.';
   if (offer.template === 'coupon' && !offer.couponCode?.trim()) return 'Enter a coupon code.';
+  if (offer.customerMaxUses !== '' && offer.customerMaxUses != null && (!Number.isSafeInteger(Number(offer.customerMaxUses)) || Number(offer.customerMaxUses) <= 0)) return 'Customer use limit must be a whole number greater than zero.';
+  const limits = Array.isArray(offer.customerQuantityLimits) ? offer.customerQuantityLimits : [];
+  if (limits.length && (!['percent', 'flat', 'product-discounts'].includes(offer.template) || (offer.template === 'percent' && offer.discountMode === 'amount'))) return 'Product quantity limits are available for item-price offers.';
+  if (limits.some((entry) => !entry.productId || !(Number(entry.quantity) > 0) || !Number.isFinite(Number(entry.quantity))) || new Set(limits.map((entry) => String(entry.productId))).size !== limits.length) return 'Enter a positive quantity for each customer product limit.';
   const scheduleError = promotionScheduleError(offer); if (scheduleError) return scheduleError;
   return '';
 }
@@ -105,11 +111,11 @@ export function evaluatePromotion(offer, cart, context = {}) {
   if (invalid) return fail(invalid);
   const availability = promotionAvailability(offer, context.now ?? new Date());
   if (availability) return fail(availability);
-  const lines = cart.map((item, i) => ({ i, id: String(item.id), qty: Math.max(0,num(item.qty)), price: Math.max(0,num(item.price)) }));
+  const lines = cart.map((item, i) => ({ i, id: String(item.id), masterId: String(item.productMasterId || item.id), qty: Math.max(0,num(item.qty)), price: Math.max(0,num(item.price)) }));
   if (lines.some(l => !Number.isFinite(l.qty) || !Number.isFinite(l.price))) return fail('Check the item quantities and prices.');
   const total = list => list.reduce((s,l) => s+l.qty*l.price,0);
   const quantity = list => list.reduce((s,l) => s+l.qty,0);
-  const selected = ids => lines.filter(l => ids.map(String).includes(l.id));
+  const selected = ids => lines.filter(l => ids.map(String).includes(l.id) || ids.map(String).includes(l.masterId));
   const eligible = offer.productIds.length ? selected(offer.productIds) : lines;
   const merchandiseTotal = offer.template === 'shipping' ? total(lines.filter(l => !offer.productIds.map(String).includes(l.id))) : total(lines);
   if (merchandiseTotal < num(offer.minimumOrder)) return fail(`Minimum merchandise spend is ₹${num(offer.minimumOrder)}.`);
@@ -157,17 +163,27 @@ export function evaluatePromotion(offer, cart, context = {}) {
     spread(limited,reward(limited));
   } else if (offer.template === 'product-discounts') {
     for (const line of lines) {
-      const rule = offer.productDiscounts.find(entry => String(entry.itemId) === line.id);
-      if (rule) discounts[line.i] = round(Math.max(0, line.price - Number(rule.offerPrice)) * line.qty);
+      const rule = offer.productDiscounts.find(entry => String(entry.itemId) === line.id || String(entry.itemId) === line.masterId);
+      if (rule) {
+        const conversion = line.id !== line.masterId && String(rule.itemId) === line.masterId ? Number(cart[line.i].unitConversion || 1) : 1;
+        discounts[line.i] = round(Math.max(0, line.price - Number(rule.offerPrice) * conversion) * line.qty);
+      }
     }
   } else if (offer.template === 'flat') {
-    eligible.forEach(l => { discounts[l.i] = round(Math.min(l.price,num(offer.discountValue))*l.qty); });
+    eligible.forEach(l => {
+      const ids = offer.productIds.map(String);
+      const conversion = l.id !== l.masterId && !ids.includes(l.id) && ids.includes(l.masterId) ? Number(cart[l.i].unitConversion || 1) : 1;
+      discounts[l.i] = round(Math.min(l.price,num(offer.discountValue)*conversion)*l.qty);
+    });
   } else {
     if (offer.template === 'custom' && quantity(eligible) < num(offer.minimumQuantity)) return fail(`Add at least ${offer.minimumQuantity} eligible units.`);
     const target = ['spend-percent','spend-flat'].includes(offer.template) ? lines : eligible;
     spread(target,reward(target));
   }
-  const lineDiscounts = discounts.map((v,i) => Math.max(0,Math.min(round(v),round(lines[i].qty*lines[i].price))));
+  let lineDiscounts = discounts.map((v,i) => Math.max(0,Math.min(round(v),round(lines[i].qty*lines[i].price))));
+  const limited = applyCustomerPromotionLimits(offer, cart, lineDiscounts, context);
+  if (limited.error) return fail(limited.error);
+  lineDiscounts = limited.lineDiscounts;
   const amount = round(lineDiscounts.reduce((s,v)=>s+v,0));
-  return amount ? { amount, lineDiscounts } : fail('The bill does not meet this offer’s conditions.');
+  return amount ? { amount, lineDiscounts, lineUsage: limited.lineUsage } : fail('The bill does not meet this offer’s conditions.');
 }

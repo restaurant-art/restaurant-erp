@@ -24,7 +24,7 @@ export const intelligenceSources=[
   {id:'leaves',label:'Leave approvals',category:'Attendance',prefix:'leave-requests',rights:[['attendance','Leave Approvals']]},
   {id:'recipes',label:'Recipes',category:'Production',prefix:'recipes',rights:[['production','Recipes']]},
   {id:'batches',label:'Production batches',category:'Production',prefix:'production-batches',rights:[['production','Batches']]},
-  {id:'wastage',label:'Production wastage',category:'Production',prefix:'production-wastage',rights:[['production','Wastage']]},
+  {id:'wastage',label:'Inventory wastage',category:'Inventory',prefix:'production-wastage',rights:[['inventory','wastage']]},
   {id:'foodStock',label:'Finished food stock',category:'Production',prop:'foodStock',rights:[['item-stock'],['production','Food Stock']]},
   {id:'users',label:'User accounts',category:'Administration',prop:'users',rights:[['admin','all']]},
   {id:'settings',label:'Business settings',category:'Setup',prefix:'active-settings',object:true,rights:[['settings']]},
@@ -151,7 +151,7 @@ export function analyzeBusiness(input={},options={}){
   const leaves=sources.leaves.filter(r=>r.status==='Pending');
   if(leaves.length)add('leave-queue','Attendance','Warning',`${leaves.length} leave requests await review`,'These requests are still marked Pending.','Review staffing coverage and each request before approving or rejecting.',['leaves'],[['Pending requests',leaves.length]],['Employee','From','To'],leaves.map(r=>[r.employeeName,r.from,r.to]),action('attendance','Leave Approvals','Review leave approvals'));
   const wastage=period(live(sources.wastage));
-  if(wastage.length)add('wastage','Production','Warning',`${wastage.length} production wastage records need review`,'Quantities may use different units and are deliberately not combined into one total.','Review reasons and repeated items; adjust batch planning after checking actual demand.',['wastage'],[['Wastage entries',wastage.length]],['Date','Item','Quantity','Reason'],wastage.map(r=>[r.date||r.createdAt,r.item||r.itemName||r.name,`${r.quantity??r.qty??''} ${r.unit||''}`,r.reason]),action('production','Wastage','Review wastage'));
+  if(wastage.length)add('wastage','Inventory','Warning',`${wastage.length} wastage records need review`,'Quantities may use different units and are deliberately not combined into one total.','Review reasons and repeated items; adjust stock handling after checking actual demand.',['wastage'],[['Wastage entries',wastage.length]],['Date','Item','Quantity','Reason'],wastage.map(r=>[r.date||r.createdAt,r.item||r.itemName||r.name,`${r.quantity??r.qty??''} ${r.unit||''}`,r.reason]),action('inventory','wastage','Review wastage'));
   const unfinished=live(sources.batches).filter(r=>!['completed','finished','closed'].includes(lower(r.status))&&ageDays(r.date||r.startedAt||r.createdAt,now)>=1);
   if(unfinished.length)add('production-open','Production','Warning',`${unfinished.length} production batches remain open from an earlier day`,'Only batches with a usable date and an unfinished status are included.','Confirm materials issued and output quantities before completing the batch.',['batches'],[['Open batches',unfinished.length]],['Batch','Recipe','Status'],unfinished.map(r=>[r.batchNumber||r.id,r.recipeName||r.name,r.status]),action('production','Batches','Review production batches'));
   const incompleteRecipes=live(sources.recipes).filter(r=>!Array.isArray(r.ingredients)||!r.ingredients.length||r.ingredients.some(i=>!i.name||!has(i.qty)||finite(i.qty)<=0));

@@ -1,0 +1,227 @@
+.completed-bill-modal {
+  width: min(520px, 100%);
+  max-height: min(90vh, 780px);
+  display: block;
+  overflow-y: auto;
+  padding: 0;
+  border: 1px solid #dbe7df;
+  border-radius: 22px;
+  box-shadow: 0 28px 90px #09261e45;
+}
+
+.completed-bill-head {
+  position: relative;
+  padding: 29px 28px 25px;
+  text-align: center;
+  background: linear-gradient(165deg, #f1f9f4, #ffffff 82%);
+  border-bottom: 1px solid #e4eee8;
+}
+
+.completed-bill-success-icon {
+  width: 56px;
+  height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 11px;
+  border-radius: 50%;
+  background: #d8efe1;
+  color: #176747;
+  box-shadow: 0 0 0 7px #eaf6ee;
+}
+
+.completed-bill-head p {
+  margin: 0 0 5px;
+  color: #267354;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.completed-bill-head h2 {
+  margin: 0;
+  color: #102c22;
+  font-size: clamp(24px, 4vw, 29px);
+  line-height: 1.2;
+  letter-spacing: -.035em;
+}
+
+.completed-bill-head > span:last-child {
+  display: block;
+  margin-top: 8px;
+  color: #60766b;
+  font-size: 13px;
+}
+
+.completed-bill-modal .completed-bill-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid #dce8e0;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #355548;
+  cursor: pointer;
+}
+
+.completed-bill-modal .completed-bill-close:hover:not(:disabled) {
+  background: #eaf4ed;
+}
+
+.completed-bill-content {
+  padding: 24px 28px 0;
+}
+
+.completed-bill-modal .payment-complete-banner {
+  display: block;
+  padding: 19px 22px;
+  border: 1px solid #bcdcca;
+  border-radius: 15px;
+  background: #eaf6ee;
+  color: #104e37;
+}
+
+.completed-bill-modal .payment-complete-banner > div {
+  display: grid;
+  gap: 3px;
+}
+
+.completed-bill-modal .payment-complete-banner span:first-child {
+  color: #4c6f5c;
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.completed-bill-modal .payment-complete-banner strong {
+  color: #125d40;
+  font-size: clamp(30px, 5vw, 37px);
+  line-height: 1.15;
+  letter-spacing: -.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+.completed-bill-modal .payment-complete-banner .completed-bill-payment-method {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  color: #28614a;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: normal;
+  line-height: 1.45;
+  text-transform: none;
+}
+
+.completed-bill-section-label {
+  margin: 23px 0 10px;
+  color: #536b5d;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.completed-bill-modal .completed-bill-summary {
+  gap: 0;
+  border: 1px solid #e0e9e2;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.completed-bill-modal .completed-bill-summary span {
+  gap: 5px;
+  padding: 13px 15px;
+  border-bottom: 1px solid #e8eee9;
+  background: #ffffff;
+}
+
+.completed-bill-modal .completed-bill-summary span:nth-child(odd) {
+  border-right: 1px solid #e8eee9;
+}
+
+.completed-bill-modal .completed-bill-summary small {
+  color: #6d7e72;
+  font-size: 10px;
+  letter-spacing: .06em;
+}
+
+.completed-bill-modal .completed-bill-summary strong {
+  color: #17382a;
+  font-size: 14px;
+  font-weight: 750;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.completed-bill-print-status {
+  margin: 14px 28px 0;
+  color: #355a46;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.completed-bill-modal .completed-bill-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 24px 28px 28px;
+}
+
+.completed-bill-modal .completed-bill-actions button {
+  min-height: 48px;
+  border-radius: 11px;
+  font-size: 14px;
+}
+
+.completed-bill-modal .completed-bill-actions .primary-table-action {
+  background: #123d2d;
+  border-color: #123d2d;
+  color: #ffffff;
+}
+
+.completed-bill-modal .completed-bill-actions .primary-table-action:hover:not(:disabled) {
+  background: #196246;
+}
+
+.dark .completed-bill-modal {
+  border-color: #314a3b;
+}
+
+.dark .completed-bill-head {
+  background: linear-gradient(165deg, #203b2d, #17211f 82%);
+  border-color: #30483b;
+}
+
+.dark .completed-bill-head h2,
+.dark .completed-bill-modal .completed-bill-summary strong {
+  color: #edf7ee;
+}
+
+.dark .completed-bill-head > span:last-child { color: #b5c8bc; }
+.dark .completed-bill-modal .payment-complete-banner { background: #1f4230; border-color: #3e6a4f; }
+.dark .completed-bill-modal .payment-complete-banner strong,
+.dark .completed-bill-modal .payment-complete-banner .completed-bill-payment-method { color: #d5f4de; }
+.dark .completed-bill-modal .completed-bill-summary { background: #1d2a27; border-color: #385043; }
+.dark .completed-bill-modal .completed-bill-summary span { background: #1d2a27; border-color: #385043; }
+
+@media (max-width: 600px) {
+  .completed-bill-modal { width: 100%; max-height: 92dvh; border-radius: 20px 20px 0 0; }
+  .completed-bill-head { padding: 27px 20px 21px; }
+  .completed-bill-content { padding: 20px 18px 0; }
+  .completed-bill-modal .completed-bill-summary span { padding: 12px 11px; }
+  .completed-bill-modal .completed-bill-actions { margin: 20px 18px 22px; }
+}
+
+@media print {
+  body.printing-completed-bill .completed-bill-modal { box-shadow: none !important; }
+}

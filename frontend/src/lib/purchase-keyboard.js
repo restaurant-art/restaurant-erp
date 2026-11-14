@@ -25,9 +25,16 @@ export function handlePurchaseArrowNavigation(event, { rowSelector = '.purchase-
   if (vertical && row && grid) {
     const rows = Array.from(event.currentTarget.querySelectorAll(rowSelector));
     const nextRow = rows[rows.indexOf(row) + direction];
-    const column = visibleFields(grid).indexOf(target);
     const nextGrid = nextRow?.matches(gridSelector) ? nextRow : nextRow?.querySelector(gridSelector);
-    if (nextGrid) next = visibleFields(nextGrid)[column];
+    const cell = target.closest("[data-purchase-column]");
+    const columnName = cell?.getAttribute?.("data-purchase-column");
+    if (nextGrid && columnName) {
+      // Pack-size cells have extra inputs; align by column, not by input count.
+      const nextCell = nextGrid.querySelector(`[data-purchase-column="${columnName}"]`);
+      if (nextCell) next = visibleFields(nextCell)[visibleFields(cell).indexOf(target)];
+    } else if (nextGrid) {
+      next = visibleFields(nextGrid)[visibleFields(grid).indexOf(target)];
+    }
   } else {
     const fields = visibleFields(event.currentTarget);
     const index = fields.indexOf(target);

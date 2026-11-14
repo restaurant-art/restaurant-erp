@@ -1,4 +1,5 @@
 import { calculatePurchaseInvoice } from "./purchase-invoice-adjustments.js";
+import { resolvePurchaseQuantity } from "./purchase-units.js";
 const round = (value, decimals = 3) => Number(Number(value).toFixed(decimals));
 const purchaseCostIncludingTax = (price, taxRate) => round(Number(price) * (1 + Number(taxRate || 0) / 100), 4);
 const purchasePriceBeforeTax = (cost, taxRate) => round(Number(cost) / (1 + Number(taxRate || 0) / 100), 4);
@@ -11,7 +12,11 @@ export function purchaseLineAmounts(line) {
   const subtotal = quantity * unitCost;
   const discount = round(subtotal * discountPercent / 100, 2);
   const taxableSubtotal = round(subtotal - discount, 2);
-  const netUnitCost = quantity > 0 ? round(taxableSubtotal / quantity, 4) : unitCost * (1 - discountPercent / 100);
+  // Keep the entered unit rate when there is no item discount. Invoice line
+  // totals settle to paise, but stock valuation can retain four decimals.
+  const netUnitCost = quantity > 0
+    ? discountPercent > 0 ? round(taxableSubtotal / quantity, 4) : unitCost
+    : unitCost * (1 - discountPercent / 100);
   const tax = taxableSubtotal * taxRate / 100;
   return {
     quantity,
@@ -41,7 +46,7 @@ export function purchaseTotals(lines = []) {
 export function reversePurchaseInventory(inventory = [], receiptTransactions = [], timestamp = new Date().toISOString()) {
   const quantities = new Map();
   for (const receipt of receiptTransactions) {
-    const quantity = Number(receipt.quantity);
+    const quantity = Number(receipt.stockQuantity ?? receipt.quantity);
     if (!receipt.itemId || !Number.isFinite(quantity) || quantity <= 0) throw new Error("Purchase stock cannot be reversed because a receipt line is incomplete.");
     quantities.set(receipt.itemId, (quantities.get(receipt.itemId) || 0) + quantity);
   }
@@ -50,7 +55,7 @@ export function reversePurchaseInventory(inventory = [], receiptTransactions = [
     if (!quantity) return item;
     if (Number(item.stock || 0) + 0.00001 < quantity) throw new Error(`Cannot edit or delete this bill: ${item.name} has only ${item.stock} ${item.unit} on hand, below the ${quantity} ${item.unit} received.`);
     quantities.delete(item.id);
-    return { ...item, stock: round(Number(item.stock || 0) - quantity), updatedAt: timestamp };
+    return { ...item, stock: round(Number(item.stock || 0) - quantity, 6), updatedAt: timestamp };
   });
   if (quantities.size) throw new Error("Cannot edit or delete this bill because a received inventory item no longer exists.");
   return next;
@@ -78,27 +83,26 @@ export function applyPurchaseToInventory(inventory = [], lines = [], options = {
 
     if (existingIndex >= 0) {
       const current = next[existingIndex];
-      if (String(current.unit || "").toLowerCase() !== String(line.unit || current.unit || "").toLowerCase()) {
-        throw new Error(`${current.name} must be purchased in ${current.unit}`);
-      }
+      const stock = resolvePurchaseQuantity(current, line);
+      const stockNetUnitCost = amounts.netUnitCost / stock.stockFactor;
       const previousStock = Number(current.stock || 0);
-      const newStock = previousStock + amounts.quantity;
-      const receivedCost = amounts.receivedUnitCost;
+      const newStock = previousStock + stock.stockQuantity;
+      const receivedCost = amounts.receivedUnitCost / stock.stockFactor;
       const weightedCost = newStock > 0
-        ? ((previousStock * Number(current.cost || 0)) + (amounts.quantity * receivedCost)) / newStock
+        ? ((previousStock * Number(current.cost || 0)) + (stock.stockQuantity * receivedCost)) / newStock
         : receivedCost;
       const previousPrice = current.price === null || current.price === undefined || current.price === ""
         ? purchasePriceBeforeTax(current.cost || 0, current.gstRate ?? amounts.taxRate)
         : Number(current.price);
       const weightedPrice = newStock > 0
-        ? ((previousStock * previousPrice) + (amounts.quantity * amounts.netUnitCost)) / newStock
-        : amounts.netUnitCost;
+        ? ((previousStock * previousPrice) + (stock.stockQuantity * stockNetUnitCost)) / newStock
+        : stockNetUnitCost;
       next[existingIndex] = {
         ...current,
-        stock: round(newStock),
+        stock: round(newStock, 6),
         price: round(weightedPrice, 4),
         cost: round(weightedCost, 4),
-        lastPurchaseCost: amounts.netUnitCost,
+        lastPurchaseCost: round(stockNetUnitCost, 4),
         updatedAt: timestamp,
         lastPurchaseAt: timestamp,
       };
@@ -113,7 +117,10 @@ export function applyPurchaseToInventory(inventory = [], lines = [], options = {
         department: current.department || line.department || "",
         category: current.category || line.category || "",
         subcategory: current.subcategory || line.subcategory || "",
-        unit: current.unit,
+        unit: line.unit || current.unit,
+        ...stock,
+        stockNetUnitCost,
+        stockReceivedUnitCost: receivedCost,
       });
       continue;
     }
@@ -130,7 +137,7 @@ export function applyPurchaseToInventory(inventory = [], lines = [], options = {
     if (!sku) throw new Error(`Enter an SKU for ${name}`);
     if (hsnCode && !/^(?:\d{4}|\d{6}|\d{8})$/.test(hsnCode)) throw new Error(`HSN code for ${name} must contain 4, 6, or 8 digits`);
     if (!Number.isFinite(gstRate) || gstRate < 0 || gstRate > 100) throw new Error(`GST rate for ${name} must be between 0 and 100 percent`);
-    if (line.gstRate !== null && line.gstRate !== undefined && String(line.gstRate).trim() !== "" && gstRate !== amounts.taxRate) {
+    if (options.invoiceAdjustments?.billType !== "urd" && line.gstRate !== null && line.gstRate !== undefined && String(line.gstRate).trim() !== "" && gstRate !== amounts.taxRate) {
       throw new Error(`GST rate and purchase tax for ${name} must match`);
     }
     if (!Number.isFinite(reorder) || reorder < 0) throw new Error(`Reorder level for ${name} must be zero or more`);

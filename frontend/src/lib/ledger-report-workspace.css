@@ -1,0 +1,100 @@
+.ledger-report-workspace { max-width: 1560px; margin: 0 auto; padding-bottom: 45px; }
+.ledger-report-print { display: grid; gap: 19px; }
+.ledger-report-breadcrumb { display: flex; align-items: center; gap: 10px; color: #718078; font-size: 13px; }
+.ledger-report-breadcrumb button { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: transparent; color: #187254; font-weight: 800; cursor: pointer; }
+.ledger-report-breadcrumb strong { padding: 5px 9px; border: 1px solid #c9d9d2; border-radius: 7px; color: #1f4a3c; background: #fff; }
+.ledger-report-titlebar { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.ledger-report-titlebar > div:first-child { display: flex; align-items: flex-start; gap: 12px; }
+.ledger-report-titlebar > div:first-child > button { display: grid; place-items: center; margin-top: 5px; padding: 7px; border: 0; border-radius: 9px; background: #ecf5f1; color: #176d52; cursor: pointer; }
+.ledger-report-titlebar span { color: #197454; font-size: 11px; font-weight: 800; letter-spacing: .14em; }
+.ledger-report-titlebar h2 { margin: 1px 0 3px; color: #102f27; font-size: clamp(30px, 3vw, 42px); letter-spacing: -.035em; }
+.ledger-report-titlebar p { margin: 0; color: #6a7c74; }
+.ledger-report-toolbar { display: flex; gap: 7px; }
+.ledger-auto-update { display: inline-flex; align-items: center; gap: 7px; padding: 10px 12px; border-radius: 9px; background: #e8f4ef; color: #176d52 !important; font-size: 12px !important; font-weight: 800 !important; letter-spacing: 0 !important; }
+.ledger-report-toolbar button { display: inline-flex; align-items: center; gap: 7px; padding: 10px 12px; border: 1px solid #d2dfda; border-radius: 9px; background: #fff; color: #244e40; font-weight: 700; cursor: pointer; }
+.ledger-report-toolbar button:disabled { opacity: .42; cursor: not-allowed; }
+
+.ledger-report-filters { padding: 17px; border: 1px solid #d9e4df; border-radius: 17px; background: #fff; box-shadow: 0 10px 28px rgba(17, 66, 50, .055); }
+.ledger-report-primary-filters { display: grid; grid-template-columns: minmax(260px, 1.25fr) repeat(2, minmax(210px, 1fr)); gap: 12px; }
+.ledger-report-primary-filters label { display: grid; gap: 6px; color: #456157; font-size: 12px; font-weight: 700; }
+.ledger-report-primary-filters label > span b { color: #b44232; }
+.ledger-report-primary-filters label > div { height: 47px; display: flex; align-items: center; gap: 9px; padding: 0 12px; border: 1px solid #ccd9d3; border-radius: 10px; color: #60736b; background: #fcfdfc; }
+.ledger-report-primary-filters select, .ledger-report-primary-filters input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: #15372c; font: inherit; }
+.ledger-account-field { position: relative; display: grid; align-content: start; gap: 6px; color: #456157; font-size: 12px; font-weight: 700; }
+.ledger-account-field > span b { color: #b44232; }
+.ledger-account-picker { position: relative; min-width: 0; }
+.ledger-account-input { height: 47px; display: flex; align-items: center; gap: 9px; padding: 0 8px 0 12px; border: 1px solid #ccd9d3; border-radius: 10px; color: #60736b; background: #fcfdfc; transition: border-color .18s ease, box-shadow .18s ease, background .18s ease; }
+.ledger-account-picker.is-open .ledger-account-input { border-color: #76aa98; background: #fff; box-shadow: 0 0 0 4px rgba(37, 126, 95, .11); }
+.ledger-account-input input { flex: 1; width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #15372c; font: inherit; font-weight: 600; }
+.ledger-account-input input::placeholder { color: #84958e; font-weight: 500; }
+.ledger-account-clear, .ledger-account-toggle { flex: 0 0 auto; width: 29px; height: 29px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 7px; background: transparent; color: #61776e; cursor: pointer; }
+.ledger-account-clear:hover, .ledger-account-toggle:hover { background: #eaf3ef; color: #176d52; }
+.ledger-account-toggle svg { transition: transform .18s ease; }
+.ledger-account-picker.is-open .ledger-account-toggle svg { transform: rotate(180deg); }
+.ledger-account-menu { position: absolute; z-index: 30; top: calc(100% + 8px); left: 0; right: 0; overflow: hidden; border: 1px solid #bcd5ca; border-radius: 13px; background: #fff; box-shadow: 0 18px 45px rgba(13, 55, 42, .2); }
+.ledger-account-menu-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 8px; border-bottom: 1px solid #e5ede9; background: #f5faf8; }
+.ledger-account-menu-head span { color: #547067; font-size: 10px; font-weight: 800; letter-spacing: .11em; }
+.ledger-account-menu-head strong { min-width: 23px; height: 23px; display: grid; place-items: center; padding: 0 6px; border-radius: 999px; background: #dff0e9; color: #176d52; font-size: 11px; }
+.ledger-account-options { max-height: 270px; overflow-y: auto; padding: 6px; }
+.ledger-account-options > button { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 11px; border: 0; border-radius: 8px; background: transparent; color: #294a3f; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.ledger-account-options > button span { min-width: 0; display: flex; align-items: center; gap: 9px; }
+.ledger-account-options > button.is-highlighted { background: #edf6f2; color: #126b4d; }
+.ledger-account-options > button.is-selected { color: #0f684a; font-weight: 800; }
+.ledger-account-empty { display: grid; justify-items: center; gap: 4px; padding: 25px 12px; color: #84948e; text-align: center; }
+.ledger-account-empty strong { color: #405b51; font-size: 13px; }
+.ledger-account-empty span { font-size: 11px; font-weight: 500; }
+.ledger-date-presets { display: flex; align-items: center; gap: 8px; margin: 12px 0; padding-bottom: 12px; border-bottom: 1px solid #e3ebe7; }
+.ledger-date-presets button { padding: 7px 11px; border: 0; border-radius: 7px; background: #edf6f2; color: #176d52; font-size: 12px; font-weight: 800; cursor: pointer; }
+.ledger-date-presets button:hover { background: #dcefe7; }
+.ledger-report-secondary-filters { display: grid; grid-template-columns: 1.1fr 1fr .9fr .85fr .85fr auto; gap: 9px; }
+.ledger-report-secondary-filters label { height: 43px; display: flex; align-items: center; gap: 8px; padding: 0 11px; border: 1px solid #d3ded9; border-radius: 9px; color: #63776e; background: #fcfdfc; }
+.ledger-report-secondary-filters input, .ledger-report-secondary-filters select { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #1b3d32; font: inherit; }
+.ledger-clear-filters { border: 0; background: transparent; color: #b14f31; font-weight: 800; cursor: pointer; white-space: nowrap; }
+
+.ledger-report-empty { min-height: 280px; display: grid; place-content: center; justify-items: center; gap: 10px; padding: 40px; border: 1px solid #dce5e1; border-radius: 17px; background: #fff; color: #77867f; text-align: center; }
+.ledger-report-empty > span { width: 78px; height: 68px; display: grid; place-items: center; border-radius: 18px; background: #eef5f2; color: #668078; }
+.ledger-report-empty h3 { margin: 5px 0 0; color: #314e44; font-size: 20px; }
+.ledger-report-empty p { max-width: 620px; margin: 0; line-height: 1.55; }
+
+.ledger-report-results { overflow: hidden; border: 1px solid #dce6e1; border-radius: 17px; background: #fff; box-shadow: 0 12px 32px rgba(17, 62, 47, .055); }
+.ledger-report-summary-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding: 20px 22px; border-bottom: 1px solid #e0e9e5; background: linear-gradient(115deg, #eff8f4, #fbfdfc); }
+.ledger-report-summary-head span { color: #197454; font-size: 10px; font-weight: 800; letter-spacing: .15em; }
+.ledger-report-summary-head h3 { margin: 3px 0; color: #12362b; font-size: 24px; }
+.ledger-report-summary-head p { margin: 0; color: #667a72; font-size: 13px; }
+.ledger-report-summary-head em { padding: 7px 10px; border-radius: 999px; background: #dfefe8; color: #176d52; font-size: 12px; font-style: normal; font-weight: 800; }
+.ledger-report-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: #e1e9e5; border-bottom: 1px solid #e1e9e5; }
+.ledger-report-metrics article { display: grid; gap: 6px; padding: 17px 20px; background: #fff; }
+.ledger-report-metrics span { color: #718179; font-size: 12px; }
+.ledger-report-metrics strong { color: #173d31; font-size: 20px; }
+.ledger-report-metrics strong.debit, .ledger-report-table .debit { color: #166d51; }
+.ledger-report-metrics strong.credit, .ledger-report-table .credit { color: #a6503d; }
+.ledger-report-table-wrap { overflow: auto; }
+.ledger-report-table { width: 100%; border-collapse: collapse; }
+.ledger-report-results > .report-column-controls { margin-top: 12px; }
+.ledger-report-table th { padding: 12px 14px; border-bottom: 1px solid #dce6e1; background: #f4f8f6; color: #536a61; font-size: 10px; letter-spacing: .08em; text-align: left; text-transform: uppercase; }
+.ledger-report-table td { padding: 13px 14px; border-bottom: 1px solid #edf1ef; color: #29463d; font-size: 13px; vertical-align: top; }
+.ledger-report-table tbody tr:hover { background: #fbfdfc; }
+.ledger-report-table td small { display: block; max-width: 360px; margin-top: 3px; color: #7b8883; line-height: 1.35; }
+.ledger-report-table .numeric { text-align: right; white-space: nowrap; }
+.ledger-type-pill { display: inline-flex; padding: 4px 7px; border-radius: 999px; background: #e9f3ef; color: #246b54; font-size: 11px; font-weight: 800; white-space: nowrap; }
+.ledger-report-table tfoot td { border: 0; background: #eff6f3; color: #173d31; font-weight: 800; }
+.ledger-no-records { display: grid; justify-items: center; gap: 6px; padding: 42px; color: #73817c; text-align: center; }
+.ledger-no-records h3, .ledger-no-records p { margin: 0; }
+
+@media (max-width: 1150px) {
+  .ledger-report-primary-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ledger-report-secondary-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  .ledger-report-titlebar { align-items: flex-start; flex-direction: column; }
+  .ledger-report-toolbar { width: 100%; flex-wrap: wrap; }
+  .ledger-report-primary-filters, .ledger-report-secondary-filters, .ledger-report-metrics { grid-template-columns: 1fr; }
+  .ledger-date-presets { align-items: stretch; flex-direction: column; }
+  .ledger-report-breadcrumb { flex-wrap: wrap; }
+}
+
+@media print {
+  .ledger-report-breadcrumb, .ledger-report-titlebar button, .ledger-report-toolbar, .ledger-report-filters { display: none !important; }
+  .ledger-report-results { border: 0; box-shadow: none; }
+}

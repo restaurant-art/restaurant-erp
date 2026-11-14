@@ -29,6 +29,10 @@ export function ecommercePriceError(value, mrp) {
   return optionalSellingPriceError(value, mrp, "E-commerce price");
 }
 
+export function cardPriceError(value, mrp) {
+  return optionalSellingPriceError(value, mrp, "Card price");
+}
+
 function optionalSellingPriceError(value, mrp, label) {
   if (value === null || value === undefined || String(value).trim() === "") return "";
   const price = Number(value);

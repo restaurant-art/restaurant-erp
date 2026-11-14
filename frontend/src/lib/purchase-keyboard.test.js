@@ -42,3 +42,19 @@ test("open suggestion lists and text editing retain their own arrow keys", () =>
   assert.equal(f.press(input, "ArrowLeft").defaultPrevented, undefined);
   assert.equal(f.press(input, "ArrowRight").defaultPrevented, undefined);
 });
+
+test("spreadsheet arrows keep the same column across loose and packed items", () => {
+  const f = fixture();
+  const source = f.rows[0].fields[1];
+  const destination = f.rows[1].fields[2];
+  const cell = { getAttribute: () => "quantity", querySelectorAll: () => [source] };
+  const nextCell = { querySelectorAll: () => [destination] };
+  source.closest = (selector) => selector === "[data-purchase-column]" ? cell : f.rows[0];
+  f.rows[1].querySelector = (selector) => selector === '[data-purchase-column="quantity"]' ? nextCell : null;
+  f.press(source, "ArrowDown");
+  assert.equal(f.focused(), destination);
+  // A loose item has no editable pack weight; stay put instead of entering cost.
+  cell.getAttribute = () => "pack";
+  f.press(source, "ArrowDown");
+  assert.equal(f.focused(), destination);
+});
