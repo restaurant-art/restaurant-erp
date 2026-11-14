@@ -396,7 +396,11 @@ def cloud_state(request):
             if not isinstance(value, dict) or not isinstance(value.get("enabled"), bool):
                 operation.delete()
                 return _json_error("WhatsApp receipt setting must be on or off")
-            value = {"enabled": value["enabled"]}
+            send_when = value.get("sendWhen", "checkout")
+            if send_when not in ("checkout", "print"):
+                operation.delete()
+                return _json_error("Choose when to send WhatsApp receipts")
+            value = {"enabled": value["enabled"], "sendWhen": send_when}
         if key.startswith("vestora-security-controls-"):
             if not isinstance(value, dict):
                 operation.delete()

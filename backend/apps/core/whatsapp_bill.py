@@ -67,6 +67,11 @@ def send_bill_receipt(request):
     preference = SharedAppState.objects.filter(state_key=f"vestora-whatsapp-receipts-{store_id}").first()
     if not preference or not isinstance(preference.state_value, dict) or preference.state_value.get("enabled") is not True:
         return Response({"error": "Automatic WhatsApp receipts are disabled for this store."}, status=403)
+    trigger = request.data.get("trigger", "checkout")
+    if trigger not in ("checkout", "print"):
+        return Response({"error": "Invalid WhatsApp receipt trigger."}, status=400)
+    if trigger != preference.state_value.get("sendWhen", "checkout"):
+        return Response({"error": "WhatsApp receipt timing changed. Refresh the POS to use the saved setting."}, status=409)
     config = _config(store_id)
     if not config:
         return Response({"error": "WhatsApp bill receipts are not configured for this store."}, status=503)

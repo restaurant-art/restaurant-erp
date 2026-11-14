@@ -93,25 +93,43 @@ for (const [name, selector] of [["printCompletedBill", ".completed-print-receipt
   });
 }
 
-test("printing a completed bill does not send a duplicate WhatsApp receipt", async () => {
-  const sends = [], dialogs = [];
+test("printing requests the saved bill only in WhatsApp print mode", async () => {
+  const sends = [];
+  let acknowledge;
+  const savedBill = new Promise((resolve) => { acknowledge = resolve; });
   const context = vm.createContext({
     training: false, billingPrinter: billing, billingPrintOptions,
     completedBill: { id: "bill-1", customerMobile: "9876543210" },
+    selectedHistoryBill: { id: "bill-2", customerMobile: "9876543210" },
+    pendingBillSaves: { current: new Map([["bill-1", savedBill]]) },
+    whatsappReceiptsInFlight: { current: new Set() },
+    whatsappReceiptTiming: "checkout",
+    storeId: "store-1",
     printReceiptWithQz: async () => {}, notify: () => {},
-    sendWhatsAppBillReceipt: async (bill) => sends.push(bill.id),
-    openSystemPrintDialog: (...args) => dialogs.push(args),
-    window: { confirm: () => true },
+    cloudApiRequest: async (_, request) => { sends.push(JSON.parse(request.body)); return {}; },
+    openSystemPrintDialog: () => {},
   });
-  vm.runInContext(extractFunction("printCompletedBill"), context);
+  for (const name of ["sendWhatsAppBillReceipt", "printCompletedBill", "reprintHistoryBill"]) {
+    vm.runInContext(extractFunction(name), context);
+  }
   await context.printCompletedBill();
   assert.deepEqual(sends, []);
-  context.billingPrinter = { ...billing, enabled: false };
+
+  context.whatsappReceiptTiming = "print";
+  await context.sendWhatsAppBillReceipt(context.completedBill, "checkout");
   await context.printCompletedBill();
-  assert.equal(sends.length, 0, "Opening the print dialog must not send");
+  await context.printCompletedBill();
+  assert.deepEqual(sends, [], "Meta must wait for the bill to be saved");
+  acknowledge();
+  await new Promise(setImmediate);
+  assert.deepEqual(sends, [{ storeId: "store-1", billId: "bill-1", trigger: "print" }]);
+
+  context.billingPrinter = { ...billing, enabled: false };
+  await context.reprintHistoryBill();
+  assert.equal(sends.at(-1).billId, "bill-2", "Browser printing sends the selected saved bill");
   context.training = true;
   await context.printCompletedBill();
-  assert.equal(sends.length, 0, "Training bills must never send a live receipt");
+  assert.equal(sends.length, 2, "Training bills never send a live receipt");
 });
 
 const setupStart = source.indexOf("function PrinterConnectionSetup(");

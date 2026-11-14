@@ -3,6 +3,7 @@ import os
 from io import BytesIO
 from unittest.mock import patch
 from urllib.error import HTTPError
+from uuid import uuid4
 
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -46,6 +47,30 @@ class WhatsAppBillTests(TestCase):
         self.assertEqual(send.call_count, 1)
         self.assertEqual(send.call_args.args[0]["to"], "919876543210")
         self.assertEqual(WhatsAppBillDispatch.objects.get().status, "accepted")
+
+    @patch.dict(os.environ, CONFIG)
+    @patch("apps.core.whatsapp_bill._send", return_value="wamid.print-test")
+    def test_print_timing_is_saved_and_sends_only_once_for_the_saved_bill(self, send):
+        preference = SharedAppState.objects.get(state_key="vestora-whatsapp-receipts-store-1")
+        response = self.client.put("/api/cloud/state/", {
+            "key": preference.state_key,
+            "value": {"enabled": True, "sendWhen": "print"},
+            "expectedUpdatedAt": preference.updated_at.isoformat(),
+            "mutationId": str(uuid4()),
+        }, format="json")
+        self.assertEqual(response.status_code, 200)
+        preference.refresh_from_db()
+        self.assertEqual(preference.state_value, {"enabled": True, "sendWhen": "print"})
+        checkout = self.client.post("/api/cloud/whatsapp-bill/", self.request, format="json")
+        self.assertEqual(checkout.status_code, 409)
+        send.assert_not_called()
+
+        print_request = {**self.request, "trigger": "print"}
+        first = self.client.post("/api/cloud/whatsapp-bill/", print_request, format="json")
+        reprint = self.client.post("/api/cloud/whatsapp-bill/", print_request, format="json")
+        self.assertEqual((first.status_code, reprint.status_code), (200, 200))
+        self.assertTrue(reprint.data["alreadySent"])
+        send.assert_called_once()
 
     @patch.dict(os.environ, CONFIG)
     @patch("apps.core.whatsapp_bill._send")

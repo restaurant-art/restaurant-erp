@@ -4774,6 +4774,11 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
   const [showSplitPayment, setShowSplitPayment] = useState(false);
   const [splitAmounts, setSplitAmounts] = useState({ Cash: "", UPI: "", Card: "", Credit: "" });
   const [completedBill, setCompletedBill] = useState(null);
+  const pendingBillSaves = useRef(new Map());
+  const whatsappReceiptsInFlight = useRef(new Set());
+  const whatsappReceiptTiming = whatsappReceiptSettings?.enabled === true
+    ? whatsappReceiptSettings.sendWhen ?? "checkout"
+    : null;
   const [savedForAutoPrint, setSavedForAutoPrint] = useState(null);
   const [autoPrintStatus, setAutoPrintStatus] = useState("");
   const [autoPrintBusy, setAutoPrintBusy] = useState(false);
@@ -4786,10 +4791,17 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
     setAutoPrintStatus("Payment confirmed. Sending bill to the billing printer…");
     autoPrintPineBill({ bill: completedBill, printer: billingPrinter,
       print: ({ beforeSend }) => printReceiptWithQz({ ...billingPrintOptions(billingPrinter), selector: ".completed-print-receipt", beforeSend }),
-    }).then(status => setAutoPrintStatus(status.startsWith("submitted") ? `Bill sent to ${billingPrinter.name}.` : "Automatic printing was already attempted. Check the printer before using Print bill again."))
+    }).then(status => {
+      if (status.startsWith("submitted")) {
+        setAutoPrintStatus(`Bill sent to ${billingPrinter.name}.`);
+        void sendWhatsAppBillReceipt(completedBill, "print");
+      } else {
+        setAutoPrintStatus("Automatic printing was already attempted. Check the printer before using Print bill again.");
+      }
+    })
       .catch(error => setAutoPrintStatus(error.message))
       .finally(() => setAutoPrintBusy(false));
-  }, [completedBill, savedForAutoPrint, billingPrinter, training]);
+  }, [completedBill, savedForAutoPrint, billingPrinter, training, whatsappReceiptTiming]);
   const [historyScope, setHistoryScope] = useState("All orders");
   const [historySearch, setHistorySearch] = useState("");
   const [selectedHistoryId, setSelectedHistoryId] = useState("");
@@ -5456,21 +5468,22 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
     } else {
       notify(`Paid ${formatMoney(bill.paidAmount || bill.total)} by ${bill.payment}`);
     }
-    const savedBill = onSale(bill);
+    const savedBill = Promise.resolve(onSale(bill));
+    pendingBillSaves.current.set(bill.id, savedBill);
     setSavedForAutoPrint(null);
     setAutoPrintStatus("");
     if (!training && bill.pineLabsTransport === "cloud" && billingPrinter.autoPrintUpi) {
       setAutoPrintBusy(true);
       setAutoPrintStatus("Saving the paid bill before printing…");
-      Promise.resolve(savedBill).then(() => setSavedForAutoPrint(bill.id))
+      savedBill.then(() => setSavedForAutoPrint(bill.id))
         .catch(() => { setAutoPrintBusy(false); setAutoPrintStatus("Payment confirmed. Bill synchronization must finish before automatic printing; use order history to print after sync."); });
     }
-    Promise.resolve(savedBill).catch((error) => notify(error.message || "Bill saved locally; cloud synchronization will retry."));
-    if (!training && whatsappReceiptSettings?.enabled === true) {
-      Promise.resolve(savedBill)
-        .then((persistedBill) => sendWhatsAppBillReceipt(persistedBill || bill))
-        .catch((error) => notify(error.message || "Bill saved, but could not sync it before sending the WhatsApp receipt."));
-    }
+    savedBill
+      .catch((error) => notify(error.message || "Bill saved locally; cloud synchronization will retry."))
+      .finally(() => {
+        if (pendingBillSaves.current.get(bill.id) === savedBill) pendingBillSaves.current.delete(bill.id);
+      });
+    void sendWhatsAppBillReceipt(bill, "checkout");
     if (!managedStock && unitStockRequirements.size) {
       setInventoryProducts((current) => applyUnitStockSale(current, cart));
     }
@@ -5555,20 +5568,28 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
     completeCheckout("Split", payments);
   }
 
-  async function sendWhatsAppBillReceipt(bill) {
-    if (training || !bill) return;
+  async function sendWhatsAppBillReceipt(bill, trigger) {
+    if (training || !bill?.id || bill.training || whatsappReceiptTiming !== trigger) return;
     if (!bill.customerMobile) {
       notify("WhatsApp receipt skipped: no customer mobile on this bill.");
       return;
     }
+    const inFlight = whatsappReceiptsInFlight.current;
+    if (inFlight.has(bill.id)) return;
+    inFlight.add(bill.id);
     try {
+      const save = pendingBillSaves.current.get(bill.id);
+      if (save) await save;
       // The server formats the receipt from the saved bill and uses its customer number.
       const result = await cloudApiRequest("whatsapp-bill", {
-        method: "POST", body: JSON.stringify({ storeId: String(storeId), billId: bill.id }),
+        method: "POST",
+        body: JSON.stringify({ storeId: String(storeId), billId: bill.id, trigger }),
       });
-      notify(result.alreadySent ? "WhatsApp receipt was already sent to Meta." : "WhatsApp receipt accepted by Meta.");
+      if (!result.alreadySent) notify("WhatsApp receipt accepted by Meta.");
     } catch (error) {
       notify(error.message || "Could not send the WhatsApp receipt. Check the connection and retry.");
+    } finally {
+      inFlight.delete(bill.id);
     }
   }
 
@@ -5581,9 +5602,10 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
       } catch (error) {
         openSystemPrintDialog("printing-completed-bill", `Direct printer unavailable; opening system print dialog (${error?.message || "check QZ Tray"})`);
       }
-      return;
+    } else {
+      openSystemPrintDialog("printing-completed-bill", "Opening print preview");
     }
-    openSystemPrintDialog("printing-completed-bill", "Opening print preview");
+    void sendWhatsAppBillReceipt(completedBill, "print");
   }
 
   async function reprintHistoryBill() {
@@ -5595,9 +5617,10 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
       } catch (error) {
         openSystemPrintDialog("printing-history-bill", `Direct printer unavailable; opening system print dialog (${error?.message || "check QZ Tray"})`);
       }
-      return;
+    } else {
+      openSystemPrintDialog("printing-history-bill", `Reprinting ${selectedHistoryBill.orderNumber || selectedHistoryBill.id}`);
     }
-    openSystemPrintDialog("printing-history-bill", `Reprinting ${selectedHistoryBill.orderNumber || selectedHistoryBill.id}`);
+    void sendWhatsAppBillReceipt(selectedHistoryBill, "print");
   }
 
   async function confirmCloseShift(entry) {
@@ -16944,18 +16967,31 @@ function OnlineOrderingIntegrationSettings({ activeStore, canManage, notify, men
 function WhatsAppReceiptSettings({ activeStore, canManage, notify, onBack }) {
   const [settings, setSettings] = useBusinessState(`vestora-whatsapp-receipts-${activeStore?.id || ""}`, () => ({ enabled: false }));
   const [enabled, setEnabled] = useState(settings?.enabled === true);
-  useEffect(() => setEnabled(settings?.enabled === true), [settings]);
+  const [sendWhen, setSendWhen] = useState(settings?.sendWhen ?? "checkout");
+  useEffect(() => {
+    setEnabled(settings?.enabled === true);
+    setSendWhen(settings?.sendWhen ?? "checkout");
+  }, [settings]);
   return <section className="screen settings-detail-screen otp-access-screen">
     <button className="settings-back-button" type="button" onClick={onBack}><PanelLeftClose size={17} /> Back to settings</button>
     <div className="panel settings-detail-panel otp-access-panel">
-      <header className="otp-access-heading"><span className="otp-access-icon"><Bell size={22} /></span><div><span>Billing / customer messages</span><h2>WhatsApp bill receipts</h2><p>Send a WhatsApp receipt to the selected customer after a live sale is completed.</p></div></header>
+      <header className="otp-access-heading"><span className="otp-access-icon"><Bell size={22} /></span><div><span>Billing / customer messages</span><h2>WhatsApp bill receipts</h2><p>Choose when the customer receives their bill on WhatsApp.</p></div></header>
       {!canManage && <p className="otp-access-readonly">Only a restaurant administrator can change this setting.</p>}
-      <div className="otp-access-cards"><article className="otp-access-card">
-        <div className="otp-access-card-heading"><span className="otp-access-card-icon"><ReceiptText size={17} /></span><div><h3>Automatic bill message</h3><p>Send once after payment is completed. Reprinting a bill does not send another message.</p></div></div>
+      <div className="whatsapp-receipt-controls"><article className="otp-access-card">
         <label className="otp-access-toggle"><input type="checkbox" checked={enabled} disabled={!canManage} onChange={(event) => setEnabled(event.target.checked)} /><span>Send WhatsApp receipts</span><strong>{enabled ? "On" : "Off"}</strong></label>
+        <label className="otp-access-phone">
+          <span>Send when</span>
+          <select value={sendWhen} disabled={!canManage || !enabled} onChange={(event) => setSendWhen(event.target.value)}>
+            <option value="checkout">After checkout</option>
+            <option value="print">When printing</option>
+          </select>
+        </label>
+        <p>{sendWhen === "print"
+          ? "Print bill and Reprint bill request a receipt. Each bill is sent once."
+          : "Send once as soon as the sale is saved."}</p>
       </article></div>
       <div className="otp-access-provider-note"><Bell size={17} /><span>Customers need a valid mobile number. Sending also requires a configured Meta connection and an approved bill receipt template.</span></div>
-      <footer className="otp-access-footer"><span>Applies to {activeStore?.name || "this business"} / {activeStore?.branch || "this branch"}.</span><button type="button" className="otp-access-save" disabled={!canManage || !activeStore?.id} onClick={() => { setSettings({ enabled }); notify("WhatsApp receipt setting saved; cloud sync may still be pending."); }}>Save setting</button></footer>
+      <footer className="otp-access-footer"><span>Applies to {activeStore?.name || "this business"} / {activeStore?.branch || "this branch"}.</span><button type="button" className="otp-access-save" disabled={!canManage || !activeStore?.id} onClick={() => { setSettings({ enabled, sendWhen }); notify("WhatsApp receipt setting saved. Cloud sync may still be pending."); }}>Save setting</button></footer>
     </div>
   </section>;
 }
