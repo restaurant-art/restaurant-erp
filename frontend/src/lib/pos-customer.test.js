@@ -16,3 +16,11 @@ test('does not add an empty customer or a one-character name', () => {
 test('rejects invalid mobile numbers instead of attaching them to the bill', () => {
   for (const mobile of ['12345', '90000000000', '90000abcde']) assert.ok(validateBillCustomer({ name: 'Test Customer', mobile }).errors.mobile);
 });
+test('keeps the full Indian customer number when pasted with a country code', () => {
+  for (const mobile of ['+91 98765 43210', '919876543210', '98765-43210']) {
+    const result = validateBillCustomer({ mobile });
+    assert.equal(result.valid, true);
+    assert.equal(result.customer.mobile, '9876543210');
+  }
+  assert.ok(validateBillCustomer({ mobile: '+1 202 555 0123' }).errors.mobile);
+});

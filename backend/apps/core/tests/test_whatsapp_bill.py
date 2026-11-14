@@ -52,6 +52,12 @@ class WhatsAppBillTests(TestCase):
     @patch("apps.core.whatsapp_bill._send", return_value="wamid.print-test")
     def test_print_timing_is_saved_and_sends_only_once_for_the_saved_bill(self, send):
         preference = SharedAppState.objects.get(state_key="vestora-whatsapp-receipts-store-1")
+        ledger = SharedAppState.objects.get(state_key="vestora-sales-ledger")
+        ledger.state_value = [{**self.bill, "customerName": "", "customerMobile": "9000012345"}]
+        ledger.save(update_fields=("state_value",))
+        SharedAppState.objects.create(state_key="vestora-customer-master-store-1", state_value=[
+            {"name": "Other customer", "mobile": "9000067890"},
+        ])
         response = self.client.put("/api/cloud/state/", {
             "key": preference.state_key,
             "value": {"enabled": True, "sendWhen": "print"},
@@ -65,12 +71,16 @@ class WhatsAppBillTests(TestCase):
         self.assertEqual(checkout.status_code, 409)
         send.assert_not_called()
 
-        print_request = {**self.request, "trigger": "print"}
+        print_request = {**self.request, "trigger": "print", "customerMobile": "9000067890"}
         first = self.client.post("/api/cloud/whatsapp-bill/", print_request, format="json")
         reprint = self.client.post("/api/cloud/whatsapp-bill/", print_request, format="json")
         self.assertEqual((first.status_code, reprint.status_code), (200, 200))
         self.assertTrue(reprint.data["alreadySent"])
         send.assert_called_once()
+        payload = send.call_args.args[0]
+        self.assertEqual(payload["to"], "919000012345")
+        self.assertEqual(payload["template"]["name"], "uvpro_invoice_confirmation")
+        self.assertEqual(payload["template"]["components"][0]["parameters"][1]["text"], "ORD-1")
 
     @patch.dict(os.environ, CONFIG)
     @patch("apps.core.whatsapp_bill._send")

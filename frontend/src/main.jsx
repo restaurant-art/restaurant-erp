@@ -5090,7 +5090,9 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
       posOtpContinuation.current = null;
       const message = error.status === 403
         ? "The store API denied this POS OTP request. Check this account’s access to the active store, or turn off this action’s OTP in Settings → OTP & access controls."
-        : error.message || "Could not request the WhatsApp approval code.";
+        : error.status === 503
+          ? "WhatsApp OTP setup is incomplete. This item removal requires staff approval. Ask your administrator to connect Meta Cloud API in UVPRO."
+          : error.message || "Could not request the WhatsApp approval code.";
       notify(message, 9000);
     }
   }
@@ -5570,10 +5572,7 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
 
   async function sendWhatsAppBillReceipt(bill, trigger) {
     if (training || !bill?.id || bill.training || whatsappReceiptTiming !== trigger) return;
-    if (!bill.customerMobile) {
-      notify("WhatsApp receipt skipped: no customer mobile on this bill.");
-      return;
-    }
+    if (!bill.customerMobile) return;
     const inFlight = whatsappReceiptsInFlight.current;
     if (inFlight.has(bill.id)) return;
     inFlight.add(bill.id);
@@ -5829,7 +5828,7 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
               </span>
             </div>
           )}
-          <PosBillCustomer training={training} name={customerName} mobile={customerMobile} location={customerLocation} customers={billCustomers} showOnReceipt={billTemplate.showCustomer !== false} compact={!isSupermarket || Boolean(customerName || customerMobile)} onSaveCustomer={savePosCustomer} onAddWalletFunds={addPosWalletFunds} onRedeem={redeemCustomerWallet} onCredit={startCustomerCreditSale} onSettle={openCustomerSettlement} onChange={({ name, mobile, location }) => { setCustomerName(name); setCustomerMobile(mobile); setCustomerLocation(location || ""); setLoyaltyRedemption(0); setWalletRedemption(0); setPaymentError(""); }} />
+          <PosBillCustomer training={training} whatsappReceiptTiming={whatsappReceiptTiming} name={customerName} mobile={customerMobile} location={customerLocation} customers={billCustomers} showOnReceipt={billTemplate.showCustomer !== false} compact={!isSupermarket || Boolean(customerName || customerMobile)} onSaveCustomer={savePosCustomer} onAddWalletFunds={addPosWalletFunds} onRedeem={redeemCustomerWallet} onCredit={startCustomerCreditSale} onSettle={openCustomerSettlement} onChange={({ name, mobile, location }) => { setCustomerName(name); setCustomerMobile(mobile); setCustomerLocation(location || ""); setLoyaltyRedemption(0); setWalletRedemption(0); setPaymentError(""); }} />
           {!customerMobile && cart.length > 0 && posOffers.some((offer) => offer.status === "Active" && (Number(offer.customerMaxUses || 0) > 0 || offer.customerQuantityLimits?.length)) && <p className="pos-customer-offer-hint">Select a customer with a mobile number to use customer-limited offers.</p>}
           <div ref={billItemsRef} className={isSupermarket ? "bill-items scrollable erp-receipt-items" : "bill-items scrollable"} tabIndex={isSupermarket ? -1 : 0} aria-label="Selected bill items">
             {cart.length === 0 ? <div className="empty pos-empty-bill"><span><ShoppingCart size={29} strokeWidth={1.5} /></span><strong>Your bill starts here</strong><small>Select an item or scan a barcode</small></div> : cart.map((item, index) => {

@@ -45,6 +45,17 @@ Metadata:
           - LogRetentionDays
           - AlbDeletionProtection
       - Label:
+          default: Meta WhatsApp
+        Parameters:
+          - MetaWhatsAppSecretArn
+          - MetaWhatsAppPhoneNumberId
+          - MetaWhatsAppApiVersion
+          - MetaWhatsAppOtpTemplateName
+          - MetaWhatsAppOtpTemplateLanguage
+          - MetaWhatsAppBillStoreId
+          - MetaWhatsAppBillTemplateName
+          - MetaWhatsAppBillTemplateLanguage
+      - Label:
           default: Network
         Parameters:
           - VpcCidr
@@ -86,6 +97,45 @@ Parameters:
     Default: ""
     AllowedPattern: '^$|^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
     Description: Optional first administrator email for a fresh installation. Existing administrators are never reset.
+
+  MetaWhatsAppSecretArn:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$'
+    Description: ARN of a Secrets Manager secret containing the raw Meta Cloud API access token.
+  MetaWhatsAppPhoneNumberId:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^[0-9]{1,30}$'
+    Description: Sender phone number ID shown in Meta.
+  MetaWhatsAppApiVersion:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^v[0-9]{1,3}\.[0-9]{1,3}$'
+    Description: Graph API version used by the Meta app.
+  MetaWhatsAppOtpTemplateName:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^[a-z0-9_]{1,512}$'
+    Description: Approved Authentication template with a Copy Code button. Leave blank until approved.
+  MetaWhatsAppOtpTemplateLanguage:
+    Type: String
+    Default: en_US
+    AllowedPattern: '^[A-Za-z_]{2,10}$'
+  MetaWhatsAppBillStoreId:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^[A-Za-z0-9_-]{1,100}$'
+    Description: Branch ID allowed to send WhatsApp bill receipts. Leave blank to keep receipts off.
+  MetaWhatsAppBillTemplateName:
+    Type: String
+    Default: uvpro_invoice_confirmation
+    AllowedPattern: '^[a-z0-9_]{1,512}$'
+    Description: Approved eight-variable Utility template for the sender.
+  MetaWhatsAppBillTemplateLanguage:
+    Type: String
+    Default: en
+    AllowedPattern: '^[A-Za-z_]{2,10}$'
 
   ImageTag:
     Type: String
@@ -204,6 +254,12 @@ Conditions:
   ProtectAlb: !Equals [!Ref AlbDeletionProtection, "true"]
   RedisHighAvailability: !Equals [!Ref RedisNodeCount, 2]
   EnableWebAutoscaling: !Not [!Equals [!Ref DesiredWebCount, 0]]
+  HasMetaWhatsAppToken: !Not [!Equals [!Ref MetaWhatsAppSecretArn, ""]]
+  EnableMetaWhatsAppBills: !And
+    - !Condition HasMetaWhatsAppToken
+    - !Not [!Equals [!Ref MetaWhatsAppPhoneNumberId, ""]]
+    - !Not [!Equals [!Ref MetaWhatsAppApiVersion, ""]]
+    - !Not [!Equals [!Ref MetaWhatsAppBillStoreId, ""]]
 
 Resources:
   Vpc:
@@ -644,6 +700,7 @@ Resources:
                 Action: secretsmanager:GetSecretValue
                 Resource:
                   - !Ref ApplicationSecret
+                  - !If [HasMetaWhatsAppToken, !Ref MetaWhatsAppSecretArn, !Ref 'AWS::NoValue']
   TaskRole:
     Type: AWS::IAM::Role
     Properties:
@@ -791,9 +848,30 @@ Resources:
               Value: "True"
             - Name: SECURE_HSTS_SECONDS
               Value: "31536000"
+            - Name: META_WHATSAPP_PHONE_NUMBER_ID
+              Value: !Ref MetaWhatsAppPhoneNumberId
+            - Name: META_WHATSAPP_API_VERSION
+              Value: !Ref MetaWhatsAppApiVersion
+            - Name: META_WHATSAPP_OTP_TEMPLATE_NAME
+              Value: !Ref MetaWhatsAppOtpTemplateName
+            - Name: META_WHATSAPP_TEMPLATE_LANGUAGE
+              Value: !Ref MetaWhatsAppOtpTemplateLanguage
+            - Name: META_WHATSAPP_BILL_ENABLED
+              Value: !If [EnableMetaWhatsAppBills, "true", "false"]
+            - Name: META_WHATSAPP_BILL_STORE_ID
+              Value: !Ref MetaWhatsAppBillStoreId
+            - Name: META_WHATSAPP_BILL_TEMPLATE_NAME
+              Value: !Ref MetaWhatsAppBillTemplateName
+            - Name: META_WHATSAPP_BILL_TEMPLATE_LANGUAGE
+              Value: !Ref MetaWhatsAppBillTemplateLanguage
           Secrets:
             - Name: SECRET_KEY
               ValueFrom: !Join ["", [!Ref ApplicationSecret, ":SECRET_KEY::"]]
+            - !If
+              - HasMetaWhatsAppToken
+              - Name: META_WHATSAPP_ACCESS_TOKEN
+                ValueFrom: !Ref MetaWhatsAppSecretArn
+              - !Ref AWS::NoValue
           HealthCheck:
             Command:
               - CMD-SHELL

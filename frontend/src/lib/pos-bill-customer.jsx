@@ -1,10 +1,10 @@
 import React, { useId, useRef, useState } from "react";
 import { BadgeIndianRupee, CreditCard, MapPin, Pencil, Phone, Plus, Search, User, UserPlus, Wallet, X } from "lucide-react";
-import { searchBillCustomers, validateBillCustomer } from "./pos-customer.js";
+import { parseBillMobile, searchBillCustomers, validateBillCustomer } from "./pos-customer.js";
 import { walletDepositAllocation } from "./customer-wallet-credit.js";
 import "./pos-bill-customer.css";
 
-export function PosBillCustomer({ training = false, name, mobile, location = "", customers = [], onChange, onSaveCustomer, onRedeem, onCredit, onSettle, onAddWalletFunds, showOnReceipt = true, compact = false }) {
+export function PosBillCustomer({ training = false, whatsappReceiptTiming = null, name, mobile, location = "", customers = [], onChange, onSaveCustomer, onRedeem, onCredit, onSettle, onAddWalletFunds, showOnReceipt = true, compact = false }) {
   const [draft, setDraft] = useState({ name: "", mobile: "", location: "" });
   const [customerQuery, setCustomerQuery] = useState("");
   const [editingCustomer, setEditingCustomer] = useState(false);
@@ -17,6 +17,8 @@ export function PosBillCustomer({ training = false, name, mobile, location = "",
   const mobileErrorId = useId();
   const hasCustomer = Boolean(name || mobile);
   const matchingCustomers = customerQuery.trim() ? searchBillCustomers(customers, customerQuery) : [];
+  const billMobile = parseBillMobile(customerQuery);
+  const customerForNumber = billMobile ? customers.find((customer) => parseBillMobile(customer.mobile) === billMobile) : null;
   const selectedCustomer = customers.find((customer) => (
     (mobile && String(customer.mobile || "").replace(/\D/g, "").slice(-10) === String(mobile).replace(/\D/g, "").slice(-10))
     || (!mobile && name && String(customer.name || "").trim().toLowerCase() === String(name).trim().toLowerCase())
@@ -55,7 +57,16 @@ export function PosBillCustomer({ training = false, name, mobile, location = "",
   }
 
   function chooseExistingCustomer(customer) {
-    onChange({ name: customer.name, mobile: customer.mobile, location: customer.location || "" });
+    onChange({ name: customer.name, mobile: parseBillMobile(customer.mobile) || customer.mobile, location: customer.location || "" });
+    setCustomerQuery("");
+  }
+
+  function attachBillMobile() {
+    if (customerForNumber) {
+      chooseExistingCustomer(customerForNumber);
+      return;
+    }
+    onChange({ name: "", mobile: billMobile, location: "" });
     setCustomerQuery("");
   }
 
@@ -79,16 +90,27 @@ export function PosBillCustomer({ training = false, name, mobile, location = "",
       <div className="pos-customer-quick-row">
         <button type="button" className="pos-add-customer-icon" onClick={openNewCustomer} aria-label="Add customer" title="Add customer"><UserPlus size={19} /></button>
         <div className="pos-customer-quick-search">
-          <label><Search size={16} /><input type="search" autoComplete="off" placeholder="Search customer name or mobile" value={customerQuery} onChange={(event) => setCustomerQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setCustomerQuery(""); }} aria-label="Search customers by name or mobile number" /></label>
+          <label><Search size={16} /><input type="search" autoComplete="off" placeholder="Search customer or enter mobile" value={customerQuery} onChange={(event) => setCustomerQuery(event.target.value)} onKeyDown={(event) => {
+            if (event.key === "Escape") setCustomerQuery("");
+            if (event.key === "Enter" && billMobile) {
+              event.preventDefault();
+              attachBillMobile();
+            }
+          }} aria-label="Search customers or enter a mobile number for the bill" /></label>
           {customerQuery.trim() && <div className="pos-customer-inline-results" aria-label="Matching customers">
-            {matchingCustomers.length ? matchingCustomers.map((customer) => <button type="button" key={customer.id} onClick={() => chooseExistingCustomer(customer)}><span className="pos-customer-result-avatar"><User size={15} /></span><span><strong>{customer.name || "Customer"}</strong><small>{customer.mobile ? "+91 " + customer.mobile : "No mobile"}{customer.location ? ` · ${customer.location}` : ""}</small></span><span className="pos-customer-select">Select</span></button>) : <p role="status">No customer found. Use the + icon to add one.</p>}
+            {billMobile && <button type="button" onClick={attachBillMobile}>
+              <span className="pos-customer-result-avatar"><Phone size={15} /></span>
+              <span><strong>Use +91 {billMobile} for this bill</strong>{customerForNumber?.name && <small>{customerForNumber.name}</small>}</span>
+            </button>}
+            {matchingCustomers.filter((customer) => customer !== customerForNumber).map((customer) => <button type="button" key={customer.id} onClick={() => chooseExistingCustomer(customer)}><span className="pos-customer-result-avatar"><User size={15} /></span><span><strong>{customer.name || "Customer"}</strong><small>{customer.mobile ? "+91 " + customer.mobile : "No mobile"}{customer.location ? ` · ${customer.location}` : ""}</small></span><span className="pos-customer-select">Select</span></button>)}
+            {!billMobile && !matchingCustomers.length && <p role="status">Enter a 10-digit mobile number or use + to add a customer.</p>}
           </div>}
         </div>
       </div>
       {hasCustomer && <div className="pos-bill-customer-card">
         <span className="pos-customer-avatar"><User size={18} /></span>
         <div className="pos-selected-customer-info">
-          <small>Selected customer</small>
+          <small>{mobile && !training && whatsappReceiptTiming ? "WhatsApp receipt number" : "Bill customer"}</small>
           <div className="pos-selected-customer-name"><strong title={name || "Customer"}>{name || "Customer"}</strong>{walletBalance > 0 && <span className="pos-customer-wallet-balance">Wallet {walletBalance.toLocaleString("en-IN", { style: "currency", currency: "INR" })}</span>}</div>
           <div className="pos-selected-customer-meta">{mobile && <span className="pos-customer-mobile" title={`+91 ${mobile}`}><Phone size={12} />+91 {mobile}</span>}{location && <span className="pos-customer-location" title={location}><MapPin size={12} />{location}</span>}{creditBalance > 0 && <span className="pos-customer-credit-due"><BadgeIndianRupee size={12} />Credit due ₹{creditBalance.toFixed(2)}</span>}</div>
         </div>
@@ -109,10 +131,10 @@ export function PosBillCustomer({ training = false, name, mobile, location = "",
       <form onSubmit={saveCustomer} noValidate>
         {training && <p className="pos-training-bill-note">TRAINING ONLY · Customer changes stay in this practice session.</p>}
         <header><span className="pos-customer-avatar"><UserPlus size={22} /></span><div><small>BILL CUSTOMER</small><h2 id={titleId}>{editingCustomer ? "Edit customer" : "Add customer"}</h2></div><button type="button" onClick={() => dialogRef.current.close()} aria-label="Close customer dialog"><X size={20} /></button></header>
-        <p>Enter the customer details for this bill. Location is optional.</p>
+        <p>Enter a name or mobile number for this bill.</p>
         <label>Customer name<input type="text" autoComplete="name" maxLength={60} placeholder="Enter customer name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} aria-invalid={Boolean(errors.name)} aria-describedby={errors.name ? nameErrorId : undefined} /></label>
         {errors.name && <p className="pos-customer-error" id={nameErrorId} role="alert">{errors.name}</p>}
-        <label>Mobile number<input type="tel" inputMode="numeric" autoComplete="tel" maxLength={10} placeholder="10-digit mobile number" value={draft.mobile} onChange={(event) => setDraft({ ...draft, mobile: event.target.value.replace(/\D/g, "").slice(0, 10) })} aria-invalid={Boolean(errors.mobile)} aria-describedby={errors.mobile ? mobileErrorId : undefined} /></label>
+        <label>Mobile number<input type="tel" inputMode="tel" autoComplete="tel" placeholder="10-digit mobile, with or without +91" value={draft.mobile} onChange={(event) => setDraft({ ...draft, mobile: event.target.value })} aria-invalid={Boolean(errors.mobile)} aria-describedby={errors.mobile ? mobileErrorId : undefined} /></label>
         {errors.mobile && <p className="pos-customer-error" id={mobileErrorId} role="alert">{errors.mobile}</p>}
         <label>Location <small>(optional)</small><input type="text" autoComplete="address-level2" maxLength={100} placeholder="Area, city, or delivery location" value={draft.location} onChange={(event) => setDraft({ ...draft, location: event.target.value })} /></label>
         <footer><button type="button" onClick={() => dialogRef.current.close()}>Cancel</button><button type="submit" className="pos-customer-save">{editingCustomer ? "Save customer" : "Add customer"}</button></footer>
