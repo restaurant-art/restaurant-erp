@@ -1,6 +1,6 @@
 export function parseBillMobile(value) {
   const number = String(value ?? "").trim().replace(/[ ().-]/g, "");
-  return /^(?:\+?91)?(\d{10})$/.exec(number)?.[1] || "";
+  return /^(?:\+?91)?(\d{10})$/.exec(number)?.[1] || (/^\+[1-9]\d{7,14}$/.test(number) ? number : "");
 }
 
 export function validateBillCustomer({ name = "", mobile = "", location = "" }) {
@@ -11,7 +11,7 @@ export function validateBillCustomer({ name = "", mobile = "", location = "" }) 
   const errors = {};
   if (!customer.name && !enteredMobile) errors.name = "Enter a customer name or mobile number.";
   else if (customer.name && customer.name.length < 2) errors.name = "Enter at least 2 characters for the customer name.";
-  if (enteredMobile && !customer.mobile) errors.mobile = "Enter a valid 10-digit Indian mobile number.";
+  if (enteredMobile && !customer.mobile) errors.mobile = "Enter a 10-digit Indian number or include the + country code.";
   return { customer, errors, valid: Object.keys(errors).length === 0 };
 }
 

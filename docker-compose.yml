@@ -49,6 +49,18 @@ services:
       - ./backend:/app
     command: celery -A config worker -l info
 
+  celery-beat:
+    build: ./backend
+    env_file:
+      - ${BACKEND_ENV_FILE:-./backend/.env.example}
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      - celery
+    volumes:
+      - ./backend:/app
+    command: celery -A config beat -l info --schedule=/tmp/uvpro-celerybeat
+
   frontend:
     build: ./frontend
     depends_on:

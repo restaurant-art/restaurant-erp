@@ -130,6 +130,8 @@ import "./lib/cashier-login.css";
 import "./lib/printer-connection.css";
 import { PosOrderedItems } from "./lib/pos-ordered-items.jsx";
 import { PosBillCustomer } from "./lib/pos-bill-customer.jsx";
+import { META_WHATSAPP_SETTINGS, WhatsAppSettings } from "./lib/whatsapp-settings";
+import { billingMobile, validBillingMobile } from "./lib/whatsapp-billing";
 import { SplitPaymentDialog } from "./lib/pos-split-payment.jsx";
 import { PaymentMethodDialog } from "./lib/pos-payment-methods.jsx";
 import { hasPineLabsBridge, collectTerminalPayments } from "./lib/pine-labs.js";
@@ -581,12 +583,6 @@ const settingsSectionConfig = {
     action: "Refresh status",
     fields: [],
     defaults: {},
-  },
-  "WhatsApp templates": {
-    description: "Customer bill, order ready, and campaign messages.",
-    action: "Send test",
-    fields: [["billTemplate", "Bill template"], ["orderTemplate", "Order ready template"], ["sender", "Sender number"], ["language", "Language"]],
-    defaults: { billTemplate: "Your UVPRO bill is ready", orderTemplate: "Your order is ready", sender: "+91 90000 11111", language: "English" },
   },
   "Backup policy": {
     description: "Download a sanitised local recovery export. Automated AWS database snapshots and S3 protection are managed by the server infrastructure.",
@@ -1470,6 +1466,8 @@ function AuthenticatedApp() {
   const [superAdminLanding, setSuperAdminLanding] = useState(() => currentUser?.role === "super_admin" && localStorage.getItem("vestora-super-admin-in-store") !== "true");
   const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia("(max-width: 760px)").matches);
   const [navigationSearch, setNavigationSearch] = useState("");
+  const [settingsNavOpen, setSettingsNavOpen] = useState(false);
+  const [selectedSetting, setSelectedSetting] = useState(null);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [appInstalled, setAppInstalled] = useState(() => window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true);
   const [adminMenuOpen, setAdminMenuOpen] = useState(false);
@@ -1638,6 +1636,7 @@ function AuthenticatedApp() {
   const queuedOrders = JSON.parse(localStorage.getItem("vestora-offline-orders") || "[]").length;
   const canManageAll = currentUser?.role === "super_admin";
   const canManage = canManageAll || currentUser?.role === "restaurant_admin";
+  const canManageMeta = canManage || currentUser?.role === "owner";
   // Some legacy administrator accounts are scoped through the directory and
   // arrive without a single default branch. They may choose a branch in POS;
   // all backend requests still enforce their permitted store scope.
@@ -2798,7 +2797,7 @@ function AuthenticatedApp() {
     reports: <Reports notify={notify} storeId={activeStore.id} salesLedger={scopedSalesLedger} voidLedger={scopedVoidLedger} refundLedger={scopedRefundLedger} lastShiftClose={lastShiftClose} reportMenu={productItems} comparisonStores={comparisonStores} comparisonSalesLedger={comparisonSalesLedger} activeView={reportView} onReportChange={setReportView} availableReports={reports.filter((name) => canAccessRoleOption("reports", name))} availableFinanceReports={hasFinanceReportAccess ? financeReportNames : []} availableProductionReports={availableProductionReports} onOpenFinanceReport={openFinanceReport} onOpenProductionReport={openProductionReport} />,
     mis: <MISReports salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger} notify={notify} />,
     admin: <Admin notify={notify} users={users} setUsers={setUsers} currentUser={currentUser} canManageAll={canManageAll} canManageStore={canManage} stores={stores} activeStore={activeStore} activeView={adminView} onViewChange={openAdminView} customRoles={customRoles} setCustomRoles={setCustomRoles} />,
-    settings: <SettingsView notify={notify} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} billingPrinter={billingPrinter} setBillingPrinter={setBillingPrinter} canManage={canManage} canManageAll={canManageAll} activeStore={activeStore} setStores={setStores} menuItems={productItems} themeConfig={{ ...themeConfig, mode: dark ? "Dark" : "Light" }} setThemeConfig={setThemeConfig} setDark={setDark} displayScale={displayScale} setDisplayScale={(value) => setThemeConfig((current) => ({ ...current, displayScale: value }))} />,
+    settings: <SettingsView notify={notify} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} billingPrinter={billingPrinter} setBillingPrinter={setBillingPrinter} canManage={canManage} canManageAll={canManageAll} activeStore={activeStore} setStores={setStores} menuItems={productItems} themeConfig={{ ...themeConfig, mode: dark ? "Dark" : "Light" }} setThemeConfig={setThemeConfig} setDark={setDark} displayScale={displayScale} setDisplayScale={(value) => setThemeConfig((current) => ({ ...current, displayScale: value }))} canManageMeta={canManageMeta} selectedSetting={selectedSetting} setSelectedSetting={setSelectedSetting} />,
   }[activeModule];
   const vesty = <VestyAssistant store={activeStore} salesLedger={scopedSalesLedger} refundLedger={scopedRefundLedger}
     tableOrders={scopedTableOrders} kdsOrders={scopedKdsOrders} menuItems={productItems} allowedModules={allowedModuleIds} />;
@@ -2836,7 +2835,7 @@ function AuthenticatedApp() {
           <span className="navigation-label">Workspace</span>
         </div>}
         <nav aria-label="Main navigation">
-          {visibleModules.filter((item) => !sidebarOpen || `${item.label} ${item.id === "offers" ? "Offers & Promotions Poster Design Flyer Design" : item.id === "crm" ? "Customers Credit customers settlements loyalty redeem wallet" : ""}`.toLowerCase().includes(navigationSearch.trim().toLowerCase())).map((item) => {
+          {visibleModules.filter((item) => !sidebarOpen || `${item.label} ${item.id === "offers" ? "Offers & Promotions Poster Design Flyer Design" : item.id === "crm" ? "Customers Credit customers settlements loyalty redeem wallet" : item.id === "settings" && canManageMeta ? META_WHATSAPP_SETTINGS : ""}`.toLowerCase().includes(navigationSearch.trim().toLowerCase())).map((item) => {
             const Icon = item.icon;
             if (item.id === "crm") {
               const crmActive = activeModule === "crm";
@@ -3009,6 +3008,22 @@ function AuthenticatedApp() {
                 </div>
               );
             }
+            if (item.id === "settings" && canManageMeta) {
+              const expanded = sidebarOpen && (settingsNavOpen || Boolean(navigationSearch.trim()));
+              return <div key={item.id} className="sidebar-nav-group">
+                <button className={activeModule === item.id ? "nav active" : "nav"} title={item.label} aria-expanded={expanded} onClick={() => {
+                  setSettingsNavOpen(activeModule !== "settings" || !settingsNavOpen);
+                  setSelectedSetting(null);
+                  openModule("settings");
+                }}>
+                  <Icon size={18} />{sidebarOpen && <><span>{item.label}</span><ChevronDown size={16} className={expanded ? "sidebar-chevron open" : "sidebar-chevron"} /></>}
+                </button>
+                {expanded && <div className="sidebar-subnav"><button type="button" className={activeModule === "settings" && selectedSetting === META_WHATSAPP_SETTINGS ? "sidebar-subnav-item active" : "sidebar-subnav-item"} onClick={() => {
+                  setSelectedSetting(META_WHATSAPP_SETTINGS);
+                  openModule("settings");
+                }}><Bell size={15} /> {META_WHATSAPP_SETTINGS}</button></div>}
+              </div>;
+            }
             return (
               <button key={item.id} className={activeModule === item.id ? "nav active" : "nav"} onClick={() => openModule(item.id)} title={item.label}>
                 <Icon size={18} />
@@ -3016,7 +3031,7 @@ function AuthenticatedApp() {
               </button>
             );
           })}
-          {sidebarOpen && navigationSearch && !visibleModules.some((item) => `${item.label} ${item.id === "offers" ? "Offers & Promotions Poster Design Flyer Design" : item.id === "crm" ? "Customers Credit customers settlements loyalty redeem wallet" : ""}`.toLowerCase().includes(navigationSearch.trim().toLowerCase())) && <p className="navigation-empty">No modules found. Try another name.</p>}
+          {sidebarOpen && navigationSearch && !visibleModules.some((item) => `${item.label} ${item.id === "offers" ? "Offers & Promotions Poster Design Flyer Design" : item.id === "crm" ? "Customers Credit customers settlements loyalty redeem wallet" : item.id === "settings" && canManageMeta ? META_WHATSAPP_SETTINGS : ""}`.toLowerCase().includes(navigationSearch.trim().toLowerCase())) && <p className="navigation-empty">No modules found. Try another name.</p>}
           <button className="nav sidebar-logout" onClick={handleLogout} title="Logout">
             <LogOut size={18} />
             {sidebarOpen && <span>Logout</span>}
@@ -4677,7 +4692,6 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
   const posDraftStateKey = `vestora-pos-drafts-${storeId}`;
   const draftOwnerKey = `${mode}:${currentUser?.id || "pos"}`;
   const [posDraftState, setPosDraftState] = useBusinessState(posDraftStateKey, () => ({}));
-  const [whatsappReceiptSettings] = useBusinessState(`vestora-whatsapp-receipts-${storeId}`, () => ({ enabled: false }));
   const [draftsReady, setDraftsReady] = useState(false);
   const [showHeldBills, setShowHeldBills] = useState(false);
   const draftsRestored = useRef(false);
@@ -4749,6 +4763,7 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
   const [roundOffEnabled, setRoundOffEnabled] = useState(false);
   const [customerName, setCustomerName] = useState("");
   const [customerMobile, setCustomerMobile] = useState("");
+  const [whatsappReceiptOptIn, setWhatsAppReceiptOptIn] = useState(false);
   const [customerLocation, setCustomerLocation] = useState("");
   const [discount, setDiscount] = useState(0);
   const [loyaltyRedemption, setLoyaltyRedemption] = useState(0);
@@ -4774,11 +4789,6 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
   const [showSplitPayment, setShowSplitPayment] = useState(false);
   const [splitAmounts, setSplitAmounts] = useState({ Cash: "", UPI: "", Card: "", Credit: "" });
   const [completedBill, setCompletedBill] = useState(null);
-  const pendingBillSaves = useRef(new Map());
-  const whatsappReceiptsInFlight = useRef(new Set());
-  const whatsappReceiptTiming = whatsappReceiptSettings?.enabled === true
-    ? whatsappReceiptSettings.sendWhen ?? "checkout"
-    : null;
   const [savedForAutoPrint, setSavedForAutoPrint] = useState(null);
   const [autoPrintStatus, setAutoPrintStatus] = useState("");
   const [autoPrintBusy, setAutoPrintBusy] = useState(false);
@@ -4794,14 +4804,13 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
     }).then(status => {
       if (status.startsWith("submitted")) {
         setAutoPrintStatus(`Bill sent to ${billingPrinter.name}.`);
-        void sendWhatsAppBillReceipt(completedBill, "print");
       } else {
         setAutoPrintStatus("Automatic printing was already attempted. Check the printer before using Print bill again.");
       }
     })
       .catch(error => setAutoPrintStatus(error.message))
       .finally(() => setAutoPrintBusy(false));
-  }, [completedBill, savedForAutoPrint, billingPrinter, training, whatsappReceiptTiming]);
+  }, [completedBill, savedForAutoPrint, billingPrinter, training]);
   const [historyScope, setHistoryScope] = useState("All orders");
   const [historySearch, setHistorySearch] = useState("");
   const [selectedHistoryId, setSelectedHistoryId] = useState("");
@@ -4821,6 +4830,7 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
     if (!isSupermarket) setOrderType(draft.orderType || "Dine-in");
     setCustomerName(String(draft.customerName || ""));
     setCustomerMobile(String(draft.customerMobile || ""));
+    setWhatsAppReceiptOptIn(false);
     setCustomerLocation(String(draft.customerLocation || ""));
     setDiscount(Number(draft.discount || 0));
     setLoyaltyRedemption(Number(draft.loyaltyRedemption || 0));
@@ -4869,6 +4879,7 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
     setCart([]);
     setCustomerName("");
     setCustomerMobile("");
+    setWhatsAppReceiptOptIn(false);
     setCustomerLocation("");
     setDiscount(0);
     setLoyaltyRedemption(0);
@@ -5030,7 +5041,7 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
   const splitDifference = checkoutTotal - splitPaidTotal;
   const splitPaymentValid = cart.length > 0 && splitMethodCount >= 2 && Math.abs(splitDifference) < 0.01;
   const customerNameValid = !customerName.trim() || customerName.trim().length >= 2;
-  const customerMobileValid = !customerMobile || /^\d{10}$/.test(customerMobile);
+  const customerMobileValid = !customerMobile || validBillingMobile(customerMobile);
   const lowStockFoodItems = foodStock.filter((record) => Number(record.available || 0) <= foodStockThreshold(record));
   const foodStockRequirements = cart.reduce((summary, item) => {
     const record = foodStockRecordFor(foodStock, item);
@@ -5375,7 +5386,7 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
       return rejectPayment("Enter at least 2 characters for customer name or leave it blank");
     }
     if (!customerMobileValid) {
-      return rejectPayment("Enter a valid 10-digit customer mobile number");
+      return rejectPayment("Enter a 10-digit Indian mobile number or include the + country code.");
     }
     const creditAmount = selectedPayment === "Credit"
       ? Number(checkoutTotal || 0)
@@ -5410,6 +5421,7 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
     bill.pineLabsRequired = terminalMethods.includes(selectedPayment) || externalSplitPayments.some(entry => terminalMethods.includes(entry.method));
     if (bill.pineLabsRequired) bill.pineLabsTransport = cloudUpi ? "cloud" : "android";
     if (bill.pineLabsRequired) bill.paymentStatus = "Terminal pending";
+    if (!training && customerMobile && whatsappReceiptOptIn) bill.whatsappReceiptOptIn = true;
     bill.lineDiscounts = (latestOffer.lineDiscounts || []).map((amount) => Number(amount) || 0);
     bill.appliedOffers = latestOffer.appliedOffers || (latestOffer.appliedOffer ? [latestOffer.appliedOffer] : []);
     bill.offerUsage = latestOffer.offerUsage || [];
@@ -5471,7 +5483,6 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
       notify(`Paid ${formatMoney(bill.paidAmount || bill.total)} by ${bill.payment}`);
     }
     const savedBill = Promise.resolve(onSale(bill));
-    pendingBillSaves.current.set(bill.id, savedBill);
     setSavedForAutoPrint(null);
     setAutoPrintStatus("");
     if (!training && bill.pineLabsTransport === "cloud" && billingPrinter.autoPrintUpi) {
@@ -5480,12 +5491,7 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
       savedBill.then(() => setSavedForAutoPrint(bill.id))
         .catch(() => { setAutoPrintBusy(false); setAutoPrintStatus("Payment confirmed. Bill synchronization must finish before automatic printing; use order history to print after sync."); });
     }
-    savedBill
-      .catch((error) => notify(error.message || "Bill saved locally; cloud synchronization will retry."))
-      .finally(() => {
-        if (pendingBillSaves.current.get(bill.id) === savedBill) pendingBillSaves.current.delete(bill.id);
-      });
-    void sendWhatsAppBillReceipt(bill, "checkout");
+    savedBill.catch((error) => notify(error.message || "Bill saved locally. Cloud synchronization will retry."));
     if (!managedStock && unitStockRequirements.size) {
       setInventoryProducts((current) => applyUnitStockSale(current, cart));
     }
@@ -5515,6 +5521,7 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
     setCouponMessage("");
     setCustomerName("");
     setCustomerMobile("");
+    setWhatsAppReceiptOptIn(false);
     setCustomerLocation("");
     setDiscount(0);
     setLoyaltyRedemption(0);
@@ -5570,28 +5577,6 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
     completeCheckout("Split", payments);
   }
 
-  async function sendWhatsAppBillReceipt(bill, trigger) {
-    if (training || !bill?.id || bill.training || whatsappReceiptTiming !== trigger) return;
-    if (!bill.customerMobile) return;
-    const inFlight = whatsappReceiptsInFlight.current;
-    if (inFlight.has(bill.id)) return;
-    inFlight.add(bill.id);
-    try {
-      const save = pendingBillSaves.current.get(bill.id);
-      if (save) await save;
-      // The server formats the receipt from the saved bill and uses its customer number.
-      const result = await cloudApiRequest("whatsapp-bill", {
-        method: "POST",
-        body: JSON.stringify({ storeId: String(storeId), billId: bill.id, trigger }),
-      });
-      if (!result.alreadySent) notify("WhatsApp receipt accepted by Meta.");
-    } catch (error) {
-      notify(error.message || "Could not send the WhatsApp receipt. Check the connection and retry.");
-    } finally {
-      inFlight.delete(bill.id);
-    }
-  }
-
   async function printCompletedBill() {
     if (!completedBill) return;
     if (!training && billingPrintOptions(billingPrinter)) {
@@ -5604,7 +5589,6 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
     } else {
       openSystemPrintDialog("printing-completed-bill", "Opening print preview");
     }
-    void sendWhatsAppBillReceipt(completedBill, "print");
   }
 
   async function reprintHistoryBill() {
@@ -5619,7 +5603,6 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
     } else {
       openSystemPrintDialog("printing-history-bill", `Reprinting ${selectedHistoryBill.orderNumber || selectedHistoryBill.id}`);
     }
-    void sendWhatsAppBillReceipt(selectedHistoryBill, "print");
   }
 
   async function confirmCloseShift(entry) {
@@ -5722,7 +5705,8 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
     setOrderType("Dine-in");
     setSourceTableOrder(order);
     setCustomerName(String(order.customerName || ""));
-    setCustomerMobile(String(order.customerMobile || "").replace(/\D/g, "").slice(-10));
+    setCustomerMobile(billingMobile(String(order.customerMobile || "")));
+    setWhatsAppReceiptOptIn(false);
     setCustomerLocation(String(order.customerLocation || ""));
     setOrderNumber(training ? `TRAIN-${Date.now().toString().slice(-6)}` : order.orderNumber || `ORD-${Date.now().toString().slice(-6)}`);
     setOrderCreatedAt(new Date(order.receptionSentAt || order.createdAt || Date.now()));
@@ -5828,7 +5812,10 @@ function POS({ mode = "restaurant", training = false, cart, setCart, items, stor
               </span>
             </div>
           )}
-          <PosBillCustomer training={training} whatsappReceiptTiming={whatsappReceiptTiming} name={customerName} mobile={customerMobile} location={customerLocation} customers={billCustomers} showOnReceipt={billTemplate.showCustomer !== false} compact={!isSupermarket || Boolean(customerName || customerMobile)} onSaveCustomer={savePosCustomer} onAddWalletFunds={addPosWalletFunds} onRedeem={redeemCustomerWallet} onCredit={startCustomerCreditSale} onSettle={openCustomerSettlement} onChange={({ name, mobile, location }) => { setCustomerName(name); setCustomerMobile(mobile); setCustomerLocation(location || ""); setLoyaltyRedemption(0); setWalletRedemption(0); setPaymentError(""); }} />
+          <PosBillCustomer training={training} name={customerName} mobile={customerMobile} location={customerLocation} customers={billCustomers} showOnReceipt={billTemplate.showCustomer !== false} compact={!isSupermarket || Boolean(customerName || customerMobile)} onSaveCustomer={savePosCustomer} onAddWalletFunds={addPosWalletFunds} onRedeem={redeemCustomerWallet} onCredit={startCustomerCreditSale} onSettle={openCustomerSettlement} onChange={({ name, mobile, location }) => { setCustomerName(name); setCustomerMobile(mobile); setWhatsAppReceiptOptIn(false); setCustomerLocation(location || ""); setLoyaltyRedemption(0); setWalletRedemption(0); setPaymentError(""); }} />
+          {!training && cloudConfigured && customerMobile && customerMobileValid && <label className="whatsapp-receipt-consent">
+            <input type="checkbox" checked={whatsappReceiptOptIn} onChange={(event) => setWhatsAppReceiptOptIn(event.target.checked)} /> Customer agreed to receive this bill on WhatsApp
+          </label>}
           {!customerMobile && cart.length > 0 && posOffers.some((offer) => offer.status === "Active" && (Number(offer.customerMaxUses || 0) > 0 || offer.customerQuantityLimits?.length)) && <p className="pos-customer-offer-hint">Select a customer with a mobile number to use customer-limited offers.</p>}
           <div ref={billItemsRef} className={isSupermarket ? "bill-items scrollable erp-receipt-items" : "bill-items scrollable"} tabIndex={isSupermarket ? -1 : 0} aria-label="Selected bill items">
             {cart.length === 0 ? <div className="empty pos-empty-bill"><span><ShoppingCart size={29} strokeWidth={1.5} /></span><strong>Your bill starts here</strong><small>Select an item or scan a barcode</small></div> : cart.map((item, index) => {
@@ -15121,10 +15108,6 @@ function SettingsManagement({ notify, canManage, activeStore, setStores, billTem
       notify("Provider settings saved. Live payment testing requires gateway credentials.", 9000);
       return;
     }
-    if (activeSection === "WhatsApp templates") {
-      notify("Templates saved. A WhatsApp Business provider is required to send a test message.", 9000);
-      return;
-    }
     notify(`${config.action} completed`);
   }
 
@@ -16963,41 +16946,8 @@ function OnlineOrderingIntegrationSettings({ activeStore, canManage, notify, men
   );
 }
 
-function WhatsAppReceiptSettings({ activeStore, canManage, notify, onBack }) {
-  const [settings, setSettings] = useBusinessState(`vestora-whatsapp-receipts-${activeStore?.id || ""}`, () => ({ enabled: false }));
-  const [enabled, setEnabled] = useState(settings?.enabled === true);
-  const [sendWhen, setSendWhen] = useState(settings?.sendWhen ?? "checkout");
-  useEffect(() => {
-    setEnabled(settings?.enabled === true);
-    setSendWhen(settings?.sendWhen ?? "checkout");
-  }, [settings]);
-  return <section className="screen settings-detail-screen otp-access-screen">
-    <button className="settings-back-button" type="button" onClick={onBack}><PanelLeftClose size={17} /> Back to settings</button>
-    <div className="panel settings-detail-panel otp-access-panel">
-      <header className="otp-access-heading"><span className="otp-access-icon"><Bell size={22} /></span><div><span>Billing / customer messages</span><h2>WhatsApp bill receipts</h2><p>Choose when the customer receives their bill on WhatsApp.</p></div></header>
-      {!canManage && <p className="otp-access-readonly">Only a restaurant administrator can change this setting.</p>}
-      <div className="whatsapp-receipt-controls"><article className="otp-access-card">
-        <label className="otp-access-toggle"><input type="checkbox" checked={enabled} disabled={!canManage} onChange={(event) => setEnabled(event.target.checked)} /><span>Send WhatsApp receipts</span><strong>{enabled ? "On" : "Off"}</strong></label>
-        <label className="otp-access-phone">
-          <span>Send when</span>
-          <select value={sendWhen} disabled={!canManage || !enabled} onChange={(event) => setSendWhen(event.target.value)}>
-            <option value="checkout">After checkout</option>
-            <option value="print">When printing</option>
-          </select>
-        </label>
-        <p>{sendWhen === "print"
-          ? "Print bill and Reprint bill request a receipt. Each bill is sent once."
-          : "Send once as soon as the sale is saved."}</p>
-      </article></div>
-      <div className="otp-access-provider-note"><Bell size={17} /><span>Customers need a valid mobile number. Sending also requires a configured Meta connection and an approved bill receipt template.</span></div>
-      <footer className="otp-access-footer"><span>Applies to {activeStore?.name || "this business"} / {activeStore?.branch || "this branch"}.</span><button type="button" className="otp-access-save" disabled={!canManage || !activeStore?.id} onClick={() => { setSettings({ enabled, sendWhen }); notify("WhatsApp receipt setting saved. Cloud sync may still be pending."); }}>Save setting</button></footer>
-    </div>
-  </section>;
-}
-
-function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, billingPrinter, setBillingPrinter, canManage, canManageAll, activeStore, setStores, menuItems, themeConfig, setThemeConfig, setDark, displayScale, setDisplayScale }) {
+function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKotPrinter, billingPrinter, setBillingPrinter, canManage, canManageAll, activeStore, setStores, menuItems, themeConfig, setThemeConfig, setDark, displayScale, setDisplayScale, canManageMeta, selectedSetting, setSelectedSetting }) {
   const sectionNames = canManageAll ? Object.keys(settingsSectionConfig) : storeSettingsSections;
-  const [selectedSetting, setSelectedSetting] = useState(null);
   const settingMeta = {
     "Restaurant profile": Building2,
     "Branch settings": Store,
@@ -17008,7 +16958,6 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
     "Purchase controls": ClipboardList,
     Integrations: ShoppingCart,
     "Amazon S3 storage": DatabaseZap,
-    "WhatsApp templates": Bell,
     "Backup policy": DatabaseZap,
     "Theme and language": Sun,
   };
@@ -17049,11 +16998,11 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
     return <OtpAccessSettings activeStore={activeStore} canManage={canManage} notify={notify} onBack={() => setSelectedSetting(null)} />;
   }
 
-  if (selectedSetting === "WhatsApp bill receipts") {
-    return <WhatsAppReceiptSettings activeStore={activeStore} canManage={canManage} notify={notify} onBack={() => setSelectedSetting(null)} />;
+  if (selectedSetting === META_WHATSAPP_SETTINGS && canManageMeta) {
+    return <WhatsAppSettings key={activeStore.id} store={activeStore} onBack={() => setSelectedSetting(null)} />;
   }
 
-  if (selectedSetting) {
+  if (selectedSetting && selectedSetting !== META_WHATSAPP_SETTINGS) {
     return <SettingsManagement notify={notify} canManage={canManage} activeStore={activeStore} setStores={setStores} billTemplate={billTemplate} setBillTemplate={setBillTemplate} kotPrinter={kotPrinter} setKotPrinter={setKotPrinter} themeConfig={themeConfig} setThemeConfig={setThemeConfig} setDark={setDark} displayScale={displayScale} setDisplayScale={setDisplayScale} activeSection={selectedSetting} onBack={() => setSelectedSetting(null)} />;
   }
 
@@ -17073,11 +17022,11 @@ function SettingsView({ notify, billTemplate, setBillTemplate, kotPrinter, setKo
           <span className="settings-card-copy"><strong>Pine Labs terminal</strong><small>Show UPI QR on A910S and print confirmed bills on your Windows printer.</small></span>
           <span className="settings-card-open">Open <ChevronRight size={17} /></span>
         </button>
-        <button className="settings-card settings-card-featured" onClick={() => setSelectedSetting("WhatsApp bill receipts")}>
+        {canManageMeta && <button className="settings-card settings-card-featured" onClick={() => setSelectedSetting(META_WHATSAPP_SETTINGS)}>
           <span className="settings-card-icon"><Bell size={21} /></span>
-          <span className="settings-card-copy"><strong>WhatsApp bill receipts</strong><small>Turn automatic bill messages on or off for this branch.</small></span>
+          <span className="settings-card-copy"><strong>{META_WHATSAPP_SETTINGS}</strong><small>Connect this store’s sender and manage WhatsApp receipts.</small></span>
           <span className="settings-card-open">Open <ChevronRight size={17} /></span>
-        </button>
+        </button>}
         <button className="settings-card settings-card-featured" onClick={() => setSelectedSetting("OTP & access controls")}>
           <span className="settings-card-icon"><ShieldCheck size={21} /></span>
           <span className="settings-card-copy">

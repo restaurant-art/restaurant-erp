@@ -4,7 +4,7 @@ import { parseBillMobile, searchBillCustomers, validateBillCustomer } from "./po
 import { walletDepositAllocation } from "./customer-wallet-credit.js";
 import "./pos-bill-customer.css";
 
-export function PosBillCustomer({ training = false, whatsappReceiptTiming = null, name, mobile, location = "", customers = [], onChange, onSaveCustomer, onRedeem, onCredit, onSettle, onAddWalletFunds, showOnReceipt = true, compact = false }) {
+export function PosBillCustomer({ training = false, name, mobile, location = "", customers = [], onChange, onSaveCustomer, onRedeem, onCredit, onSettle, onAddWalletFunds, showOnReceipt = true, compact = false }) {
   const [draft, setDraft] = useState({ name: "", mobile: "", location: "" });
   const [customerQuery, setCustomerQuery] = useState("");
   const [editingCustomer, setEditingCustomer] = useState(false);
@@ -20,7 +20,7 @@ export function PosBillCustomer({ training = false, whatsappReceiptTiming = null
   const billMobile = parseBillMobile(customerQuery);
   const customerForNumber = billMobile ? customers.find((customer) => parseBillMobile(customer.mobile) === billMobile) : null;
   const selectedCustomer = customers.find((customer) => (
-    (mobile && String(customer.mobile || "").replace(/\D/g, "").slice(-10) === String(mobile).replace(/\D/g, "").slice(-10))
+    (mobile && parseBillMobile(customer.mobile) === parseBillMobile(mobile))
     || (!mobile && name && String(customer.name || "").trim().toLowerCase() === String(name).trim().toLowerCase())
   ));
   const walletBalance = Math.max(0, Number(selectedCustomer?.walletBalance || 0));
@@ -110,7 +110,7 @@ export function PosBillCustomer({ training = false, whatsappReceiptTiming = null
       {hasCustomer && <div className="pos-bill-customer-card">
         <span className="pos-customer-avatar"><User size={18} /></span>
         <div className="pos-selected-customer-info">
-          <small>{mobile && !training && whatsappReceiptTiming ? "WhatsApp receipt number" : "Bill customer"}</small>
+          <small>Bill customer</small>
           <div className="pos-selected-customer-name"><strong title={name || "Customer"}>{name || "Customer"}</strong>{walletBalance > 0 && <span className="pos-customer-wallet-balance">Wallet {walletBalance.toLocaleString("en-IN", { style: "currency", currency: "INR" })}</span>}</div>
           <div className="pos-selected-customer-meta">{mobile && <span className="pos-customer-mobile" title={`+91 ${mobile}`}><Phone size={12} />+91 {mobile}</span>}{location && <span className="pos-customer-location" title={location}><MapPin size={12} />{location}</span>}{creditBalance > 0 && <span className="pos-customer-credit-due"><BadgeIndianRupee size={12} />Credit due ₹{creditBalance.toFixed(2)}</span>}</div>
         </div>
@@ -134,7 +134,7 @@ export function PosBillCustomer({ training = false, whatsappReceiptTiming = null
         <p>Enter a name or mobile number for this bill.</p>
         <label>Customer name<input type="text" autoComplete="name" maxLength={60} placeholder="Enter customer name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} aria-invalid={Boolean(errors.name)} aria-describedby={errors.name ? nameErrorId : undefined} /></label>
         {errors.name && <p className="pos-customer-error" id={nameErrorId} role="alert">{errors.name}</p>}
-        <label>Mobile number<input type="tel" inputMode="tel" autoComplete="tel" placeholder="10-digit mobile, with or without +91" value={draft.mobile} onChange={(event) => setDraft({ ...draft, mobile: event.target.value })} aria-invalid={Boolean(errors.mobile)} aria-describedby={errors.mobile ? mobileErrorId : undefined} /></label>
+        <label>Mobile number<input type="tel" inputMode="tel" autoComplete="tel" placeholder="10-digit mobile or + country code" value={draft.mobile} onChange={(event) => setDraft({ ...draft, mobile: event.target.value })} aria-invalid={Boolean(errors.mobile)} aria-describedby={errors.mobile ? mobileErrorId : undefined} /></label>
         {errors.mobile && <p className="pos-customer-error" id={mobileErrorId} role="alert">{errors.mobile}</p>}
         <label>Location <small>(optional)</small><input type="text" autoComplete="address-level2" maxLength={100} placeholder="Area, city, or delivery location" value={draft.location} onChange={(event) => setDraft({ ...draft, location: event.target.value })} /></label>
         <footer><button type="button" onClick={() => dialogRef.current.close()}>Cancel</button><button type="submit" className="pos-customer-save">{editingCustomer ? "Save customer" : "Add customer"}</button></footer>

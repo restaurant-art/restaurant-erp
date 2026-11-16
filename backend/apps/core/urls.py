@@ -5,7 +5,6 @@ from . import views
 from . import cloud_views
 from . import barcode_views, production_views
 from . import training_otp
-from . import whatsapp_bill
 from . import gate_views
 from . import pine_cloud
 
@@ -68,7 +67,6 @@ urlpatterns = [
     path("cloud/training-otp/verify/", training_otp.verify_training_otp),
     path("cloud/action-otp/request/", training_otp.request_action_otp),
     path("cloud/action-otp/verify/", training_otp.verify_action_otp),
-    path("cloud/whatsapp-bill/", whatsapp_bill.send_bill_receipt),
     path("cloud/staff-account/", cloud_views.staff_account),
     path("cloud/public-orders/", cloud_views.public_orders),
     path("cloud/public-orders/<uuid:order_id>/", cloud_views.public_orders),

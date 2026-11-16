@@ -4,6 +4,7 @@ from django.contrib import admin
 from django.urls import include, path, re_path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from apps.whatsapp.views import digital_receipt
 from .spa import spa
 
 urlpatterns = [
@@ -12,7 +13,9 @@ urlpatterns = [
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
     path("api/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+    path("api/", include("apps.whatsapp.urls")),
     path("api/", include("apps.core.urls")),
+    path("receipts/whatsapp/", digital_receipt, name="whatsapp-digital-receipt"),
 ]
 
 if settings.DEBUG:

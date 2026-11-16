@@ -2,6 +2,7 @@ import mimetypes
 import os
 from pathlib import Path
 
+from django.conf import settings
 from django.http import FileResponse, Http404
 
 
@@ -25,4 +26,7 @@ def spa(request, path=""):
     response = FileResponse(candidate.open("rb"), content_type=content_type or "application/octet-stream")
     if candidate.name in {"index.html", "service-worker.js"}:
         response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    if candidate == root / "index.html" and settings.META_WHATSAPP_APP_ID:
+        # Embedded Signup completes in a cross-origin Meta popup.
+        response["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
     return response

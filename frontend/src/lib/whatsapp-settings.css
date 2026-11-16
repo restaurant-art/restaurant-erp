@@ -1,0 +1,35 @@
+.whatsapp-settings { display: grid; gap: 1rem; }
+.whatsapp-settings .settings-back-button { justify-self: start; }
+.whatsapp-settings .wa-connection,
+.whatsapp-settings .wa-section { padding: clamp(1rem, 2vw, 1.5rem); min-width: 0; }
+.wa-heading, .wa-actions, .wa-section-heading, .wa-inline { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+.wa-heading h2, .wa-section h3 { margin: 0; }
+.wa-heading p { margin: .25rem 0 0; }
+.wa-heading .wa-status { margin-inline-start: auto; }
+.wa-status { border: 1px solid #bccbc2; border-radius: 999px; font-size: .85rem; font-weight: 650; padding: .3rem .7rem; }
+.wa-status[data-state="connected"] { color: #17604b; background: #e6f4ec; border-color: #c6e2d2; }
+.wa-status[data-state="pending"], .wa-status[data-state="reconnect"] { color: #74440f; background: #fff4e2; border-color: #edd6b8; }
+.wa-identity { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .75rem; margin: 1.25rem 0; }
+.wa-identity > div { padding: .7rem .9rem; border: 1px solid #98ada54d; border-radius: .7rem; }
+.wa-identity dt { font-size: .85rem; opacity: .8; }
+.wa-identity dd { margin: .25rem 0 0; font-weight: 650; overflow-wrap: anywhere; }
+.wa-error, .wa-note, .wa-template-preview { padding: .7rem .85rem; border-radius: .6rem; }
+.wa-error { color: #962928; background: #fff0ee; }
+.wa-note, .wa-template-preview { background: #97b9a523; margin: .75rem 0; }
+.wa-template-preview { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wa-settings-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 1rem; }
+.wa-section { display: grid; gap: .9rem; align-content: start; }
+.wa-section-heading { justify-content: space-between; }
+.wa-section > button { justify-self: start; }
+.wa-section label:not(.wa-check), .wa-inline label { display: grid; gap: .35rem; }
+.wa-section label input:not([type="checkbox"]), .wa-section select { width: 100%; min-width: 0; }
+.wa-inline { margin-top: .9rem; align-items: end; }
+.wa-inline p { margin: .25rem 0; }
+.wa-check, .whatsapp-receipt-consent { display: flex; align-items: center; gap: .45rem; }
+.wa-check input, .whatsapp-receipt-consent input { width: 1rem; height: 1rem; flex: 0 0 1rem; accent-color: #17604b; }
+.whatsapp-receipt-consent { margin: .4rem 0 .6rem; font-size: .8rem; }
+.wa-table { overflow: auto; }
+.wa-table td small { display: block; margin-top: .25rem; }
+.wa-message-id { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wa-legacy summary { cursor: pointer; }
+@media (max-width: 800px) { .wa-settings-grid { grid-template-columns: minmax(0, 1fr); } }

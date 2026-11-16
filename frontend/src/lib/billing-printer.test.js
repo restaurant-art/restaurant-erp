@@ -75,7 +75,7 @@ for (const [name, selector] of [["printCompletedBill", ".completed-print-receipt
       billingPrinter: billing, kotPrinter: { ...billing, name: "Kitchen" }, billingPrintOptions,
       completedBill: { id: "test" }, selectedHistoryBill: { id: "old" },
       printReceiptWithQz: async (options) => calls.push(options), notify: () => {},
-      sendWhatsAppBillReceipt: async () => {}, window: { confirm: () => true },
+      window: { confirm: () => true },
       openSystemPrintDialog: (...args) => fallbacks.push(args),
     });
     vm.runInContext(extractFunction(name), context);
@@ -92,45 +92,6 @@ for (const [name, selector] of [["printCompletedBill", ".completed-print-receipt
     assert.equal(fallbacks.length, 2, "Training may open a marked print preview");
   });
 }
-
-test("printing requests the saved bill only in WhatsApp print mode", async () => {
-  const sends = [];
-  let acknowledge;
-  const savedBill = new Promise((resolve) => { acknowledge = resolve; });
-  const context = vm.createContext({
-    training: false, billingPrinter: billing, billingPrintOptions,
-    completedBill: { id: "bill-1", customerMobile: "9876543210" },
-    selectedHistoryBill: { id: "bill-2", customerMobile: "9876543210" },
-    pendingBillSaves: { current: new Map([["bill-1", savedBill]]) },
-    whatsappReceiptsInFlight: { current: new Set() },
-    whatsappReceiptTiming: "checkout",
-    storeId: "store-1",
-    printReceiptWithQz: async () => {}, notify: () => {},
-    cloudApiRequest: async (_, request) => { sends.push(JSON.parse(request.body)); return {}; },
-    openSystemPrintDialog: () => {},
-  });
-  for (const name of ["sendWhatsAppBillReceipt", "printCompletedBill", "reprintHistoryBill"]) {
-    vm.runInContext(extractFunction(name), context);
-  }
-  await context.printCompletedBill();
-  assert.deepEqual(sends, []);
-
-  context.whatsappReceiptTiming = "print";
-  await context.sendWhatsAppBillReceipt(context.completedBill, "checkout");
-  await context.printCompletedBill();
-  await context.printCompletedBill();
-  assert.deepEqual(sends, [], "Meta must wait for the bill to be saved");
-  acknowledge();
-  await new Promise(setImmediate);
-  assert.deepEqual(sends, [{ storeId: "store-1", billId: "bill-1", trigger: "print" }]);
-
-  context.billingPrinter = { ...billing, enabled: false };
-  await context.reprintHistoryBill();
-  assert.equal(sends.at(-1).billId, "bill-2", "Browser printing sends the selected saved bill");
-  context.training = true;
-  await context.printCompletedBill();
-  assert.equal(sends.length, 2, "Training bills never send a live receipt");
-});
 
 const setupStart = source.indexOf("function PrinterConnectionSetup(");
 const setupSource = source.slice(setupStart, source.indexOf("\nfunction buildSettingsDefaults", setupStart));

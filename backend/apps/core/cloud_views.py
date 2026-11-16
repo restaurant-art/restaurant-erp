@@ -1,6 +1,7 @@
 import hashlib
 import json
 import uuid
+from datetime import timedelta
 from decimal import Decimal
 
 from django.conf import settings
@@ -11,6 +12,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
+
+from apps.whatsapp.cloud import handle_saved_state
 
 from .models import ActionOtpChallenge, Branch, PublicOrder, SharedAppState, SyncOperation
 from .attendance_permissions import can_record_manual_attendance, changes_manual_attendance
@@ -28,7 +31,7 @@ GLOBAL_KEYS = {
     "vestora-kds-orders", "vestora-table-orders", "vestora-supplier-orders",
 }
 STORE_PREFIXES = (
-    "purchase-drafts", "purchase-orders", "grn-register", "grn-template", "security-controls", "whatsapp-receipts", "pos-drafts", "display-scale",
+    "purchase-drafts", "purchase-orders", "grn-register", "grn-template", "security-controls", "pos-drafts", "display-scale",
     "inventory-category-profiles", "inventory-tax-profiles",
     "active-settings", "attendance-employees", "attendance-logs", "attendance-records",
     "attendance-report", "attendance-settings", "finance-bank-accounts", "finance-expenses",
@@ -324,8 +327,6 @@ def cloud_state(request):
         return _json_error("Administrator permission required", 403)
     if key.startswith("vestora-security-controls-") and not manages_staff:
         return _json_error("Administrator permission required to change OTP controls", 403)
-    if key.startswith("vestora-whatsapp-receipts-") and not manages_staff:
-        return _json_error("Administrator permission required to change WhatsApp receipt settings", 403)
     if "expectedUpdatedAt" not in request.data:
         return _json_error("Refresh this app to save shared data safely", 409)
     try:
@@ -371,6 +372,7 @@ def cloud_state(request):
                 state_key=inventory_key, defaults={"state_value": []},
             )
         row = SharedAppState.objects.select_for_update().filter(state_key=key).first()
+        previous_value = row.state_value if row else None
         expected = request.data.get("expectedUpdatedAt")
         current_version = row.updated_at.isoformat() if row else None
         if current_version != expected:
@@ -392,15 +394,6 @@ def cloud_state(request):
         except InternalBarcodeError as error:
             operation.delete()
             return _json_error(str(error))
-        if key.startswith("vestora-whatsapp-receipts-"):
-            if not isinstance(value, dict) or not isinstance(value.get("enabled"), bool):
-                operation.delete()
-                return _json_error("WhatsApp receipt setting must be on or off")
-            send_when = value.get("sendWhen", "checkout")
-            if send_when not in ("checkout", "print"):
-                operation.delete()
-                return _json_error("Choose when to send WhatsApp receipts")
-            value = {"enabled": value["enabled"], "sendWhen": send_when}
         if key.startswith("vestora-security-controls-"):
             if not isinstance(value, dict):
                 operation.delete()
@@ -460,12 +453,16 @@ def cloud_state(request):
                 operation.delete()
                 return _json_error("Cannot change records from another store", 403)
             old = row.state_value if row and isinstance(row.state_value, list) else []
+            if key == "vestora-users" and _overlaps_other_store_staff(access, old, value):
+                operation.delete()
+                return _json_error("Cannot change an account assigned to another store", 403)
             value = value + [item for item in old if not _can_store(access, item.get("id") if key == "vestora-stores" else item.get("storeId", ""))]
         creating = row is None
         if creating:
             row = SharedAppState(state_key=key)
         row.state_value = value
-        row.updated_at = timezone.now()
+        now = timezone.now()
+        row.updated_at = now if creating else max(now, row.updated_at + timedelta(microseconds=1))
         try:
             with transaction.atomic():
                 row.save(force_insert=creating)
@@ -480,6 +477,7 @@ def cloud_state(request):
         for approval in approvals:
             approval.grant_used_at = timezone.now()
             approval.save(update_fields=("grant_used_at",))
+        handle_saved_state(key, previous_value, value, access)
         result = {
             "state_key": row.state_key,
             "state_value": _scope_value(access, key, row.state_value),
@@ -520,6 +518,12 @@ def staff_account(request):
     if not _can_store(access, store_id):
         return _json_error("Store access denied", 403)
     account = User.objects.filter(email__iexact=email).first()
+    if not access["platform_admin"]:
+        proposed_staff = {"id": request.data.get("id"), "email": email, "authUserId": getattr(account, "pk", None)}
+        account_stores = _user_access(account)["allowed"] if account else []
+        if (_overlaps_other_store_staff(access, access["staff"], [proposed_staff])
+                or (account and (not account_stores or any(not _can_store(access, entry) for entry in account_stores)))):
+            return _json_error("Cannot change an account assigned to another store", 403)
     if action == "delete":
         if account and (account.is_superuser or account.user_type == "super_admin"):
             return _json_error("Super Admin accounts cannot be deleted", 403)
@@ -562,6 +566,17 @@ def staff_account(request):
         staff[index] = {**staff[index], **record}
     SharedAppState.objects.update_or_create(state_key="vestora-users", defaults={"state_value": staff, "updated_at": timezone.now()})
     return Response({"authUserId": str(account.pk), "staff": record})
+
+
+def _overlaps_other_store_staff(access, existing, proposed):
+    for field in ("id", "email", "authUserId"):
+        protected = {
+            str(record[field]).casefold() for record in existing
+            if isinstance(record, dict) and record.get(field) and not _can_store(access, record.get("storeId"))
+        }
+        if any(str(record[field]).casefold() in protected for record in proposed if record.get(field)):
+            return True
+    return False
 
 
 def _public_order_dict(order):

@@ -87,6 +87,16 @@ Parameters:
     Type: String
     Default: ""
     Description: Optional Route 53 public hosted-zone ID. Leave blank to manage DNS elsewhere.
+  MetaWhatsAppPlatformSecretArn:
+    Type: String
+    Default: ""
+    Description: Optional Secrets Manager ARN containing the platform Meta app and webhook settings.
+    AllowedPattern: "^$|^arn:[^:]+:secretsmanager:[^:]+:[0-9]{12}:secret:.+$"
+  MetaWhatsAppKmsKeyArn:
+    Type: String
+    Default: ""
+    Description: Optional symmetric KMS key ARN for encrypting each store's WhatsApp authorization.
+    AllowedPattern: "^$|^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[A-Za-z0-9-]+$"
   PublishDns:
     Type: String
     Default: "false"
@@ -122,21 +132,6 @@ Parameters:
     Type: String
     Default: en_US
     AllowedPattern: '^[A-Za-z_]{2,10}$'
-  MetaWhatsAppBillStoreId:
-    Type: String
-    Default: ""
-    AllowedPattern: '^$|^[A-Za-z0-9_-]{1,100}$'
-    Description: Branch ID allowed to send WhatsApp bill receipts. Leave blank to keep receipts off.
-  MetaWhatsAppBillTemplateName:
-    Type: String
-    Default: uvpro_invoice_confirmation
-    AllowedPattern: '^[a-z0-9_]{1,512}$'
-    Description: Approved eight-variable Utility template for the sender.
-  MetaWhatsAppBillTemplateLanguage:
-    Type: String
-    Default: en
-    AllowedPattern: '^[A-Za-z_]{2,10}$'
-
   ImageTag:
     Type: String
     Default: latest
@@ -247,6 +242,9 @@ Parameters:
     Default: 10.42.11.0/24
 
 Conditions:
+  MetaWhatsAppEnabled: !And
+    - !Not [!Equals [!Ref MetaWhatsAppPlatformSecretArn, ""]]
+    - !Not [!Equals [!Ref MetaWhatsAppKmsKeyArn, ""]]
   CreateDnsRecord: !And [!Not [!Equals [!Ref HostedZoneId, ""]], !Equals [!Ref PublishDns, "true"]]
   BootstrapAdmin: !Not [!Equals [!Ref BootstrapAdminEmail, ""]]
   UseDatabaseMultiAZ: !Equals [!Ref DatabaseMultiAZ, "true"]
@@ -255,12 +253,6 @@ Conditions:
   RedisHighAvailability: !Equals [!Ref RedisNodeCount, 2]
   EnableWebAutoscaling: !Not [!Equals [!Ref DesiredWebCount, 0]]
   HasMetaWhatsAppToken: !Not [!Equals [!Ref MetaWhatsAppSecretArn, ""]]
-  EnableMetaWhatsAppBills: !And
-    - !Condition HasMetaWhatsAppToken
-    - !Not [!Equals [!Ref MetaWhatsAppPhoneNumberId, ""]]
-    - !Not [!Equals [!Ref MetaWhatsAppApiVersion, ""]]
-    - !Not [!Equals [!Ref MetaWhatsAppBillStoreId, ""]]
-
 Resources:
   Vpc:
     Type: AWS::EC2::VPC
@@ -700,6 +692,7 @@ Resources:
                 Action: secretsmanager:GetSecretValue
                 Resource:
                   - !Ref ApplicationSecret
+                  - !If [MetaWhatsAppEnabled, !Ref MetaWhatsAppPlatformSecretArn, !Ref AWS::NoValue]
                   - !If [HasMetaWhatsAppToken, !Ref MetaWhatsAppSecretArn, !Ref 'AWS::NoValue']
   TaskRole:
     Type: AWS::IAM::Role
@@ -712,6 +705,19 @@ Resources:
               Service: ecs-tasks.amazonaws.com
             Action: sts:AssumeRole
       Policies:
+        - !If
+          - MetaWhatsAppEnabled
+          - PolicyName: StoreWhatsAppCredentials
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action: [kms:Encrypt, kms:Decrypt]
+                  Resource: !Ref MetaWhatsAppKmsKeyArn
+                  Condition:
+                    StringEquals:
+                      kms:EncryptionContext:purpose: uvpro-whatsapp-sender
+          - !Ref AWS::NoValue
         - PolicyName: RuntimeDatabaseSecret
           PolicyDocument:
             Version: "2012-10-17"
@@ -848,6 +854,8 @@ Resources:
               Value: "True"
             - Name: SECURE_HSTS_SECONDS
               Value: "31536000"
+            - !If [MetaWhatsAppEnabled, {Name: META_WHATSAPP_KMS_KEY_ARN, Value: !Ref MetaWhatsAppKmsKeyArn}, !Ref AWS::NoValue]
+            - !If [MetaWhatsAppEnabled, {Name: META_WHATSAPP_RECEIPT_ORIGIN, Value: !Sub "https://${ApplicationDomain}"}, !Ref AWS::NoValue]
             - Name: META_WHATSAPP_PHONE_NUMBER_ID
               Value: !Ref MetaWhatsAppPhoneNumberId
             - Name: META_WHATSAPP_API_VERSION
@@ -856,17 +864,14 @@ Resources:
               Value: !Ref MetaWhatsAppOtpTemplateName
             - Name: META_WHATSAPP_TEMPLATE_LANGUAGE
               Value: !Ref MetaWhatsAppOtpTemplateLanguage
-            - Name: META_WHATSAPP_BILL_ENABLED
-              Value: !If [EnableMetaWhatsAppBills, "true", "false"]
-            - Name: META_WHATSAPP_BILL_STORE_ID
-              Value: !Ref MetaWhatsAppBillStoreId
-            - Name: META_WHATSAPP_BILL_TEMPLATE_NAME
-              Value: !Ref MetaWhatsAppBillTemplateName
-            - Name: META_WHATSAPP_BILL_TEMPLATE_LANGUAGE
-              Value: !Ref MetaWhatsAppBillTemplateLanguage
           Secrets:
             - Name: SECRET_KEY
               ValueFrom: !Join ["", [!Ref ApplicationSecret, ":SECRET_KEY::"]]
+            - !If [MetaWhatsAppEnabled, {Name: META_WHATSAPP_APP_ID, ValueFrom: !Sub "${MetaWhatsAppPlatformSecretArn}:META_WHATSAPP_APP_ID::"}, !Ref AWS::NoValue]
+            - !If [MetaWhatsAppEnabled, {Name: META_WHATSAPP_APP_SECRET, ValueFrom: !Sub "${MetaWhatsAppPlatformSecretArn}:META_WHATSAPP_APP_SECRET::"}, !Ref AWS::NoValue]
+            - !If [MetaWhatsAppEnabled, {Name: META_WHATSAPP_SIGNUP_CONFIG_ID, ValueFrom: !Sub "${MetaWhatsAppPlatformSecretArn}:META_WHATSAPP_SIGNUP_CONFIG_ID::"}, !Ref AWS::NoValue]
+            - !If [MetaWhatsAppEnabled, {Name: META_WHATSAPP_GRAPH_VERSION, ValueFrom: !Sub "${MetaWhatsAppPlatformSecretArn}:META_WHATSAPP_GRAPH_VERSION::"}, !Ref AWS::NoValue]
+            - !If [MetaWhatsAppEnabled, {Name: META_WHATSAPP_WEBHOOK_VERIFY_TOKEN, ValueFrom: !Sub "${MetaWhatsAppPlatformSecretArn}:META_WHATSAPP_WEBHOOK_VERIFY_TOKEN::"}, !Ref AWS::NoValue]
             - !If
               - HasMetaWhatsAppToken
               - Name: META_WHATSAPP_ACCESS_TOKEN
@@ -950,15 +955,43 @@ Resources:
               Value: "True"
             - Name: SECURE_HSTS_SECONDS
               Value: "31536000"
+            - !If [MetaWhatsAppEnabled, {Name: META_WHATSAPP_KMS_KEY_ARN, Value: !Ref MetaWhatsAppKmsKeyArn}, !Ref AWS::NoValue]
+            - !If [MetaWhatsAppEnabled, {Name: META_WHATSAPP_RECEIPT_ORIGIN, Value: !Sub "https://${ApplicationDomain}"}, !Ref AWS::NoValue]
           Secrets:
             - Name: SECRET_KEY
               ValueFrom: !Join ["", [!Ref ApplicationSecret, ":SECRET_KEY::"]]
+            - !If [MetaWhatsAppEnabled, {Name: META_WHATSAPP_APP_SECRET, ValueFrom: !Sub "${MetaWhatsAppPlatformSecretArn}:META_WHATSAPP_APP_SECRET::"}, !Ref AWS::NoValue]
+            - !If [MetaWhatsAppEnabled, {Name: META_WHATSAPP_GRAPH_VERSION, ValueFrom: !Sub "${MetaWhatsAppPlatformSecretArn}:META_WHATSAPP_GRAPH_VERSION::"}, !Ref AWS::NoValue]
           LogConfiguration:
             LogDriver: awslogs
             Options:
               awslogs-group: !Ref WorkerLogGroup
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: worker
+
+  WhatsAppBeatTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: MetaWhatsAppEnabled
+    Properties:
+      Family: !Sub ${ProjectName}-${EnvironmentName}-whatsapp-beat
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      Cpu: "256"
+      Memory: "512"
+      ContainerDefinitions:
+        - Name: beat
+          Image: !Sub ${Repository.RepositoryUri}:${ImageTag}
+          Command: [celery, -A, config, beat, --loglevel=INFO, --schedule=/tmp/uvpro-celerybeat]
+          Environment:
+            - Name: REDIS_URL
+              Value: !Sub rediss://${Redis.PrimaryEndPoint.Address}:${Redis.PrimaryEndPoint.Port}/0?ssl_cert_reqs=required
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref WorkerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: whatsapp-beat
 
   MigrationTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -1199,6 +1232,27 @@ Resources:
         MaximumPercent: 200
         MinimumHealthyPercent: 100
       EnableECSManagedTags: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups: [!Ref AppSecurityGroup]
+          Subnets: [!Ref PrivateSubnet1, !Ref PrivateSubnet2]
+      PlatformVersion: LATEST
+      PropagateTags: SERVICE
+
+  WhatsAppBeatService:
+    Type: AWS::ECS::Service
+    Condition: MetaWhatsAppEnabled
+    DependsOn: [RedisIngressFromApp, WorkerService]
+    Properties:
+      ServiceName: !Sub ${ProjectName}-${EnvironmentName}-whatsapp-beat
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref WhatsAppBeatTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        MaximumPercent: 100
+        MinimumHealthyPercent: 0
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: DISABLED

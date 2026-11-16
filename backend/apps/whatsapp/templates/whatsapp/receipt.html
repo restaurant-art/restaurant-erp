@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if test %}Test receipt{% else %}Receipt {{ invoice.invoice_number }}{% endif %}</title>
+  <style>
+    body { background: #f3f6f4; color: #142820; font: 1rem/1.5 system-ui, sans-serif; margin: 0; padding: 1rem; }
+    main { background: white; border: 1px solid #d7e4dc; border-radius: 12px; margin: 1.5rem auto; max-width: 36rem; padding: clamp(1rem, 4vw, 2rem); }
+    h1 { font-size: 1.5rem; margin: 0; }
+    .meta { color: #466052; margin: .25rem 0; overflow-wrap: anywhere; }
+    table { border-collapse: collapse; margin: 1.25rem 0; table-layout: fixed; width: 100%; }
+    th, td { border-bottom: 1px solid #e3ebe7; overflow-wrap: anywhere; padding: .5rem .25rem; text-align: right; vertical-align: top; }
+    th:first-child, td:first-child { text-align: left; width: 54%; }
+    dl div { display: flex; justify-content: space-between; margin: .35rem 0; }
+    dd { margin-left: .75rem; text-align: right; }
+    .total { border-top: 1px solid #d7e4dc; font-weight: bold; padding-top: .75rem; }
+    @media print { body { background: white; padding: 0; } main { border: 0; margin: 0 auto; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>{{ invoice.store }}</h1>
+    {% if invoice.branch %}<p class="meta">{{ invoice.branch }}</p>{% endif %}
+    {% if invoice.address %}<p class="meta">{{ invoice.address }}</p>{% endif %}
+    {% if invoice.gstin %}<p class="meta">GSTIN {{ invoice.gstin }}</p>{% endif %}
+    <p class="meta">{% if test %}Test receipt{% else %}Receipt{% endif %} {{ invoice.invoice_number }}</p>
+    <p class="meta"><time datetime="{{ invoice.completed_at }}">{{ invoice.completed_at|slice:":10" }}</time></p>
+    <table>
+      <thead><tr><th scope="col">Item</th><th scope="col">Qty</th><th scope="col">Rate</th></tr></thead>
+      <tbody>
+        {% for item in invoice.items %}
+          <tr><td>{{ item.name }}</td><td>{{ item.quantity }}</td><td>{% if item.rate %}₹{{ item.rate }}{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <dl>
+      {% if invoice.subtotal %}<div><dt>Subtotal</dt><dd>₹{{ invoice.subtotal }}</dd></div>{% endif %}
+      {% if invoice.discount %}<div><dt>Discount</dt><dd>₹{{ invoice.discount }}</dd></div>{% endif %}
+      {% if invoice.tax %}<div><dt>GST included</dt><dd>₹{{ invoice.tax }}</dd></div>{% endif %}
+      {% if invoice.cgst %}<div><dt>CGST</dt><dd>₹{{ invoice.cgst }}</dd></div>{% endif %}
+      {% if invoice.sgst %}<div><dt>SGST</dt><dd>₹{{ invoice.sgst }}</dd></div>{% endif %}
+      {% if invoice.round_off %}<div><dt>Round off</dt><dd>₹{{ invoice.round_off }}</dd></div>{% endif %}
+      <div class="total"><dt>Total</dt><dd>₹{{ invoice.total }}</dd></div>
+      {% if invoice.payment %}<div><dt>Payment</dt><dd>{{ invoice.payment }}</dd></div>{% endif %}
+    </dl>
+  </main>
+</body>
+</html>

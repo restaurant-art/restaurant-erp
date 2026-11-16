@@ -22,5 +22,10 @@ test('keeps the full Indian customer number when pasted with a country code', ()
     assert.equal(result.valid, true);
     assert.equal(result.customer.mobile, '9876543210');
   }
-  assert.ok(validateBillCustomer({ mobile: '+1 202 555 0123' }).errors.mobile);
+});
+
+test('preserves an international customer number with its country code', () => {
+  const result = validateBillCustomer({ mobile: '+1 202 555 0123' });
+  assert.equal(result.valid, true);
+  assert.equal(result.customer.mobile, '+12025550123');
 });
