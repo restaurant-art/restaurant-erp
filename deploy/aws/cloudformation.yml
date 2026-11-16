@@ -47,14 +47,13 @@ Metadata:
       - Label:
           default: Meta WhatsApp
         Parameters:
+          - MetaWhatsAppPlatformSecretArn
+          - MetaWhatsAppKmsKeyArn
           - MetaWhatsAppSecretArn
           - MetaWhatsAppPhoneNumberId
           - MetaWhatsAppApiVersion
           - MetaWhatsAppOtpTemplateName
           - MetaWhatsAppOtpTemplateLanguage
-          - MetaWhatsAppBillStoreId
-          - MetaWhatsAppBillTemplateName
-          - MetaWhatsAppBillTemplateLanguage
       - Label:
           default: Network
         Parameters:
