@@ -287,7 +287,7 @@ class StoreWhatsAppTests(APITestCase):
               patch("config.spa.Path.open", return_value=BytesIO(b"UVPRO"))):
             response = APIClient().get("/")
             self.assertEqual(response.headers["Cross-Origin-Opener-Policy"], "same-origin-allow-popups")
-            response.close()
+            self.assertEqual(b"".join(response.streaming_content), b"UVPRO")
 
     @patch("apps.whatsapp.delivery.graph")
     def test_disconnect_cancels_existing_jobs_and_preserves_billing_and_history(self, graph):
