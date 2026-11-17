@@ -1,0 +1,14 @@
+.pine-settings { max-width: 980px; }
+.pine-settings h2 { display: flex; align-items: center; gap: 12px; }
+.pine-eyebrow { color: #286752; font-size: 12px; font-weight: 700; letter-spacing: .12em; }
+.pine-status { background: #edf6f1; border: 1px solid #c9dfd3; border-radius: 14px; padding: 20px; margin: 22px 0; }
+.pine-status p { margin-bottom: 0; }
+.pine-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.pine-actions button { display: flex; gap: 8px; align-items: center; min-height: 44px; }
+.pine-steps { padding-left: 24px; line-height: 1.7; }
+.pine-steps li { margin: 12px 0; }
+.pine-note { color: var(--text-muted, #53665d); font-size: 13px; line-height: 1.6; }
+.pine-warning { background: #fff3de; color: #71450a; border-radius: 10px; padding: 14px; }
+.pine-checkout-progress { position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; background: #10281fcc; padding: 24px; }
+.pine-checkout-progress > div { background: white; color: #153c2e; border-radius: 18px; padding: 28px; max-width: 420px; width: 100%; line-height: 1.6; }
+@media (max-width: 600px) { .pine-actions { flex-direction: column; } .pine-actions button { justify-content: center; width: 100%; } }

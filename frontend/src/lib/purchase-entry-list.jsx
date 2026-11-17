@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { BadgeIndianRupee, Check, Eye, MoreVertical, Pencil, Plus, Send, Trash2, Undo2 } from "lucide-react";
 import { purchaseDraftDeadline, purchaseDraftNumber } from "./purchase-drafts.js";
+import { PurchaseBarcodeButton } from "./barcode-printing.jsx";
 
 const statusNames = { Draft: "Draft", PendingApproval: "Submitted for approval", Approved: "Approved" };
 
@@ -61,6 +62,7 @@ export function PurchaseEntryList({ records, purchases, onNew, onView, onEdit, o
       </tbody></table></div>
     {menu && createPortal(<div className="purchase-entry-action-menu purchase-draft-actions-menu" role="menu" style={{ left: menu.left, top: Math.max(8, menu.top) }}>
       <button type="button" role="menuitem" onClick={() => menuAction(onView)}><Eye size={15} /> View bill</button>
+      {menu.row.status === "Approved" && <PurchaseBarcodeButton reference={menu.row.purchase.id} />}
       {menu.row.status === "Draft" && <><button type="button" role="menuitem" onClick={() => menuAction(onEdit)}><Pencil size={15} /> Edit draft</button><button type="button" role="menuitem" onClick={() => menuAction(onSubmit)}><Send size={15} /> Submit for approval</button></>}
       {menu.row.status === "PendingApproval" && <><button type="button" role="menuitem" onClick={() => menuAction(onReturnToDraft)}><Undo2 size={15} /> Return to draft</button><button type="button" role="menuitem" onClick={() => menuAction(onApprove)}><Check size={15} /> Approve &amp; post</button></>}
       {menu.row.status === "Approved" && <><button type="button" role="menuitem" onClick={() => menuAction(onEdit)}><Pencil size={15} /> Edit bill</button>{menu.row.balance > 0.005 && <button type="button" role="menuitem" onClick={() => menuAction(onSettle)}><BadgeIndianRupee size={15} /> Settle balance</button>}</>}

@@ -2,6 +2,11 @@ export const globalBusinessKeys = new Set(['vestora-stores', 'vestora-users', 'v
 export const storePrefixes = ['active-settings', 'attendance-employees', 'attendance-logs', 'attendance-records', 'attendance-report', 'attendance-settings', 'finance-bank-accounts', 'finance-expenses', 'finance-journals', 'finance-ledgers', 'finance-receipts', 'finance-vendor-payments', 'finished-goods', 'floors', 'food-stock', 'inventory-brands', 'inventory-manufacturers', 'inventory-categories', 'inventory-category-profiles', 'inventory-departments', 'inventory-subcategories', 'inventory-tax-profiles', 'inventory-transactions', 'inventory-vendors', 'inventory-brand-manufacturer-profiles', 'inventory', 'last-shift-close', 'shifts', 'shift-history', 'leave-requests', 'menu-items', 'menu-setup', 'offers', 'payroll-attendance', 'production-batches', 'production-categories', 'production-wastage', 'recipes', 'tables', 'bill-template', 'theme-config', 'supplier-documents', 'customer-details'];
 storePrefixes.push('purchase-drafts');
 storePrefixes.push('purchase-orders');
+storePrefixes.push('grn-register');
+storePrefixes.push('grn-template');
+storePrefixes.push('security-controls');
+storePrefixes.push('whatsapp-receipts');
+storePrefixes.push('pos-drafts');
 export function stateStore(key) {
   const prefix = storePrefixes.find((name) => key.startsWith(`vestora-${name}-`));
   return prefix ? key.slice(`vestora-${prefix}-`.length) : null;

@@ -1,0 +1,73 @@
+.pos-live-workspace[hidden] { display: none !important; }
+.pos-training-launch { border: 1px solid #c7b6ee !important; background: #f3edff !important; color: #673ab4 !important; }
+.pos-training-workspace .pos-page-actions .pos-training-price-check { border-color: #c7b6ee; background: #f3edff; color: #673ab4; }
+.pos-training-workspace .pos-page-actions .pos-training-price-check:hover { border-color: #7040b6; background: #7040b6; color: #fff; }
+.pos-price-check-modal { width: min(680px, 100%); max-height: min(78vh, 760px); overflow: hidden; }
+.pos-price-check-search { min-height: 46px; display: flex !important; align-items: center; gap: 10px !important; padding: 0 12px; border: 1px solid #d9c6f2; border-radius: 10px; background: #fbf9fe; color: #7040b6 !important; }
+.pos-price-check-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: #2b203c; font: inherit; }
+.pos-price-check-list { min-height: 120px; max-height: 52vh; overflow: auto; border: 1px solid #e1d7ee; border-radius: 10px; }
+.pos-price-check-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; border-bottom: 1px solid #eee8f5; }
+.pos-price-check-row:last-child { border-bottom: 0; }
+.pos-price-check-row > div { display: grid; gap: 4px; }
+.pos-price-check-row > div:last-child { text-align: right; }
+.pos-price-check-row small, .pos-price-check-empty { color: #7c6b8f; font-size: 12px; }
+.pos-price-check-empty { margin: 0; padding: 24px; text-align: center; }
+.pos-training-gate { width: min(460px, calc(100vw - 32px)); padding: 28px; border: 1px solid #dfd4f4; border-radius: 22px; background: #fff; color: #282139; box-shadow: 0 25px 90px #20123533; }
+.pos-training-gate::backdrop { background: #160f2c80; backdrop-filter: blur(5px); }
+.pos-training-gate header, .pos-training-gate footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.training-gate-icon { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 15px; background: #f1eafa; color: #7342be; }
+.pos-training-gate header button { border: 0; background: transparent; color: #6c647a; padding: 8px; }
+.training-eyebrow { display: block; margin-top: 22px; color: #7342be; font-size: 10px; font-weight: 750; letter-spacing: .12em; }
+.pos-training-gate h2 { margin: 8px 0 10px; font-size: 26px; letter-spacing: -.03em; }
+.pos-training-gate p { color: #70667f; font-size: 14px; line-height: 1.6; }
+.pos-training-gate label { display: grid; gap: 8px; margin-top: 18px; font-size: 13px; font-weight: 650; }
+.pos-training-gate input, .pos-training-gate select { width: 100%; min-height: 45px; padding: 11px 12px; border: 1px solid #dcd5e7; border-radius: 10px; background: white; color: #282139; }
+.pos-training-gate :focus-visible { outline: 3px solid #c5acec; outline-offset: 2px; }
+.pos-training-gate small { display: flex; align-items: flex-start; gap: 7px; margin: 18px 0; font-size: 11px; line-height: 1.6; color: #70667f; }
+.pos-training-gate small svg { flex: 0 0 auto; margin-top: 2px; }
+.pos-training-gate footer { justify-content: flex-end; padding-top: 8px; }
+.pos-training-gate footer button { min-height: 43px; border: 1px solid #dcd5e7; border-radius: 10px; padding: 10px 16px; }
+.pos-training-gate .training-gate-submit { background: #7040b6; border-color: #7040b6; color: white; }
+.pos-training-gate .training-gate-error { color: #a12844; background: #fff0f3; border-radius: 8px; padding: 9px 12px; }
+.pos-training-gate .training-gate-delivery { display: flex; align-items: center; gap: 9px; padding: 11px 13px; margin-top: 18px; border-radius: 10px; background: #f3edff; color: #63339f; }
+.pos-training-gate .training-gate-delivery svg { flex: 0 0 auto; }
+.pos-training-gate .training-gate-resend { border: 0; background: transparent; color: #63339f; text-decoration: underline; margin-top: 10px; padding: 4px 0; font-size: 12px; }
+.training-receipt-mark { display: block; padding: 8px; border: 2px solid currentColor; text-align: center; font-weight: 800; font-size: 13px; }
+@media screen {
+  .pos-training-workspace {
+    --theme-primary: #7040b6; --theme-on-primary: #fff; --theme-primary-soft: #eee5fc;
+    --theme-bg: #f7f3fc; --theme-surface: #fff; --theme-text: #2b203c; --theme-muted: #7c6b8f; --theme-border: #e1d7ee;
+    --pos-green: #7040b6; --pos-on-green: #fff; --pos-ink: #2b203c; --pos-muted: #7c6b8f;
+    --pos-surface: #fff; --pos-line: #e1d7ee; --pos-soft: #f1eafa;
+    background: #f7f3fc; color: #2b203c;
+  }
+  .pos-training-banner { position: sticky; top: 0; z-index: 100000; min-height: 42px; display: flex; align-items: center; gap: 12px; padding: 6px 22px; background: #54268c; color: white; font-size: 12px; }
+  .pos-training-banner > strong { font-size: 11px; letter-spacing: .08em; white-space: nowrap; }
+  .pos-training-banner > span { opacity: .85; }
+  .pos-training-banner > button { display: flex; align-items: center; gap: 6px; margin-left: auto; border: 1px solid #ffffff60; background: #ffffff15; color: white; border-radius: 7px; padding: 5px 10px; white-space: nowrap; }
+  .pos-page .pos-training-workspace .pos-screen { height: calc(var(--app-sidebar-viewport-height, 100dvh) - 42px); }
+  .pos-page .pos-training-workspace .pos-page-header { border-top: 3px solid #8952cf; }
+  .pos-page .pos-training-workspace .erp-bill-summary .erp-receipt-items { display: block !important; min-height: 96px; max-height: 180px; overflow-y: auto; }
+  .pos-page .pos-training-workspace .erp-order-workspace .item-grid { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .pos-training-catalog-switch { display: flex; gap: 8px; padding: 0 0 10px; }
+  .pos-training-catalog-switch button { padding: 9px 16px; border: 1px solid #d9c6f2; border-radius: 9px; background: white; color: #7040b6; }
+  .pos-training-catalog-switch button[aria-pressed="true"] { background: #7040b6; color: white; }
+  .pos-training-workspace .pos-training-bill-note { flex-shrink: 0; margin: 0 0 7px; padding: 6px 10px; border-radius: 6px; background: #eee5fc; color: #63339f; font-size: 11px; font-weight: 700; }
+  .pos-training-workspace .pos-customer-dialog .pos-customer-save { background: #7040b6; color: white; }
+  .pos-training-workspace .shift-modal-backdrop { padding-top: 50px; }
+  .pos-training-workspace .shift-open-screen { min-height: calc(var(--app-sidebar-viewport-height, 100dvh) - 42px); }
+}
+@media screen and (min-width: 1181px) {
+  .pos-page .pos-training-workspace .bill-panel.erp-bill-summary { height: 100%; align-self: stretch; }
+  .pos-page .pos-training-workspace .erp-bill-summary .bill-paper { flex: 1 1 0; }
+  .pos-page .pos-training-workspace .erp-bill-summary .totals { margin-top: 0; gap: 6px; padding-top: 8px; font-size: 11px; }
+}
+@media screen and (max-width: 750px) {
+  .pos-training-banner { padding-inline: 10px; gap: 6px; }
+  .pos-training-banner > span { display: none; }
+  .pos-page .pos-training-workspace .pos-screen { height: auto; }
+}
+@media print {
+  .pos-training-banner, .pos-training-catalog-switch { display: none !important; }
+  .training-receipt-mark { color: black !important; }
+}

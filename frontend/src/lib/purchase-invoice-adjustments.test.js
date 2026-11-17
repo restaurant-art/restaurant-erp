@@ -5,6 +5,63 @@ import { allocatePurchaseAmount, calculatePurchaseInvoice } from "./purchase-inv
 const line = (subtotal, taxRate, discount = 0, quantity = 1) => ({ subtotal, taxRate, discount, quantity,
   taxableSubtotal: subtotal - discount, netUnitCost: (subtotal - discount) / quantity });
 
+test("the reported invoice deducts exactly 110 after GST and keeps older invoices unchanged", () => {
+  const items = [line(900, 18), line(20, 18), line(10500, 5, 0, 50)];
+  const original = calculatePurchaseInvoice(items);
+  assert.equal(original.totals.total, 12110.6);
+  const result = calculatePurchaseInvoice(items, { billDiscountBasis: "after_gst", billDiscountValue: 110 }, { strict: true });
+  assert.equal(result.totals.taxableSubtotal, 11420);
+  assert.equal(result.totals.tax, 690.6);
+  assert.equal(result.totals.billDiscount, 110);
+  assert.equal(result.totals.billDiscountTaxReduction, 0);
+  assert.equal(result.totals.total, 12000.6);
+  assert.equal(Number(result.lines.reduce((sum, item) => sum + item.total, 0).toFixed(2)), 12000.6);
+  assert.equal(Number(result.lines.reduce((sum, item) => sum + item.billDiscount, 0).toFixed(2)), 110);
+  result.lines.forEach((item, index) => {
+    assert.equal(item.tax, original.lines[index].tax);
+    assert.equal(item.receivedUnitCost, Number((item.total / item.quantity).toFixed(4)));
+    assert.ok(item.netUnitCost < original.lines[index].netUnitCost);
+  });
+  const unsplit = calculatePurchaseInvoice(items, { billDiscountBasis: "after_gst", billDiscountValue: 110, billDiscountSplit: false }, { strict: true });
+  assert.equal(unsplit.totals.total, 12000.6);
+  unsplit.lines.forEach((item, index) => {
+    assert.equal(item.receivedUnitCost, original.lines[index].receivedUnitCost);
+    assert.equal(item.netUnitCost, original.lines[index].netUnitCost);
+  });
+  const historical = calculatePurchaseInvoice(items, { billDiscountValue: 110 });
+  assert.equal(historical.totals.total, 11993.95);
+  assert.equal(historical.totals.tax, 683.95);
+  assert.equal(historical.totals.billDiscountTaxReduction, 6.65);
+});
+
+test("after-GST percentage uses item-discounted totals including taxed charges, then rounds", () => {
+  const result = calculatePurchaseInvoice([line(200, 5, 20, 2), line(100, 18)], {
+    billDiscountBasis: "after_gst", billDiscountType: "percent", billDiscountValue: 10,
+    freightCharge: 50, freightGstRate: 18, otherCharges: 10, otherChargesGstRate: 5, roundOffMode: "nearest",
+  }, { strict: true });
+  assert.equal(result.totals.beforeBillDiscount, 376.5);
+  assert.equal(result.totals.billDiscount, 37.65);
+  assert.equal(result.totals.tax, 36.5);
+  assert.equal(result.totals.beforeRoundOff, 338.85);
+  assert.equal(result.totals.roundOff, 0.15);
+  assert.equal(result.totals.total, 339);
+  assert.equal(Number(result.lines.reduce((sum, item) => sum + item.total, 0).toFixed(2)), 339);
+});
+
+test("after-GST discounts handle full discounts, paise, zero-tax lines and validation", () => {
+  const items = [line(1, 5), line(1, 18), line(1, 0)];
+  for (const value of [0, 0.01, 0.05, 3.23]) {
+    const result = calculatePurchaseInvoice(items, { billDiscountBasis: "after_gst", billDiscountValue: value }, { strict: true });
+    assert.equal(result.totals.tax, 0.23);
+    assert.equal(result.totals.total, Number((3.23 - value).toFixed(2)));
+    assert.equal(Number(result.lines.reduce((sum, item) => sum + item.total, 0).toFixed(2)), result.totals.total);
+    assert.ok(result.lines.every((item) => item.total >= 0));
+  }
+  assert.equal(calculatePurchaseInvoice([line(100, 0)], { billDiscountBasis: "after_gst", billDiscountValue: 10 }).totals.total, 90);
+  assert.throws(() => calculatePurchaseInvoice(items, { billDiscountBasis: "after_gst", billDiscountValue: 3.24 }, { strict: true }), /cannot exceed/);
+  assert.throws(() => calculatePurchaseInvoice(items, { billDiscountBasis: "invalid" }, { strict: true }), /valid bill discount application/);
+});
+
 test("bill discount is after item discounts and before mixed-rate GST", () => {
   const result = calculatePurchaseInvoice([line(200, 5, 20, 2), line(100, 18)], {
     billDiscountType: "percent", billDiscountValue: 10, freightCharge: 50, freightGstRate: 18,

@@ -1,6 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { applyPurchaseToInventory, purchaseTotals, reversePurchaseInventory } from "./purchase-inventory.js";
+import { savePurchaseDraftRecord } from "./purchase-drafts.js";
+import { buildPurchasePayables } from "./vendor-settlements.js";
+
+test("saved after-GST discounts produce the same receipt total and supplier balance", () => {
+  const products = [{ id: "a", name: "A", unit: "kg", stock: 0 }, { id: "b", name: "B", unit: "kg", stock: 0 }, { id: "chicken", name: "Chicken", unit: "kg", stock: 0 }];
+  const entry = { invoice: "DISCOUNT-TEST", billDiscountBasis: "after_gst", billDiscountValue: "110", lines: [
+    { itemId: "a", quantity: 1, unit: "kg", unitCost: 900, taxRate: 18 },
+    { itemId: "b", quantity: 1, unit: "kg", unitCost: 20, taxRate: 18 },
+    { itemId: "chicken", quantity: 50, unit: "kg", unitCost: 210, taxRate: 5 },
+  ] };
+  const saved = JSON.parse(JSON.stringify(savePurchaseDraftRecord([], entry, "draft-discount")))[0].entry;
+  const result = applyPurchaseToInventory(products, saved.lines, { invoiceAdjustments: saved });
+  assert.equal(saved.billDiscountBasis, "after_gst");
+  assert.equal(result.invoiceTotals.total, 12000.6);
+  assert.equal(result.invoiceTotals.tax, 690.6);
+  const receipts = result.receivedLines.map((item) => ({ ...item, type: "Purchase", purchaseId: "DISCOUNT-TEST" }));
+  const payable = buildPurchasePayables(receipts)[0];
+  assert.equal(payable.total, 12000.6);
+  assert.equal(payable.balance, 12000.6);
+});
 
 test("reversing an approved purchase checks available stock before changing inventory", () => {
   const inventory = [{ id: "rice", name: "Rice", stock: 7, unit: "kg" }];
@@ -21,6 +41,15 @@ test("purchase receipt adds stock and recalculates weighted unit cost", () => {
   assert.equal(result.inventory[0].stock, 15);
   assert.equal(result.inventory[0].cost, 61.3333);
   assert.equal(result.receivedLines[0].total, 420);
+});
+
+test("four-decimal purchase rates remain precise while the invoice settles to paise", () => {
+  const result = applyPurchaseToInventory([
+    { id: "masala", name: "Masala", sku: "003", stock: 0, unit: "pack", cost: 0 },
+  ], [{ itemId: "masala", quantity: 1, unit: "pack", unitCost: 24.759, taxRate: 18 }]);
+  assert.equal(result.inventory[0].price, 24.759);
+  assert.equal(result.inventory[0].cost, 29.2156);
+  assert.equal(result.invoiceTotals.total, 29.22);
 });
 
 test("purchase receipt creates a new item at the received quantity", () => {

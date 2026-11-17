@@ -28,7 +28,7 @@
   background: var(--theme-surface, #fff); color: var(--theme-text, #173d31); font-size: 13px; font-weight: 400;
 }
 .finance-entry-dialog input[type="checkbox"] { width: 18px; min-height: 18px; }
-body.finance-dialog-open .toast { z-index: 12000; }
+body.finance-dialog-open .toast { z-index: 20000; }
 @media (max-width: 700px) {
   .finance-entry-backdrop { padding: 12px; }
   .finance-entry-dialog { max-height: calc(100dvh - 24px); border-radius: 14px; }

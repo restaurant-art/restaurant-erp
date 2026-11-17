@@ -19,6 +19,8 @@ export function allocatePurchaseAmount(amount, weights) {
 
 export function calculatePurchaseInvoice(amounts = [], adjustments = {}, { strict = false } = {}) {
   const errors = [];
+  const withoutTax = adjustments.billType === "urd";
+  const invoiceLines = withoutTax ? amounts.map((line) => ({ ...line, taxRate: 0 })) : amounts;
   if (amounts.some((line) => !Number.isFinite(Number(line.discountPercent || 0)) || Number(line.discountPercent || 0) < 0 || Number(line.discountPercent || 0) > 100)) {
     errors.push("Discount must be between 0 and 100 percent");
   }
@@ -32,37 +34,66 @@ export function calculatePurchaseInvoice(amounts = [], adjustments = {}, { stric
   };
   const weights = amounts.map((line) => number(line.taxableSubtotal ?? (line.subtotal - (line.discount || 0)), "Item amount"));
   const base = round(weights.reduce((sum, value) => sum + value, 0));
+  // Missing basis belongs to an older invoice; never silently change its GST.
+  const billDiscountBasis = adjustments.billDiscountBasis || "before_gst";
+  if (!["before_gst", "after_gst"].includes(billDiscountBasis)) errors.push("Choose a valid bill discount application.");
+  const afterGst = billDiscountBasis === "after_gst";
   const type = adjustments.billDiscountType || "amount";
   if (!["amount", "percent"].includes(type)) errors.push("Choose a valid bill discount type.");
   const value = number(adjustments.billDiscountValue, "Bill discount", type === "percent" ? 100 : 1e10);
-  const requestedDiscount = round(type === "percent" ? base * value / 100 : value);
-  if (requestedDiscount > base) errors.push("Bill discount cannot exceed the amount after item discounts.");
-  const billDiscount = Math.min(requestedDiscount, base);
   const freight = round(number(adjustments.freightCharge, "Freight charge"));
-  const freightRate = number(adjustments.freightGstRate, "Freight GST", 100);
+  const freightRate = withoutTax ? 0 : number(adjustments.freightGstRate, "Freight GST", 100);
   const otherCharges = round(number(adjustments.otherCharges, "Other charges"));
-  const otherRate = number(adjustments.otherChargesGstRate, "Other charges GST", 100);
+  const otherRate = withoutTax ? 0 : number(adjustments.otherChargesGstRate, "Other charges GST", 100);
   const freightTax = round(freight * freightRate / 100);
   const otherChargesTax = round(otherCharges * otherRate / 100);
-  const discounts = allocatePurchaseAmount(billDiscount, weights);
+  const itemTaxBeforeBillDiscount = round(invoiceLines.reduce((sum, line, index) =>
+    sum + round(weights[index] * Number(line.taxRate || 0) / 100), 0));
+  const beforeBillDiscount = round(base + itemTaxBeforeBillDiscount + freight + otherCharges + freightTax + otherChargesTax);
+  const discountBase = afterGst ? beforeBillDiscount : base;
+  const requestedDiscount = round(type === "percent" ? discountBase * value / 100 : value);
+  if (requestedDiscount > discountBase) errors.push(afterGst
+    ? "Bill discount cannot exceed the invoice total before discount."
+    : "Bill discount cannot exceed the amount after item discounts.");
+  const billDiscount = Math.min(requestedDiscount, discountBase);
+  const splitBillDiscount = afterGst ? adjustments.billDiscountSplit !== false : true;
+  const discounts = allocatePurchaseAmount(afterGst ? 0 : billDiscount, weights);
   const freights = allocatePurchaseAmount(freight, weights);
   const freightTaxes = allocatePurchaseAmount(freightTax, weights);
   const others = allocatePurchaseAmount(otherCharges, weights);
   const otherTaxes = allocatePurchaseAmount(otherChargesTax, weights);
-  const adjusted = billDiscount > 0 || freight > 0 || otherCharges > 0;
-  const lines = amounts.map((line, index) => {
+  const adjusted = (!afterGst && billDiscount > 0) || freight > 0 || otherCharges > 0;
+  const lines = invoiceLines.map((line, index) => {
     const taxableSubtotal = round(weights[index] - discounts[index]);
     const itemTax = round(taxableSubtotal * Number(line.taxRate || 0) / 100);
     const tax = round(itemTax + freightTaxes[index] + otherTaxes[index]);
     const total = round(taxableSubtotal + freights[index] + others[index] + tax);
     const netUnitCost = adjusted && line.quantity > 0
       ? round((taxableSubtotal + freights[index] + others[index]) / line.quantity, 4) : line.netUnitCost;
-    return { ...line, billDiscount: discounts[index], freightCharge: freights[index], freightTax: freightTaxes[index],
+    return { ...line, billDiscountBasis, billDiscount: discounts[index], freightCharge: freights[index], freightTax: freightTaxes[index],
       otherCharges: others[index], otherChargesTax: otherTaxes[index], taxableSubtotal, itemTax, tax, total, netUnitCost,
       receivedUnitCost: adjusted && line.quantity > 0 ? round(total / line.quantity, 4)
         : round(Number(line.netUnitCost) * (1 + Number(line.taxRate || 0) / 100), 4) };
   });
+  if (afterGst && splitBillDiscount) {
+    // Keep GST unchanged, but carry each allocated share into the item cost.
+    // Separate the item's pre-tax share for netUnitCost from its gross carrying
+    // value; only round-off remains a payable-only adjustment.
+    const payableDiscounts = allocatePurchaseAmount(billDiscount, lines.map((line) => line.total));
+    lines.forEach((line, index) => {
+      const grossTotal = line.total;
+      line.billDiscount = payableDiscounts[index];
+      line.total = round(grossTotal - line.billDiscount);
+      if (line.quantity > 0) {
+        const preTaxCost = line.taxableSubtotal + line.freightCharge + line.otherCharges;
+        const preTaxShare = grossTotal > 0 ? line.billDiscount * preTaxCost / grossTotal : 0;
+        line.netUnitCost = round(Math.max(0, preTaxCost - preTaxShare) / line.quantity, 4);
+        line.receivedUnitCost = round(line.total / line.quantity, 4);
+      }
+    });
+  }
   const itemTax = round(lines.reduce((sum, line) => sum + line.itemTax, 0));
+  const billDiscountTaxReduction = round(itemTaxBeforeBillDiscount - itemTax);
   const tax = round(itemTax + freightTax + otherChargesTax);
   const beforeRoundOff = round(base - billDiscount + freight + otherCharges + tax);
   const roundOffMode = adjustments.roundOffMode || "none";
@@ -88,9 +119,10 @@ export function calculatePurchaseInvoice(amounts = [], adjustments = {}, { stric
     line.roundOff = roundOff === 0 ? 0 : round(roundOffShares[index] * Math.sign(roundOff));
     line.total = round(line.total + line.roundOff);
   });
-  const totals = { subtotal: round(amounts.reduce((sum, line) => sum + Number(line.subtotal || 0), 0)),
+  const totals = { ...(adjustments.billType && { billType: adjustments.billType }), subtotal: round(amounts.reduce((sum, line) => sum + Number(line.subtotal || 0), 0)),
     discount: round(amounts.reduce((sum, line) => sum + Number(line.discount || 0), 0)), billDiscount,
-    taxableSubtotal: round(base - billDiscount), freight, freightTax, otherCharges, otherChargesTax, itemTax, tax,
+    taxableSubtotal: round(base - (afterGst ? 0 : billDiscount)), freight, freightTax, otherCharges, otherChargesTax, itemTax, tax,
+    billDiscountBasis, billDiscountSplit: splitBillDiscount, billDiscountTaxReduction, beforeBillDiscount,
     beforeRoundOff, roundOff, total: round(beforeRoundOff + roundOff) };
   if (strict && errors.length) throw new Error(errors[0]);
   return { lines, totals, errors };

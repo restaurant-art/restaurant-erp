@@ -2,7 +2,11 @@ import { isInventoryStateKey } from "./inventory-sync.js";
 import { createSharedSync } from "./shared-sync.js";
 import { isBusinessKey, stateStore, sanitize } from "./business-state.js";
 
-const apiBaseUrl = String(import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+// Vite replaces import.meta.env during normal production builds. Keep the
+// fallback for alternate/static bundlers so a missing env object cannot blank
+// the entire application before React mounts.
+const cloudEnvironment = import.meta.env || {};
+const apiBaseUrl = String(cloudEnvironment.VITE_API_BASE_URL || "").replace(/\/$/, "");
 export const cloudConfigured = true;
 const awsSessionKey = "uvpro-aws-session";
 const awsListeners = new Set();
@@ -35,8 +39,8 @@ async function refreshAwsSession() {
 async function awsRequest(path, options = {}, authenticated = true, retry = true) {
   const session = readAwsSession();
   const headers = {
-    ...(authenticated && session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
     ...(options.headers || {}),
+    ...(authenticated && session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
   };
   let response;
   try {
@@ -133,12 +137,8 @@ export async function cloudRequestJson(path, options = {}) {
   const publicRequest = String(path).startsWith("/api/public-order/");
   const session = publicRequest ? null : await getCloudSession();
   if (!publicRequest && !session?.access_token) throw new Error("Your sign-in session has expired. Sign in again; local records are retained.");
-  const headers = {
-    ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-    ...(options.headers || {}),
-  };
   try {
-    return await cloudFetch(path, { ...options, headers, signal: options.signal || AbortSignal.timeout(20000) });
+    return await cloudFetch(path, { ...options, signal: options.signal || AbortSignal.timeout(20000) });
   } catch (error) {
     if (error.name === "TimeoutError" || error.name === "AbortError") throw new Error("The store server did not respond in time. Check your connection and retry. Local records are retained.");
     throw error;
@@ -187,10 +187,16 @@ const rawStorage = window.localStorage;
 const subscribers = new Set();
 let syncContext = null;
 let synchronizer = null;
+const actionOtpApprovals = new Map();
 let timer = null;
 let refreshJob = null;
 const failures = new Map();
 const pending = new Set();
+
+export function setGrnOtpApproval(storeId, action, approvalToken) {
+  const key = `vestora-grn-register-${storeId}`;
+  actionOtpApprovals.set(key, { ...(actionOtpApprovals.get(key) || {}), [action]: approvalToken });
+}
 const storeAccessMessage = "Your store assignment no longer permits this data. Your local changes are retained; ask an administrator to restore access or sign in with the assigned store account.";
 let status = { state: "connecting", message: "Connecting to store data…" };
 export const getCloudSyncStatus = () => status;
@@ -209,9 +215,21 @@ function report() {
     : { state: "synced", message: "Store data saved to cloud", pending: 0 };
   emit();
 }
+export function reportCloudStartupFailure(error) {
+  const detail = String(error?.message || "").trim();
+  failures.set("startup", detail
+    ? `Cloud sync could not start: ${detail} Retrying automatically…`
+    : "Cloud sync could not start. Retrying automatically…");
+  report();
+}
+export function clearCloudStartupFailure() {
+  if (!failures.delete("startup")) return;
+  report();
+}
 const allowedKey = (key) => isBusinessKey(key) && syncContext && (!stateStore(key) || syncContext.superAdmin || syncContext.stores.includes(stateStore(key)));
 export function stopCloudSync() {
   syncContext = null; synchronizer = null;
+  actionOtpApprovals.clear();
   failures.clear(); pending.clear();
   window.clearTimeout(timer);
   status = { state: "connecting", message: "Connecting to store data…" }; emit();
@@ -250,23 +268,41 @@ function configureCloudSync(profile, userId) {
       if (!Array.isArray(rows)) throw new Error("Cloud data could not be read. Local changes are retained.");
       return rows.find((row) => row.state_key === key) || null;
     },
-    write: (key, value, expectedUpdatedAt, mutationId) => cloudJson("/api/cloud/state/", {
-      method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, value: sanitize(value), expectedUpdatedAt, mutationId }),
-    }),
+    write: async (key, value, expectedUpdatedAt, mutationId) => {
+      try {
+        const approvals = actionOtpApprovals.get(key) || {};
+        const result = await cloudJson("/api/cloud/state/", {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key, value: sanitize(value), expectedUpdatedAt, mutationId, ...(Object.keys(approvals).length ? { approvalTokens: approvals } : {}) }),
+        });
+        if (Object.keys(approvals).length) actionOtpApprovals.delete(key);
+        return result;
+      } catch (error) {
+        if (error.status === 400 && error.message?.includes("supported business state key")) {
+          error.message = `${error.message} [key: ${key}]`;
+          error.stateKey = key;
+        }
+        throw error;
+      }
+    },
     changed: emit,
   });
 }
 export const businessStorage = {
   getItem: (key) => rawStorage.getItem(key),
-  setItem(key, raw) {
+  setItem(key, raw, options = {}) {
     if (!isBusinessKey(key)) { rawStorage.setItem(key, raw); return; }
     // Effects run before session loading. Their defaults are not user edits.
-    if (cloudConfigured && window.vestoraCloudStateReady !== true) return;
+    // Purchase drafts do not post stock or finance entries. Let an operator
+    // preserve an in-progress invoice locally while verified cloud hydration
+    // is pending; the normal hydration/sync pass will reconcile it later.
+    const localDraftAllowed = /^vestora-purchase-drafts-[A-Za-z0-9_-]+$/.test(key);
+    const userLocalMutation = options?.preserveWhileLoading === true;
+    if (cloudConfigured && window.vestoraCloudStateReady !== true && !localDraftAllowed && !userLocalMutation) return;
     if (rawStorage.getItem(key) === raw) return;
     rawStorage.setItem(key, raw);
     emit(key, JSON.parse(raw));
-    if (cloudConfigured) {
+    if (cloudConfigured && window.vestoraCloudStateReady === true) {
       pending.add(key); report();
       window.clearTimeout(timer);
       timer = window.setTimeout(() => syncLocalStateToCloud().catch(() => {}), 200);

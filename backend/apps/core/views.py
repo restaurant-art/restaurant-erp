@@ -164,6 +164,20 @@ class OrderViewSet(TenantScopedViewSet):
     filterset_fields = ("status", "order_type", "branch", "source")
     search_fields = ("bill_number", "customer__mobile", "customer__name")
 
+    def perform_update(self, serializer):
+        from .production_models import KitchenOrder
+        from rest_framework.exceptions import ValidationError
+        if KitchenOrder.objects.filter(legacy_order=serializer.instance).exists():
+            raise ValidationError("Use explicit order amendment, fulfillment or cancellation commands for a confirmed stock order.")
+        super().perform_update(serializer)
+
+    def perform_destroy(self, instance):
+        from .production_models import KitchenOrder
+        from rest_framework.exceptions import ValidationError
+        if KitchenOrder.objects.filter(legacy_order=instance).exists():
+            raise ValidationError("Confirmed orders retain their inventory history; cancel instead of deleting.")
+        super().perform_destroy(instance)
+
     @action(detail=False, methods=["post"], url_path="checkout")
     def checkout(self, request):
         serializer = self.get_serializer(data=request.data)
@@ -173,9 +187,17 @@ class OrderViewSet(TenantScopedViewSet):
 
     @action(detail=True, methods=["post"], url_path="kds-status")
     def kds_status(self, request, pk=None):
+        from django.db import transaction
+        from .production_orders import status_relational_order
+        from rest_framework.exceptions import ValidationError
         order = self.get_object()
-        order.status = request.data.get("status", order.status)
-        order.save(update_fields=["status", "updated_at"])
+        next_status = request.data.get("status", order.status)
+        if next_status not in Order.Status.values:
+            raise ValidationError("Invalid kitchen order status.")
+        with transaction.atomic():
+            status_relational_order(order, request.user, next_status, request.data.get("reason", ""), request.data.get("disposition", ""))
+            order.status = next_status
+            order.save(update_fields=["status", "updated_at"])
         return Response(self.get_serializer(order).data)
 
 
@@ -184,11 +206,41 @@ class InventoryItemViewSet(TenantScopedViewSet):
     serializer_class = InventoryItemSerializer
     search_fields = ("name", "sku")
 
+    def perform_update(self, serializer):
+        from .production_models import KitchenItem
+        from rest_framework.exceptions import ValidationError
+        if KitchenItem.objects.filter(inventory_item=serializer.instance).exists():
+            raise ValidationError("Managed stock must be updated through the production ledger.")
+        super().perform_update(serializer)
+
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import ValidationError
+        raise ValidationError("Inventory products are retained. Use Disable or Enable in Product Master instead of deleting.")
+
 
 class StockMovementViewSet(TenantScopedViewSet):
     queryset = StockMovement.objects.select_related("restaurant", "branch", "item")
     serializer_class = StockMovementSerializer
     filterset_fields = ("movement_type", "item", "branch")
+
+    def _check_managed(self, item):
+        from .production_models import KitchenItem
+        from rest_framework.exceptions import ValidationError
+        if KitchenItem.objects.filter(inventory_item=item).exists():
+            raise ValidationError("Use a linked production ledger movement; legacy writes are blocked for managed stock.")
+
+    def perform_create(self, serializer):
+        self._check_managed(serializer.validated_data.get("item"))
+        super().perform_create(serializer)
+
+    def perform_update(self, serializer):
+        self._check_managed(serializer.instance.item)
+        self._check_managed(serializer.validated_data.get("item", serializer.instance.item))
+        super().perform_update(serializer)
+
+    def perform_destroy(self, instance):
+        self._check_managed(instance.item)
+        super().perform_destroy(instance)
 
 
 class SupplierViewSet(TenantScopedViewSet):
@@ -453,9 +505,46 @@ class DeviceLoginViewSet(viewsets.ReadOnlyModelViewSet):
 class ReportExportViewSet(TenantScopedViewSet):
     queryset = ReportExport.objects.select_related("restaurant", "branch", "requested_by")
     serializer_class = ReportExportSerializer
+    http_method_names = ["get", "post", "head", "options"]
 
     def perform_create(self, serializer):
-        serializer.save(restaurant=self.request.user.restaurant, requested_by=self.request.user)
+        from django.db import transaction
+        from rest_framework.exceptions import ValidationError
+        from .production_access import allowed_branches
+        from .tasks import generate_report_export
+
+        user = self.request.user
+        branch = serializer.validated_data.get("branch")
+        if branch and not allowed_branches(user).filter(pk=branch.pk).exists():
+            raise ValidationError("Select a branch assigned to this login.")
+        restaurant = branch.restaurant if branch else user.restaurant
+        if restaurant is None:
+            raise ValidationError("Select a branch to export sales.")
+        if branch is None and user.user_type not in ("owner", "restaurant_admin", "super_admin") and not user.is_superuser:
+            raise ValidationError("Select an assigned branch to export sales.")
+        export = serializer.save(restaurant=restaurant, requested_by=user)
+        transaction.on_commit(lambda: generate_report_export.delay(export.pk))
+
+    def get_queryset(self):
+        from .production_access import allowed_branches
+        queryset = super().get_queryset()
+        user = self.request.user
+        if user.user_type not in ("owner", "restaurant_admin", "super_admin") and not user.is_superuser:
+            queryset = queryset.filter(branch__in=allowed_branches(user))
+        return queryset
+
+    @action(detail=True, methods=["get"])
+    def download(self, request, pk=None):
+        from django.http import FileResponse, Http404
+        export = self.get_object()
+        if export.status != "ready" or not export.file:
+            raise Http404("The report file is not ready.")
+        try:
+            source = export.file.open("rb")
+        except FileNotFoundError as error:
+            raise Http404("The report file is unavailable.") from error
+        return FileResponse(source, as_attachment=True, filename=f"{export.report_type}-{export.pk}.csv",
+                            content_type="text/csv; charset=utf-8")
 
 
 @api_view(["GET"])

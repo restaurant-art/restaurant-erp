@@ -115,13 +115,13 @@ function periodFor(question, now) {
 
 const softwareHelp = [
   { keys: ["dashboard"], text: "Dashboard shows sales, orders, kitchen activity, low stock, and branch insights." },
-  { keys: ["pos", "billing", "bill"], text: "POS Billing creates bills, applies offers, collects payment, prints receipts, sends KOTs, and handles refunds." },
+  { keys: ["pos", "billing", "bill"], text: "Restaurant POS creates bills, applies offers, collects payment, prints receipts, sends KOTs, and handles refunds." },
   { keys: ["table"], text: "Tables manages floors, seating, waiter orders, KOTs, add-ons, QR orders, and reception billing." },
   { keys: ["kds", "kitchen"], text: "KDS moves orders through New, Preparing, Ready, and Completed." },
   { keys: ["menu"], text: "Menu manages sellable dishes, categories, prices, tax, favourites, and availability." },
-  { keys: ["inventory", "stock", "product master"], text: "Inventory contains Product Master, batches, categories, tax profiles, reorder levels, and stock valuation." },
+  { keys: ["inventory", "stock", "product master"], text: "Inventory contains Product Master, batches, wastage entries, categories, tax profiles, reorder levels, and stock valuation." },
   { keys: ["purchase", "vendor"], text: "Purchase supports vendor creation, draft and approval flow, batch receiving, bill discounts, freight, GST, round-off, returns, and settlements." },
-  { keys: ["production", "recipe"], text: "Production manages recipes, planning, batches, food stock, wastage, and production reports." },
+  { keys: ["production", "recipe"], text: "Production manages recipes, planning, batches, food stock, and production reports." },
   { keys: ["crm", "customer"], text: "CRM uses sales history to manage customer activity and engagement." },
   { keys: ["offer", "promotion", "coupon"], text: "Offers & Promotions manages happy hours, BOGO, combos, weekend offers, and coupons." },
   { keys: ["attendance", "payroll", "face"], text: "Attendance supports Face ID, check-in/out, leave requests, records, and payroll summaries." },
@@ -219,8 +219,13 @@ export function answerVestyQuestion(rawQuestion, context, now = new Date()) {
   if (includesAny(question, ["purchase", "supplier", "vendor", "draft", "approval", "outstanding"])) {
     if (!allowed(context, "inventory", "finance")) return { text: "Your role does not have access to purchase or vendor information." };
     const receipts = (context.transactions || []).filter((entry) => entry.type === "Purchase" && entry.purchaseId);
-    const purchaseTotals = new Map(); receipts.forEach((entry) => purchaseTotals.set(entry.purchaseId, (purchaseTotals.get(entry.purchaseId) || 0) + Number(entry.total || 0)));
-    const purchased = [...purchaseTotals.values()].reduce((total, value) => total + value, 0);
+    const purchaseTotals = new Map(); receipts.forEach((entry) => {
+      const current = purchaseTotals.get(entry.purchaseId) || { total: 0, invoiceTotal: null };
+      current.total += Number(entry.total || 0);
+      if (Number.isFinite(Number(entry.invoiceSummary?.total))) current.invoiceTotal = Number(entry.invoiceSummary.total);
+      purchaseTotals.set(entry.purchaseId, current);
+    });
+    const purchased = [...purchaseTotals.values()].reduce((total, purchase) => total + (purchase.invoiceTotal ?? purchase.total), 0);
     const paid = sum(context.vendorPayments || [], "amount");
     const drafts = (context.purchaseDrafts || []).filter((record) => record.status === "Draft");
     const pending = (context.purchaseDrafts || []).filter((record) => record.status === "PendingApproval");

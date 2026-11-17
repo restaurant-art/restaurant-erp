@@ -2,7 +2,8 @@ export const ROLE_ACCESS_PREFIX = "access:";
 
 export const roleAccessSections = [
   { id: "dashboard", label: "Dashboard", options: [] },
-  { id: "pos", label: "POS Billing", options: [] },
+  { id: "pos", label: "Restaurant POS", options: [] },
+  { id: "supermarket-pos", label: "ERP POS", options: [] },
   { id: "kds", label: "KDS", options: [] },
   { id: "tables", label: "Tables", options: [] },
   { id: "menu", label: "Menu", options: [
@@ -12,11 +13,16 @@ export const roleAccessSections = [
   ] },
   { id: "inventory", label: "Inventory & Purchase", options: [
     { id: "create", label: "Product Master", group: "Inventory" },
+    { id: "plu", label: "PLU Products", group: "Inventory" },
     { id: "variants", label: "Batches", group: "Inventory" },
+    { id: "repacking", label: "Bulk Repacking", group: "Inventory" },
+    { id: "stock-count", label: "Inventory items & stock take", group: "Inventory" },
+    { id: "wastage", label: "Wastage entries", group: "Inventory" },
     { id: "category-setup", label: "Inventory setup", group: "Inventory" },
     { id: "vendors", label: "Vendor creation", group: "Purchase" },
     { id: "purchase-order", label: "Purchase order", group: "Purchase" },
     { id: "purchase", label: "Purchase entry", group: "Purchase" },
+    { id: "grn", label: "Goods Receipt Note", group: "Purchase" },
     { id: "purchase-return", label: "Purchase return", group: "Purchase" },
     { id: "vendor-settlements", label: "Vendor settlements", group: "Purchase" },
   ] },
@@ -25,13 +31,16 @@ export const roleAccessSections = [
     { id: "Planning", label: "Planning" },
     { id: "Batches", label: "Batches" },
     { id: "Food Stock", label: "Food Stock" },
-    { id: "Wastage", label: "Wastage" },
     { id: "Reports", label: "Reports", group: "Production reports" },
     { id: "report:Daily Production", label: "Daily Production", group: "Production reports" },
     { id: "report:Ingredient Consumption", label: "Ingredient Consumption", group: "Production reports" },
     { id: "report:Food Cost Report", label: "Food Cost Report", group: "Production reports" },
+    { id: "report:Serving category profitability", label: "Serving category profitability", group: "Production reports" },
+    { id: "report:Batch profitability", label: "Batch profitability", group: "Production reports" },
+    { id: "report:Serving & component consumption", label: "Serving & component consumption", group: "Production reports" },
     { id: "report:Wastage Report", label: "Wastage Report", group: "Production reports" },
     { id: "report:Finished Goods Stock", label: "Finished Goods Stock", group: "Production reports" },
+    { id: "report:Stock count reconciliation", label: "Stock count reconciliation", group: "Production reports" },
   ] },
   { id: "item-stock", label: "Item Stock", options: [] },
   { id: "crm", label: "CRM", options: [] },
@@ -57,16 +66,25 @@ export const roleAccessSections = [
   ] },
   { id: "finance", label: "Finance", options: [
     { id: "Receipts", label: "Receipts" },
+    { id: "Customer Accounts", label: "Customer accounts" },
     { id: "Expenses", label: "Expenses" },
     { id: "Bank Accounts", label: "Bank accounts" },
     { id: "Vendor Payments", label: "Vendor payments" },
     { id: "Journal Entries", label: "Journal entries" },
+    { id: "Finance Reports", label: "Finance summary", group: "Finance reports" },
     { id: "General Ledger", label: "General ledger" },
-    { id: "Finance Reports", label: "Finance reports" },
   ] },
   { id: "reports", label: "Reports", options: [
     { id: "Daily sales", label: "Daily sales" },
     { id: "Item-wise sales", label: "Item-wise sales" },
+    { id: "Category-wise sales", label: "Category-wise sales" },
+    { id: "Hourly sales", label: "Hourly sales" },
+    { id: "Branch comparison", label: "Branch comparison" },
+    { id: "Inventory valuation", label: "Inventory valuation" },
+    { id: "Food cost analysis", label: "Food cost analysis" },
+    { id: "Menu profitability", label: "Menu profitability" },
+    { id: "Payroll", label: "Payroll" },
+    { id: "Supplier outstanding", label: "Supplier outstanding" },
     { id: "GST", label: "GST report" },
     { id: "Cashier closing", label: "Cashier closing" },
     { id: "Void and refund", label: "Void & refunds" },
@@ -95,7 +113,11 @@ export function accessPermissionsForModule(moduleId) {
 
 export function prepareRolePermissionsForEdit(role) {
   const permissions = Array.isArray(role?.permissions) ? role.permissions : [];
-  if (permissions.some(isRoleAccessPermission)) return [...permissions];
+  if (permissions.some(isRoleAccessPermission)) return [...new Set(permissions.map((permission) => (
+    permission === roleAccessPermission("production", "Wastage")
+      ? roleAccessPermission("inventory", "wastage")
+      : permission
+  )))];
   const generated = (role?.modules || []).flatMap(accessPermissionsForModule);
   return [...new Set([...permissions, ...generated])];
 }
@@ -105,12 +127,14 @@ export function roleCanAccessOption(role, moduleId, optionId) {
   if (!(role.modules || []).includes(moduleId)) return false;
   const permissions = Array.isArray(role.permissions) ? role.permissions : [];
   if (!permissions.some(isRoleAccessPermission)) return true;
+  if (moduleId === "inventory" && optionId === "wastage" && permissions.includes(roleAccessPermission("production", "Wastage"))) return true;
   return permissions.includes(roleAccessPermission(moduleId, optionId));
 }
 
 export function pruneRolePermissions(modules, permissions) {
   const selected = new Set(modules || []);
   return [...new Set((permissions || []).filter((permission) => {
+    if (String(permission).startsWith("production.")) return selected.has("production");
     if (!isRoleAccessPermission(permission)) return true;
     const moduleId = String(permission).slice(ROLE_ACCESS_PREFIX.length).split(":")[0];
     return selected.has(moduleId);

@@ -5,6 +5,17 @@
 .purchase-bill-adjustments-grid label { display: grid; align-content: end; gap: 8px; min-width: 0; font-size: 12px; font-weight: 600; }
 .purchase-bill-adjustments-grid input, .purchase-bill-adjustments-grid select { width: 100%; min-width: 0; height: 44px; padding: 10px; border: 1px solid var(--design-border, #d2ded9); background: var(--theme-surface, #fff); color: var(--theme-text, #10231f); }
 .purchase-bill-adjustments .purchase-adjustment-error { color: #bc402e; }
+.purchase-discount-basis { display: grid; gap: 8px; min-width: 0; max-width: 680px; font-size: 12px; font-weight: 600; }
+.purchase-discount-basis select { width: 100%; min-width: 0; height: 44px; padding: 10px; border: 1px solid var(--design-border, #d2ded9); background: var(--theme-surface, #fff); color: var(--theme-text, #10231f); }
+.purchase-discount-basis small { color: var(--theme-muted, #50645d); font-weight: 400; line-height: 1.5; }
+.purchase-discount-split { display: flex; align-items: flex-start; gap: 10px; width: fit-content; max-width: 680px; padding: 10px 12px; border: 1px solid var(--design-border, #d2ded9); border-radius: 8px; cursor: pointer; }
+.purchase-discount-split input { width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--theme-accent, #1b6550); }
+.purchase-discount-split span { display: grid; gap: 3px; }
+.purchase-discount-split strong { font-size: 12px; }
+.purchase-discount-split small { color: var(--theme-muted, #50645d); font-size: 11px; font-weight: 400; line-height: 1.45; }
+.purchase-discount-explanation { display: grid; gap: 6px; padding: 14px 16px; border-left: 3px solid var(--theme-accent, #1b6550); border-radius: 6px; background: var(--theme-bg, #f2f7f4); font-size: 13px; line-height: 1.5; }
+.purchase-discount-explanation > strong { color: var(--theme-text, #10231f); }
+.purchase-editor .purchase-line-total .purchase-line-discount { color: var(--theme-accent, #1b6550); }
 .purchase-round-off { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr); align-items: end; gap: 14px; padding-top: 14px; border-top: 1px solid var(--design-border, #d2ded9); }
 .purchase-round-off label { display: grid; gap: 8px; min-width: 0; font-size: 12px; font-weight: 600; }
 .purchase-round-off input, .purchase-round-off select { width: 100%; min-width: 0; height: 44px; padding: 10px; border: 1px solid var(--design-border, #d2ded9); background: var(--theme-surface, #fff); color: var(--theme-text, #10231f); }

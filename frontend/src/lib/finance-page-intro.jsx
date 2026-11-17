@@ -4,10 +4,11 @@ import "./finance-workspace-design.css";
 
 const pages = {
   Receipts: [ReceiptText, "MONEY IN", "Receipts", "A clear record of every collection.", "Review incoming payments, record receipts, and track the accounts they reach."],
+  "Customer Accounts": [BadgeIndianRupee, "CUSTOMER FINANCE", "Customer accounts", "Track credit and customer funds.", "Receive credit payments and manage customer wallet deposits here; entries also appear in Finance receipts and reports."],
   Expenses: [BadgeIndianRupee, "BUSINESS SPENDING", "Expenses", "Keep every expense in view.", "Organize business spending, review payment accounts, and keep your expense records up to date."],
   "Bank Accounts": [CreditCard, "CASH & BANKING", "Bank accounts", "Your accounts, connected.", "Monitor balances and trace money moving in and out of each bank account."],
-  "Journal Entries": [ClipboardList, "ACCOUNTING ENTRIES", "Journal entries", "Balanced entries. Clear records.", "Create debit and credit entries, review their status, and find the references you need."],
-  "General Ledger": [BookOpen, "ACCOUNT BOOKS", "General ledger", "Follow every account movement.", "Explore your chart of accounts and review posted activity with running balances."],
+  "Journal Entries": [ClipboardList, "ACCOUNTING ENTRIES", "Journal entries", "Automatic and manual entries. Clear records.", "Review system-recorded receipts, expenses, vendor payments, bank openings, and manual journals in one place."],
+  "General Ledger": [BookOpen, "FINANCE", "General ledger", "Follow every account movement.", "Explore your chart of accounts and review posted activity with running balances."],
   "Finance Reports": [FileBarChart, "FINANCIAL OVERVIEW", "Finance reports", "Your finances, at a glance.", "Review receipts, expenses, vendor payments, and journals together in one report."],
 };
 

@@ -4,6 +4,12 @@ from pathlib import Path
 
 import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
+
+
+# Local development reads secrets from backend/.env. Deployed environments keep
+# using their injected environment variables because existing values win.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=False)
 
 
 TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -59,6 +65,7 @@ INSTALLED_APPS = [
     "channels",
     "storages",
     "apps.core",
+    "apps.whatsapp",
 ]
 
 MIDDLEWARE = [
@@ -168,6 +175,15 @@ else:
         )
     }
 
+if DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3":
+    # Local checkouts and report reads can overlap while one stock transaction
+    # holds the SQLite write lock. Give queued writes time to acquire it.
+    DATABASES["default"].setdefault("OPTIONS", {}).update({
+        "timeout": 20,
+        "transaction_mode": "IMMEDIATE",
+        "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL",
+    })
+
 DATABASE_SSL_ROOT_CERT = os.getenv("DATABASE_SSL_ROOT_CERT", "").strip()
 if DATABASE_SSL_ROOT_CERT and DATABASES["default"]["ENGINE"] != "django.db.backends.sqlite3":
     DATABASES["default"].setdefault("OPTIONS", {}).update({
@@ -183,6 +199,17 @@ CHANNEL_LAYERS = {
 }
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_BEAT_SCHEDULE = {
+    "deliver-whatsapp-receipts": {"task": "apps.whatsapp.tasks.deliver_receipts", "schedule": 10.0, "options": {"expires": 10}},
+}
+
+META_WHATSAPP_APP_ID = os.getenv("META_WHATSAPP_APP_ID", "").strip()
+META_WHATSAPP_APP_SECRET = os.getenv("META_WHATSAPP_APP_SECRET", "").strip()
+META_WHATSAPP_SIGNUP_CONFIG_ID = os.getenv("META_WHATSAPP_SIGNUP_CONFIG_ID", "").strip()
+META_WHATSAPP_GRAPH_VERSION = os.getenv("META_WHATSAPP_GRAPH_VERSION", "").strip()
+META_WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.getenv("META_WHATSAPP_WEBHOOK_VERIFY_TOKEN", "").strip()
+META_WHATSAPP_KMS_KEY_ARN = os.getenv("META_WHATSAPP_KMS_KEY_ARN", "").strip()
+META_WHATSAPP_RECEIPT_ORIGIN = os.getenv("META_WHATSAPP_RECEIPT_ORIGIN", "").strip().rstrip("/")
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (

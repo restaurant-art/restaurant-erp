@@ -1,14 +1,15 @@
 import React, { useId, useRef, useState, useEffect } from "react";
 import { matchesPurchaseItem, purchaseItemOptions } from "./purchase-batches.js";
+import { filterPurchasableProducts } from "./product-availability.js";
 import "./purchase-item-picker.css";
 
-export function PurchaseItemPicker({ items, value, batchKey, onSelect, inputRef, lineNumber, allowCreate = true, required = false }) {
+export function PurchaseItemPicker({ items, value, batchKey, onSelect, inputRef, lineNumber, allowCreate = true, required = false, emptyMessage = "No matching items. Try a product name, SKU or barcode." }) {
   const id = useId();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const listRef = useRef(null);
-  const choices = purchaseItemOptions(items);
+  const choices = purchaseItemOptions(filterPurchasableProducts(items));
   const selected = choices.find((item) => item.itemId === value && item.key === (batchKey || value));
   const selectedItem = items.find((item) => item.id === value);
   const search = query.trim().toLowerCase();
@@ -61,7 +62,7 @@ export function PurchaseItemPicker({ items, value, batchKey, onSelect, inputRef,
       onFocus={(event) => { if (value) event.target.select(); else setOpen(true); }}
       onBlur={() => setOpen(false)} onKeyDown={handleKeyDown} />
     {expanded && <div className="purchase-item-dropdown">
-      {!matches.length && <p role="status">{allowCreate ? "No matching items. You can create a new item." : "No matching items. Try a product name, SKU or barcode."}</p>}
+      {!matches.length && <p role="status">{allowCreate ? "No matching items. You can create a new item." : emptyMessage}</p>}
       <div ref={listRef} id={`${id}-list`} role="listbox" aria-label="Matching inventory items">
         {options.map((item, index) => <button key={item.key} id={`${id}-option-${index}`} type="button"
           role="option" aria-selected={index === active} tabIndex={-1}

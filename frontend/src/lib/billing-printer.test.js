@@ -53,6 +53,14 @@ test("billing reconnects after reload with its own paper and copies", () => {
   assert.deepEqual(billingPrintOptions(saved), { printerName: "Counter", paper: "58mm", copies: 2 });
 });
 
+test("explicit confirmed-UPI printing preference survives reload without enabling legacy automation", () => {
+  const saved = loadBillingPrinter(storage({ "vestora-billing-printer": JSON.stringify({ ...billing, autoPrintUpi: true }) }));
+  assert.equal(saved.autoPrintUpi, true);
+  assert.equal(saved.autoPrint, false);
+  const malformed = loadBillingPrinter(storage({ "vestora-billing-printer": JSON.stringify({ ...billing, autoPrintUpi: "false" }) }));
+  assert.equal(malformed.autoPrintUpi, false);
+});
+
 function extractFunction(name) {
   const start = source.indexOf(`  async function ${name}(`);
   assert.ok(start > 0);
@@ -63,9 +71,11 @@ for (const [name, selector] of [["printCompletedBill", ".completed-print-receipt
   test(`${name} sends the bill to the billing printer and respects disconnect`, async () => {
     const calls = [], fallbacks = [];
     const context = vm.createContext({
+      training: false,
       billingPrinter: billing, kotPrinter: { ...billing, name: "Kitchen" }, billingPrintOptions,
       completedBill: { id: "test" }, selectedHistoryBill: { id: "old" },
       printReceiptWithQz: async (options) => calls.push(options), notify: () => {},
+      window: { confirm: () => true },
       openSystemPrintDialog: (...args) => fallbacks.push(args),
     });
     vm.runInContext(extractFunction(name), context);
@@ -75,6 +85,11 @@ for (const [name, selector] of [["printCompletedBill", ".completed-print-receipt
     await context[name]();
     assert.equal(calls.length, 1);
     assert.equal(fallbacks.length, 1);
+    context.training = true;
+    context.billingPrinter = billing;
+    await context[name]();
+    assert.equal(calls.length, 1, "Training must never send a bill to the live printer");
+    assert.equal(fallbacks.length, 2, "Training may open a marked print preview");
   });
 }
 
@@ -82,22 +97,23 @@ const setupStart = source.indexOf("function PrinterConnectionSetup(");
 const setupSource = source.slice(setupStart, source.indexOf("\nfunction buildSettingsDefaults", setupStart));
 const { code: setupCode } = await transformWithEsbuild(setupSource, "printer-setup.jsx", { loader: "jsx", jsx: "transform" });
 const React = { createElement: (type, props, ...children) => ({ type, props: props || {}, children }), Fragment: "fragment" };
+const printerIcons = Object.fromEntries(["Printer", "ReceiptText", "ShieldCheck", "Search", "KeyRound", "Store"].map(name => [name, "svg"]));
 const nodes = (tree) => !tree || typeof tree !== "object" ? [] : [tree, ...(tree.children || []).flatMap((child) => Array.isArray(child) ? child.flatMap(nodes) : nodes(child))];
 const label = (tree) => typeof tree === "string" ? tree : tree?.children?.map(label).join("") || "";
 
-test("billing settings explain manual printing and cannot enable automatic printing", () => {
-  const context = vm.createContext({ React, useEffect: () => {}, useRef: (value) => ({ current: value }), useState: (value) => [value, () => {}], printerChoices: [] });
+test("billing settings offer automatic printing only for confirmed Pine Labs UPI", () => {
+  const context = vm.createContext({ React, ...printerIcons, useEffect: () => {}, useRef: (value) => ({ current: value }), useState: (value) => [value, () => {}], printerChoices: [] });
   vm.runInContext(setupCode, context);
   const tree = context.PrinterConnectionSetup({ purpose: "billing", printer: { ...billing, autoPrint: true }, setPrinter: () => {}, canManage: true, notify: () => {} });
-  assert.ok(label(tree).includes("Customer bills print only when you click Print bill"));
-  assert.equal(nodes(tree).filter((node) => node.type === "input" && node.props.type === "checkbox").length, 0);
+  assert.ok(label(tree).includes("Auto print after confirmed Pine Labs UPI payment"));
+  assert.equal(nodes(tree).filter((node) => node.type === "input" && node.props.type === "checkbox").length, 1);
 });
 
 test("billing settings connect, test and disconnect independently of the shared QZ session", async () => {
   let printer = { ...defaultBillingPrinter };
   const printed = [], notices = [];
   const context = vm.createContext({
-    React, useEffect: () => {}, useRef: (value) => ({ current: value }), useState: (value) => [value, () => {}], printerChoices: [],
+    React, ...printerIcons, useEffect: () => {}, useRef: (value) => ({ current: value }), useState: (value) => [value, () => {}], printerChoices: [],
     connectQzTray: async () => ["Counter", "Kitchen"],
     preferredQzPrinter: async () => "Counter", billingPrintOptions,
     printReceiptWithQz: async (options) => printed.push(options),
@@ -123,7 +139,7 @@ test("billing settings connect, test and disconnect independently of the shared 
 
 test("kitchen settings still test KOT tickets and have no customer bill toggle", async () => {
   const printed = [];
-  const context = vm.createContext({ React, useEffect: () => {}, useRef: (value) => ({ current: value }), useState: (value) => [value, () => {}], printerChoices: [], printKotWithQz: async (options) => printed.push(options) });
+  const context = vm.createContext({ React, ...printerIcons, useEffect: () => {}, useRef: (value) => ({ current: value }), useState: (value) => [value, () => {}], printerChoices: [], printKotWithQz: async (options) => printed.push(options) });
   vm.runInContext(setupCode, context);
   const tree = context.PrinterConnectionSetup({ purpose: "kot", printer: { ...billing, name: "Kitchen" }, setPrinter: () => {}, canManage: true, notify: () => {} });
   await nodes(tree).find((node) => node.type === "button" && label(node) === "Test KOT").props.onClick();
