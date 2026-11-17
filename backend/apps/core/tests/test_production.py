@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from decimal import Decimal as D
 
-from django.db import close_old_connections, OperationalError
+from django.db import close_old_connections, connections, OperationalError
 from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
@@ -700,7 +700,7 @@ class ProductionConcurrencyTests(KitchenFixture, TransactionTestCase):
             except (ValidationError, OperationalError):
                 return "conflict"
             finally:
-                close_old_connections()
+                connections.close_all()
         with ThreadPoolExecutor(max_workers=2) as pool:
             outcomes = list(pool.map(order, ["one", "two"]))
         self.assertEqual(outcomes.count("reserved"), 1)

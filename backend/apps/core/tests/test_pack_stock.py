@@ -3,7 +3,7 @@ import uuid
 from datetime import timedelta
 from decimal import Decimal as D
 from django.test import TestCase, TransactionTestCase
-from django.db import connection, close_old_connections, OperationalError
+from django.db import connection, close_old_connections, connections, OperationalError
 from django.db.migrations.executor import MigrationExecutor
 from django.utils import timezone
 from concurrent.futures import ThreadPoolExecutor
@@ -536,7 +536,7 @@ class PackConcurrencyTests(PackFixture, TransactionTestCase):
             except (ValidationError, OperationalError):
                 return False  # SQLite contention is retried by the same durable envelope.
             finally:
-                close_old_connections()
+                connections.close_all()
         with ThreadPoolExecutor(max_workers=2) as pool:
             outcomes = list(pool.map(sell, (1, 2)))
         self.assertEqual(sum(outcomes), 1)
