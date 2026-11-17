@@ -6,6 +6,8 @@ django-filter==24.3
 channels==4.2.0
 channels-redis==4.2.1
 celery==5.4.0
+# Kombu 5.7 requires redis-py 6.1 or newer. Keep the transport compatible with our Redis client pin.
+kombu==5.6.2
 redis==5.2.1
 psycopg[binary]==3.2.3
 dj-database-url==2.3.0

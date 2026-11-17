@@ -44,6 +44,18 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
+      - name: Check the Celery Redis connection
+        run: |
+          python - <<'PY'
+          from config.celery import app
+
+          with app.connection_for_read() as connection:
+              connection.default_channel.client.ping()
+          PY
+        env:
+          DEBUG: "True"
+          SECRET_KEY: ci-secret
+          REDIS_URL: redis://localhost:6379/0
       - run: python manage.py check
         env:
           DEBUG: "True"
